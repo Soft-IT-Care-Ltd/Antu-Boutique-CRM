@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+dist/
+
+# env — never commit
+.env
+.env.local
+.env.production
+.env*.local
+
+# uploads (product images, order reference images) — never commit customer data
+public/uploads/
+uploads/
+
+# database
+*.db
+*.sqlite
+prisma/*.db
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# misc
+*.pem
+.vercel
+.turbo
+coverage/
+backups/
