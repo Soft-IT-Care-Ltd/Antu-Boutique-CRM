@@ -1,0 +1,127 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+
+import { writeAuditLog } from "@/lib/audit/log";
+import { prisma } from "@/lib/prisma";
+import { requirePermission } from "@/lib/auth/require-permission";
+import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
+
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requirePermission("product.view");
+  if (!guard.ok) return guard.response;
+
+  const { id } = await params;
+  const variants = await prisma.productVariant.findMany({
+    where: { productId: id },
+    include: { size: true, color: true },
+    orderBy: [{ size: { sortOrder: "asc" } }, { color: { sortOrder: "asc" } }],
+  });
+
+  const body = {
+    variants: variants.map((v) => ({
+      ...v,
+      weightedAvgCost: v.weightedAvgCost.toString(),
+      priceOverride: v.priceOverride?.toString() ?? null,
+      available: v.stockQty - v.reservedQty,
+    })),
+  };
+
+  return NextResponse.json(await stripCostFieldsForUser(body, guard.user));
+}
+
+// PRD §4.2 variant matrix grid: editable columns are SKU (once), price
+// override, low-stock threshold and active flag. Stock/cost are read-only
+// here — they only move through stock_movements (Phase 2), per CLAUDE.md
+// rule 2 and the P1.1 build prompt.
+const editSchema = z.object({
+  variantId: z.string().cuid(),
+  sku: z.string().trim().min(1).max(60).optional(),
+  priceOverride: z.union([z.coerce.number().nonnegative(), z.null()]).optional(),
+  lowStockThreshold: z.union([z.coerce.number().int().min(0), z.null()]).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const bulkSchema = z.object({ edits: z.array(editSchema).min(1).max(200) });
+
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requirePermission("product.edit");
+  if (!guard.ok) return guard.response;
+
+  const { id } = await params;
+  const parsed = bulkSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
+  }
+
+  const variantIds = parsed.data.edits.map((e) => e.variantId);
+  const existing = await prisma.productVariant.findMany({ where: { id: { in: variantIds }, productId: id } });
+  const existingById = new Map(existing.map((v) => [v.id, v]));
+
+  for (const edit of parsed.data.edits) {
+    if (!existingById.has(edit.variantId)) {
+      return NextResponse.json({ error: `Variant ${edit.variantId} not found on this product` }, { status: 404 });
+    }
+  }
+
+  for (const edit of parsed.data.edits) {
+    const current = existingById.get(edit.variantId)!;
+    if (edit.sku !== undefined && edit.sku !== current.sku && current.skuLocked) {
+      return NextResponse.json(
+        { error: `SKU for ${current.sku} has already been edited once and is now locked` },
+        { status: 409 },
+      );
+    }
+  }
+
+  if (parsed.data.edits.some((e) => e.sku)) {
+    const requestedSkus = parsed.data.edits.filter((e) => e.sku).map((e) => e.sku!);
+    const clashes = await prisma.productVariant.findMany({
+      where: { sku: { in: requestedSkus }, id: { notIn: variantIds } },
+      select: { sku: true },
+    });
+    if (clashes.length > 0) {
+      return NextResponse.json({ error: `SKU already in use: ${clashes[0].sku}` }, { status: 409 });
+    }
+  }
+
+  const updated = await prisma.$transaction(
+    parsed.data.edits.map((edit) => {
+      const current = existingById.get(edit.variantId)!;
+      const data: Record<string, unknown> = {};
+      if (edit.sku !== undefined && edit.sku !== current.sku) {
+        data.sku = edit.sku;
+        data.skuLocked = true;
+      }
+      if (edit.priceOverride !== undefined) data.priceOverride = edit.priceOverride;
+      if (edit.lowStockThreshold !== undefined) data.lowStockThreshold = edit.lowStockThreshold;
+      if (edit.isActive !== undefined) data.isActive = edit.isActive;
+
+      return prisma.productVariant.update({
+        where: { id: edit.variantId },
+        data,
+        include: { size: true, color: true },
+      });
+    }),
+  );
+
+  await writeAuditLog({
+    actorId: guard.user.id,
+    action: "catalog.variant.bulk_update",
+    entityType: "product",
+    entityId: id,
+    before: existing.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, isActive: v.isActive })),
+    after: updated.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, isActive: v.isActive })),
+    request,
+  });
+
+  const body = {
+    variants: updated.map((v) => ({
+      ...v,
+      weightedAvgCost: v.weightedAvgCost.toString(),
+      priceOverride: v.priceOverride?.toString() ?? null,
+      available: v.stockQty - v.reservedQty,
+    })),
+  };
+
+  return NextResponse.json(await stripCostFieldsForUser(body, guard.user));
+}
