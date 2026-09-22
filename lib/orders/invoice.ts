@@ -1,0 +1,161 @@
+import "server-only";
+
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { prisma } from "@/lib/prisma";
+import { formatBDT } from "@/lib/money";
+import { escapeHtml, formatPdfDate as formatInvoiceDate, getFontFaceCss, renderHtmlToPdf } from "@/lib/pdf/render";
+import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
+import { resolveUploadPath } from "@/lib/uploads/storage";
+import type { OrderDetail } from "@/lib/orders/types";
+
+// PRD §7 "PDF invoice + packing slip with an embedded Bangla font." Plain
+// Node PDF libraries (pdfkit, @react-pdf/renderer) map Unicode codepoints to
+// glyphs one-for-one and have no Indic shaping engine, so Bangla conjuncts
+// and vowel-sign reordering come out wrong. Chromium (via Puppeteer) shapes
+// text with HarfBuzz like any browser does, so it's the only practical way
+// to get Bangla right — see the CLAUDE.md/BUILD_PROMPTS decision for P1.4.
+// The font-loading/browser plumbing itself lives in lib/pdf/render.ts,
+// shared with lib/packing/slip.ts's packing slip.
+
+async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
+  const paid = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const address = [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
+    .filter(Boolean)
+    .join(", ");
+
+  const rows = order.items
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
+        <td>${escapeHtml(item.sizeName)}</td>
+        <td>${escapeHtml(item.colorName)}</td>
+        <td class="num">${item.qty}</td>
+        <td class="num">${formatBDT(item.unitPrice)}</td>
+        <td class="num">${formatBDT(item.lineDiscount)}</td>
+        <td class="num">${formatBDT(item.lineTotal)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<style>
+  ${fontFaceCss}
+  * { box-sizing: border-box; }
+  body { font-family: 'Invoice Sans', sans-serif; font-size: 12px; color: #111; margin: 0; padding: 32px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
+  .business { font-size: 20px; font-weight: 700; }
+  .tag { color: #555; }
+  .invoice-title { text-align: right; }
+  .invoice-title h1 { font-size: 18px; margin: 0 0 4px; }
+  .invoice-title .version { color: #555; }
+  .grid { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+  .box h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin: 0 0 6px; }
+  .box p { margin: 0; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #555; border-bottom: 2px solid #111; }
+  td.num, th.num { text-align: right; }
+  .muted { color: #777; font-size: 10px; }
+  .totals { width: 260px; margin-left: auto; }
+  .totals div { display: flex; justify-content: space-between; padding: 4px 0; }
+  .totals .grand { font-weight: 700; border-top: 1px solid #111; margin-top: 4px; padding-top: 8px; }
+  .totals .due { font-weight: 700; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; color: #555; font-size: 10px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="business">
+      Antu Boutique
+      <div class="tag">অনলাইন ও শোরুম ফ্যাশন বুটিক</div>
+    </div>
+    <div class="invoice-title">
+      <h1>Invoice</h1>
+      <div class="version">${escapeHtml(order.orderNo)} &middot; Version ${version}</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="box">
+      <h2>Billed to</h2>
+      <p><strong>${escapeHtml(order.customer.name)}</strong></p>
+      <p>${escapeHtml(order.customer.phone)}</p>
+      <p>${escapeHtml(address || "—")}</p>
+    </div>
+    <div class="box">
+      <h2>Order details</h2>
+      <p>Order date: ${formatInvoiceDate(order.createdAt)}</p>
+      <p>Channel: ${order.channel === "ONLINE" ? "Online" : "Walk-in"}</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Size</th>
+        <th>Colour</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit price</th>
+        <th class="num">Discount</th>
+        <th class="num">Line total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div><span>Subtotal</span><span>${formatBDT(order.subtotal)}</span></div>
+    <div><span>Discount</span><span>- ${formatBDT(order.discountTotal)}</span></div>
+    <div><span>Delivery charge</span><span>${formatBDT(order.deliveryCharge)}</span></div>
+    <div class="grand"><span>Total</span><span>${formatBDT(order.total)}</span></div>
+    <div><span>Paid</span><span>${formatBDT(paid)}</span></div>
+    <div class="due"><span>Due</span><span>${formatBDT(order.dueAmount)}</span></div>
+  </div>
+
+  <div class="footer">
+    Antu Boutique &middot; ধন্যবাদ আমাদের সাথে কেনাকাটা করার জন্য &middot; This is a system-generated invoice.
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Renders and persists a new invoice version for the order's CURRENT
+ * state, and inserts the corresponding `invoices` row. Called after order
+ * creation (version 1) and after any applied gated edit — direct in-window
+ * or an approved edit-request (PRD §6 rule 8: "an approved order edit
+ * regenerates the invoice as a new version; old versions are retained").
+ * Never overwrites a prior version's file.
+ */
+export async function generateOrderInvoice(orderId: string, generatedById: string | null) {
+  const loaded = await loadOrderDetail(orderId);
+  if (!loaded) throw new Error(`Order ${orderId} not found`);
+  const order = serializeOrderDetail(loaded);
+
+  const maxVersion = await prisma.invoice.aggregate({ where: { orderId }, _max: { version: true } });
+  const version = (maxVersion._max.version ?? 0) + 1;
+
+  const fontFaceCss = await getFontFaceCss();
+  const html = await renderInvoiceHtml(order, version, fontFaceCss);
+  const pdfBuffer = await renderHtmlToPdf(html);
+
+  const subdir = `orders/${order.orderNo}/invoices`;
+  const dir = resolveUploadPath(subdir);
+  await mkdir(dir, { recursive: true });
+  const filename = `v${version}.pdf`;
+  await writeFile(path.join(dir, filename), pdfBuffer);
+  const filePath = path.posix.join(subdir, filename);
+
+  return prisma.invoice.create({
+    data: { orderId, version, filePath, generatedById },
+  });
+}
