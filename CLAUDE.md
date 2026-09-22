@@ -31,6 +31,17 @@ The feature set is carried over from **Gift Valy CRM** (`Soft-IT-Care-Ltd/Gift-V
 
 ---
 
+## Stack gotchas
+
+Learned the hard way in P0.1 — don't rediscover these:
+
+- This shadcn install is **base-ui powered (`@base-ui/react`), not Radix**. Don't reach for Radix APIs or docs.
+- **`asChild` does not exist.** Base UI components take a `render` prop instead: `<SidebarMenuButton render={<Link href="/x" />}>` not `<SidebarMenuButton asChild><Link ...></SidebarMenuButton>`.
+- **`DropdownMenuLabel` must be wrapped in a `DropdownMenuGroup`.** Base UI's menu requires every label/item to sit inside a group — an unwrapped `DropdownMenuLabel` breaks. See `components/app-shell/topbar.tsx` for the working pattern.
+- Future phases must follow this — check how an existing `components/ui/*` primitive is used elsewhere before assuming Radix conventions apply.
+
+---
+
 ## Non-negotiable rules
 
 Check these on every change. They are the rules the business runs on.
