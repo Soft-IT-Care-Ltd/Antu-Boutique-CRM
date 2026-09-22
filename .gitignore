@@ -15,9 +15,12 @@ dist/
 .env.production
 .env*.local
 
-# uploads (product images, order reference images) — never commit customer data
-public/uploads/
-uploads/
+# uploads (product images, order reference images) — never commit customer data.
+# Anchored at repo root: an unanchored "uploads/" also matches app/uploads/
+# and lib/uploads/ (the auth-checked serving route and its storage helper),
+# silently excluding real source code, not just the runtime file store.
+/public/uploads/
+/uploads/
 
 # database
 *.db
@@ -43,3 +46,7 @@ Thumbs.db
 .turbo
 coverage/
 backups/
+*.tsbuildinfo
+
+# stray agent worktrees (contain their own nested .git — never vendor these in)
+.claude/worktrees/
