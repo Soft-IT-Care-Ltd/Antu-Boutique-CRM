@@ -1,0 +1,630 @@
+// Antu Boutique CRM — Prisma schema
+// Phase 0: AUTH & ORG tables only. See PRD.md §5 for the full data model.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum RoleName {
+  ADMIN
+  MANAGER
+  TEAM_LEADER
+  SALES_EXECUTIVE
+  PACKING
+  ACCOUNTS
+  POS_OPERATOR
+}
+
+enum OverrideEffect {
+  GRANT
+  REVOKE
+}
+
+enum CustomerTag {
+  VIP
+  WHOLESALE
+  PROBLEM_CUSTOMER
+}
+
+enum OrderChannel {
+  ONLINE
+  WALK_IN
+}
+
+// PRD §4.6 lifecycle. P1.3 only ever writes LEAD/CONFIRMED (see
+// lib/orders/order-number.ts and the order-create route) — the rest of the
+// funnel, illegal-transition guarding and the edit-window/approval gate are
+// P1.4. The enum is defined in full now so order_status_history and the
+// detail page don't need a schema change when P1.4 lands.
+enum OrderStatus {
+  LEAD
+  CONFIRMED
+  PACKED
+  HANDED_TO_COURIER
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+  RETURNED
+  REFUNDED
+  EXCHANGE_REQUESTED
+}
+
+// PRD §4.9 courier zone tiers.
+enum DeliveryZone {
+  INSIDE_CITY
+  SUB_CITY
+  OUTSIDE_CITY
+}
+
+enum PaymentMethod {
+  BKASH
+  NAGAD
+  ROCKET
+  BANK
+  CASH
+  CARD
+}
+
+// PRD §4.6 edit window: PENDING until a TL/Admin acts on it, then terminal.
+enum OrderEditRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Team {
+  id        String     @id @default(cuid())
+  name      String
+  leaderId  String?    @unique
+  leader    User?      @relation("TeamLeader", fields: [leaderId], references: [id])
+  members   User[]     @relation("TeamMembers")
+  customers Customer[] @relation("CustomerTeam")
+  orders    Order[]    @relation("OrderTeam")
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("teams")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        RoleName         @unique
+  label       String
+  description String?
+  permissions RolePermission[]
+  users       User[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String                   @id @default(cuid())
+  key         String                   @unique
+  group       String
+  label       String
+  description String?
+  roles       RolePermission[]
+  overrides   UserPermissionOverride[]
+  createdAt   DateTime                 @default(now())
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserPermissionOverride {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission     @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  effect       OverrideEffect @default(GRANT)
+  reason       String?
+  createdAt    DateTime       @default(now())
+
+  @@unique([userId, permissionId])
+  @@map("user_permission_overrides")
+}
+
+model User {
+  id                  String                   @id @default(cuid())
+  name                String
+  phone               String                   @unique
+  email               String?                  @unique
+  passwordHash        String
+  avatarUrl           String?
+  roleId              String
+  role                Role                     @relation(fields: [roleId], references: [id])
+  teamId              String?
+  team                Team?                    @relation("TeamMembers", fields: [teamId], references: [id])
+  ledTeam             Team?                    @relation("TeamLeader")
+  isActive            Boolean                  @default(true)
+  mustChangePassword  Boolean                  @default(true)
+  failedLoginCount    Int                      @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  joinDate            DateTime                 @default(now())
+  permissionOverrides UserPermissionOverride[]
+  auditLogs           AuditLog[]
+  createdProducts     Product[]                @relation("ProductCreatedBy")
+  createdCustomers    Customer[]               @relation("CustomerCreatedBy")
+  createdOrders       Order[]                  @relation("OrderCreatedBy")
+  uploadedOrderImages OrderImage[]             @relation("OrderImageUploadedBy")
+  orderStatusChanges  OrderStatusHistory[]     @relation("OrderStatusChangedBy")
+  receivedPayments    Payment[]                @relation("PaymentReceivedBy")
+  requestedOrderEdits OrderEditRequest[]       @relation("OrderEditRequestedBy")
+  reviewedOrderEdits  OrderEditRequest[]       @relation("OrderEditReviewedBy")
+  generatedInvoices   Invoice[]                @relation("InvoiceGeneratedBy")
+  updatedSettings     Setting[]                @relation("SettingUpdatedBy")
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  @@map("users")
+}
+
+// Lightweight catalog master lists, seeded in Phase 0 so Settings and the
+// seed script have something to point at. Product/Variant land in Phase 1.
+model Size {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  sortOrder Int              @default(0)
+  isActive  Boolean          @default(true)
+  variants  ProductVariant[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@map("sizes")
+}
+
+model Color {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  hexCode   String
+  sortOrder Int              @default(0)
+  isActive  Boolean          @default(true)
+  variants  ProductVariant[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@map("colors")
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  parentId  String?
+  parent    Category?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryParent")
+  products  Product[]
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("categories")
+}
+
+// PRD §4.2 — the garment. Cost never lives here (only on the variant, via
+// weighted_avg_cost) so stripCostFieldsForUser only ever has to scrub one level.
+model Product {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  brand       String?
+  description String?
+  fabric      String?
+  basePrice   Decimal   @db.Decimal(12, 2)
+  tags        String[]  @default([])
+  isActive    Boolean   @default(true)
+
+  images   ProductImage[]
+  variants ProductVariant[]
+
+  createdById String?
+  createdBy   User?   @relation("ProductCreatedBy", fields: [createdById], references: [id])
+
+  // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
+  // query via `deletedAt: null`; purged by the trash cron after 30 days.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([deletedAt])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  filePath  String
+  thumbPath String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+// PRD §4.2 — what actually has stock and a sellable price. Stock is never
+// written here directly outside the seed script; Phase 2 moves it only
+// through stock_movements, one DB transaction per change (CLAUDE.md rule 2).
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sizeId    String
+  size      Size    @relation(fields: [sizeId], references: [id])
+  colorId   String
+  color     Color   @relation(fields: [colorId], references: [id])
+
+  sku       String  @unique
+  skuLocked Boolean @default(false)
+
+  stockQty          Int      @default(0)
+  reservedQty       Int      @default(0)
+  weightedAvgCost   Decimal  @default(0) @db.Decimal(12, 2)
+  priceOverride     Decimal? @db.Decimal(12, 2)
+  lowStockThreshold Int?
+  isActive          Boolean  @default(true)
+
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, sizeId, colorId])
+  @@index([productId])
+  @@index([sizeId])
+  @@index([colorId])
+  @@map("product_variants")
+}
+
+// PRD §4.4 — one person per customer: the buyer is the recipient, so there
+// is no payer/recipient split, no second phone, no country field. `teamId`
+// is denormalized from the creator at insert time (not derived via a join)
+// so the shared lib/auth/scope.ts helper can filter a TEAM_LEADER's list
+// with a single indexed where clause, same as every other scoped module.
+model Customer {
+  id            String        @id @default(cuid())
+  name          String
+  phone         String        @unique
+  altPhone      String?
+  division      String?
+  district      String?
+  thana         String?
+  addressDetail String?
+  notes         String?
+  tags          CustomerTag[] @default([])
+
+  createdById String?
+  createdBy   User?   @relation("CustomerCreatedBy", fields: [createdById], references: [id])
+  teamId      String?
+  team        Team?   @relation("CustomerTeam", fields: [teamId], references: [id])
+
+  orders Order[]
+
+  // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
+  // query via `deletedAt: null`; purged by the trash cron after 30 days.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+  @@index([teamId])
+  @@index([deletedAt])
+  @@map("customers")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// PRD §4.9 — minimal courier + per-zone charge, just enough for the order
+// form's "courier + zone + delivery charge auto-filled" (§4.6 section 4).
+// Phase 2 (P2.2) extends CourierCompany with Steadfast credentials,
+// consignment tracking and COD reconciliation without touching this shape.
+model CourierCompany {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  contact   String?
+  isActive  Boolean       @default(true)
+  zones     CourierZone[]
+  orders    Order[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("courier_companies")
+}
+
+model CourierZone {
+  id               String         @id @default(cuid())
+  courierId        String
+  courier          CourierCompany @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  zone             DeliveryZone
+  charge           Decimal        @default(0) @db.Decimal(10, 2)
+  codChargePercent Decimal        @default(0) @db.Decimal(5, 2)
+  returnCharge     Decimal        @default(0) @db.Decimal(10, 2)
+  orders           Order[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([courierId, zone])
+  @@map("courier_zones")
+}
+
+// Atomic counter behind AB-YYMM-NNNN order numbers (CLAUDE.md conventions).
+// One row per calendar month; lib/orders/order-number.ts increments it
+// inside the same transaction as the order insert so two concurrent orders
+// in the same month can never collide (Postgres row-locks the upsert).
+model OrderSequence {
+  yearMonth  String @id
+  lastNumber Int    @default(0)
+
+  @@map("order_sequences")
+}
+
+// PRD §4.6 — the order screen. `status` only ever reaches LEAD/CONFIRMED
+// from this phase's create/edit routes; the rest of OrderStatus is reserved
+// for P1.4 (lifecycle transitions) and P1.6 (packing). `dueAmount` is a
+// server-recomputed cache (CLAUDE.md rule 1) — never write it from a client
+// value; see lib/orders/totals.ts, the only place allowed to set it.
+model Order {
+  id      String       @id @default(cuid())
+  orderNo String       @unique
+  channel OrderChannel @default(ONLINE)
+  status  OrderStatus  @default(CONFIRMED)
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  courierId            String?
+  courier              CourierCompany? @relation(fields: [courierId], references: [id])
+  courierZoneId        String?
+  courierZone          CourierZone?    @relation(fields: [courierZoneId], references: [id])
+  deliveryCharge       Decimal         @default(0) @db.Decimal(10, 2)
+  expectedDeliveryDate DateTime?
+
+  subtotal      Decimal @default(0) @db.Decimal(12, 2)
+  discountTotal Decimal @default(0) @db.Decimal(12, 2)
+  total         Decimal @default(0) @db.Decimal(12, 2)
+  dueAmount     Decimal @default(0) @db.Decimal(12, 2)
+
+  internalNote String?
+
+  createdById String?
+  createdBy   User?   @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  // Denormalized from the creator at insert time, same pattern as
+  // Customer.teamId — lets scopedWhere() filter a TEAM_LEADER's order list
+  // with a single indexed column, no join.
+  teamId      String?
+  team        Team?   @relation("OrderTeam", fields: [teamId], references: [id])
+
+  items         OrderItem[]
+  images        OrderImage[]
+  payments      Payment[]
+  statusHistory OrderStatusHistory[]
+  editRequests  OrderEditRequest[]
+  invoices      Invoice[]
+
+  // CLAUDE.md rule 8: soft delete only.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([createdById])
+  @@index([teamId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String         @id @default(cuid())
+  orderId   String
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  qty          Int
+  unitPrice    Decimal @db.Decimal(12, 2)
+  lineDiscount Decimal @default(0) @db.Decimal(12, 2)
+
+  // CLAUDE.md rule 3: frozen at PACKED (P1.6), never touched after. Null
+  // until then, so today's cost never leaks into an unpacked order's response.
+  unitCostSnapshot Decimal? @db.Decimal(12, 2)
+
+  // PRD §4.6 section 2: selling below available stock is blocked unless
+  // ADMIN/MANAGER overrides with a reason (order.stock_override permission).
+  stockOverride       Boolean @default(false)
+  stockOverrideReason String?
+
+  images OrderImage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+// PRD §5.1 — the new table. Soft-deletable and audit-logged on every
+// add/replace/delete per §4.6 section 3; never blocks order creation.
+model OrderImage {
+  id          String     @id @default(cuid())
+  orderId     String
+  order       Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId String?
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  filePath  String
+  thumbPath String
+  caption   String?
+  mimeType  String
+  sizeBytes Int
+
+  uploadedById String?
+  uploadedBy   User?    @relation("OrderImageUploadedBy", fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+
+  deletedAt DateTime?
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@map("order_images")
+}
+
+model OrderStatusHistory {
+  id          String       @id @default(cuid())
+  orderId     String
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  changedById String?
+  changedBy   User?        @relation("OrderStatusChangedBy", fields: [changedById], references: [id])
+  note        String?
+  createdAt   DateTime     @default(now())
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+// PRD §4.10 — the advance payment is recorded at order creation; P1.5 adds
+// the standalone create/edit/delete/verify routes on top of this same
+// table. `transactionId`'s `@unique` is a nullable unique index, which
+// Postgres treats as unique-among-non-null-values — exactly CLAUDE.md rule
+// 4's "globally unique where not null", no extra constraint needed.
+// `wallet` names which specific account received the money (e.g. "bKash
+// Personal" vs "bKash Merchant") since PRD §4.10 wallets-with-balances is a
+// Phase 2 module — free text for now, not yet backed by a Wallet master.
+model Payment {
+  id            String        @id @default(cuid())
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod
+  wallet        String?
+  transactionId String?       @unique
+  paidAt        DateTime      @default(now())
+  receivedById  String?
+  receivedBy    User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  verified      Boolean       @default(false)
+  note          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+// PRD §4.6 edit window: an SE edits freely for `order_edit_window_minutes`
+// (see Setting below, default 30) after order creation. Past that, a change
+// to items/price/discount/delivery charge is captured here instead of being
+// applied — lib/orders/apply-edit.ts validates `proposedChanges` (same shape
+// as the order PATCH body) both at request time and again at approval time,
+// since stock/price-floor state can drift while a request sits PENDING.
+model OrderEditRequest {
+  id      String                 @id @default(cuid())
+  orderId String
+  order   Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status  OrderEditRequestStatus @default(PENDING)
+
+  proposedChanges Json
+  // Snapshot of the order+items this request was filed against, for the
+  // approval screen's before/after diff and the audit_logs "before" value.
+  beforeSnapshot  Json
+
+  requestedById String?
+  requestedBy   User?   @relation("OrderEditRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById String?
+  reviewedBy   User?     @relation("OrderEditReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@map("order_edit_requests")
+}
+
+// PRD §6 rule 8 — an approved edit regenerates the invoice as a NEW version;
+// old versions are retained (never overwritten/deleted). `filePath` sits
+// under UPLOAD_ROOT (orders/<order_no>/invoices/v<n>.pdf), served through
+// the same auth-checked app/uploads/[...path] route as order images.
+model Invoice {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  version Int
+
+  filePath String
+
+  generatedById String?
+  generatedBy   User?   @relation("InvoiceGeneratedBy", fields: [generatedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([orderId, version])
+  @@map("invoices")
+}
+
+// PRD §5 SETTINGS group — a minimal key/value store so a business rule like
+// the edit-window length is configurable without a code change. Phase 5
+// builds the Settings screen on top of this same table; P1.4 only needs
+// order_edit_window_minutes to exist and default sanely when absent.
+model Setting {
+  key         String   @id
+  value       String
+  updatedById String?
+  updatedBy   User?    @relation("SettingUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
