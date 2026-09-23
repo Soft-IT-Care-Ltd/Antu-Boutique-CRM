@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 
+import type { Db } from "@/lib/db/tx";
 import { prisma } from "@/lib/prisma";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import type { SessionUser } from "@/lib/auth/types";
@@ -20,10 +21,18 @@ import type { SessionUser } from "@/lib/auth/types";
 // so Settings can edit it later) with per-user overrides applied on top
 // (GRANT adds, REVOKE removes). Memoized per request with React's cache()
 // so a page that renders <Can> a dozen times only hits the DB once.
-export const getEffectivePermissions = cache(async (userId: string): Promise<Set<PermissionKey>> => {
-  const user = await prisma.user.findUnique({
+export const getEffectivePermissions = cache((userId: string): Promise<Set<PermissionKey>> => loadEffectivePermissions(prisma, userId));
+
+/**
+ * Uncached, client-injectable form (tests pass a rolled-back transaction).
+ * A deactivated user holds no permissions at all — defence in depth behind
+ * the session re-check in lib/auth/session-refresh.ts.
+ */
+export async function loadEffectivePermissions(db: Db, userId: string): Promise<Set<PermissionKey>> {
+  const user = await db.user.findUnique({
     where: { id: userId },
     select: {
+      isActive: true,
       role: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
       permissionOverrides: {
         select: { effect: true, permission: { select: { key: true } } },
@@ -31,7 +40,7 @@ export const getEffectivePermissions = cache(async (userId: string): Promise<Set
     },
   });
 
-  if (!user) return new Set();
+  if (!user || !user.isActive) return new Set();
 
   const permissions = new Set<PermissionKey>(
     user.role.permissions.map((rp) => rp.permission.key as PermissionKey),
@@ -44,7 +53,7 @@ export const getEffectivePermissions = cache(async (userId: string): Promise<Set
   }
 
   return permissions;
-});
+}
 
 type CanMode = "any" | "all";
 

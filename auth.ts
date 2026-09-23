@@ -3,6 +3,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 
+import { refreshSessionToken } from "@/lib/auth/session-refresh";
 import { prisma } from "@/lib/prisma";
 
 const LOCKOUT_MINUTES = 15;
@@ -75,26 +76,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user, trigger }) {
+    async jwt({ token, user }) {
+      // Sign-in: `authorize` just read this user from the DB.
       if (user) {
         token.id = user.id as string;
         token.role = user.role;
         token.teamId = user.teamId;
         token.mustChangePassword = user.mustChangePassword;
+        return token;
       }
 
-      // The change-password flow calls the client `update()` after a
-      // successful change — re-read mustChangePassword from the DB so the
-      // JWT drops the forced-redirect without requiring a fresh login.
-      if (trigger === "update" && token.id) {
-        const fresh = await prisma.user.findUnique({
-          where: { id: token.id as string },
-          select: { mustChangePassword: true },
-        });
-        if (fresh) token.mustChangePassword = fresh.mustChangePassword;
-      }
-
-      return token;
+      // Every later request (proxy, pages, API routes, the uploads route)
+      // re-checks the user: deleted/deactivated → null signs them out on
+      // this request; a role/team/password-flag change applies right away.
+      // This also covers the change-password flow's `update()` call.
+      return refreshSessionToken(prisma, token);
     },
     async session({ session, token }) {
       session.user.id = token.id;
