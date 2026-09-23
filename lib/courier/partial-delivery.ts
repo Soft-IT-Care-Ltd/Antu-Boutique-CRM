@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { writeAuditLogWith } from "@/lib/audit/log";
 import { toNumber } from "@/lib/money";
-import { computeOrderTotals, recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { computeOrderTotals, keptLine, recomputeOrderDueAmount } from "@/lib/orders/totals";
 
 // ============ Partial delivery (P2.2) ============
 //
@@ -28,7 +28,7 @@ export async function markKeptItems(
   tx: Prisma.TransactionClient,
   input: { inspectionId: string; kept: KeptItemInput[] },
   actorId: string,
-): Promise<{ returnedUnits: number; total: number; dueAmount: number }> {
+): Promise<{ orderId: string; returnedUnits: number; totalChanged: boolean; total: number; dueAmount: number }> {
   const inspection = await tx.returnInspection.findUnique({
     where: { id: input.inspectionId },
     include: {
@@ -77,11 +77,14 @@ export async function markKeptItems(
     await tx.returnInspection.update({ where: { id: inspection.id }, data: { status: "COMPLETED", inspectedAt: new Date(), note: "Customer kept every item" } });
   }
 
-  const lines = order.items.map((item) => {
-    const kept = item.unitCostSnapshot === null ? item.qty : keptById.get(item.id)!;
-    const lineDiscount = item.qty === 0 ? 0 : round2((toNumber(item.lineDiscount) * kept) / item.qty);
-    return { qty: kept, unitPrice: toNumber(item.unitPrice), lineDiscount };
-  });
+  const lines = order.items.map((item) =>
+    keptLine({
+      qty: item.qty,
+      returnedQty: item.unitCostSnapshot === null ? 0 : item.qty - keptById.get(item.id)!,
+      unitPrice: toNumber(item.unitPrice),
+      lineDiscount: toNumber(item.lineDiscount),
+    }),
+  );
   const totals = computeOrderTotals(lines, toNumber(order.deliveryCharge));
   await tx.order.update({
     where: { id: order.id },
@@ -98,7 +101,8 @@ export async function markKeptItems(
     after: { kept: input.kept, returnedUnits, subtotal: round2(totals.subtotal), discountTotal: round2(totals.discountTotal), total: round2(totals.total), dueAmount },
   });
 
-  return { returnedUnits, total: round2(totals.total), dueAmount };
+  const total = round2(totals.total);
+  return { orderId: order.id, returnedUnits, totalChanged: total !== toNumber(order.total), total, dueAmount };
 }
 
 /** ACCOUNTS clears the partial-delivery money flag once they've reconciled it. */

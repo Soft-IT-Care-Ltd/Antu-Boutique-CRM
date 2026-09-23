@@ -53,6 +53,7 @@ Copy `.env.example` to `.env` and fill in:
 ```
 DATABASE_URL="postgresql://...pooler..."
 DIRECT_URL="postgresql://...direct..."
+SHADOW_DATABASE_URL="postgresql://...direct.../antu_shadow"   # throwaway DB — Prisma WIPES it; never the real one
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="..."
 COURIER_ENCRYPTION_KEY="..."
@@ -62,6 +63,10 @@ MAX_UPLOAD_MB="5"
 ```
 
 `.env` is in `.gitignore`. Never commit it.
+
+`SHADOW_DATABASE_URL` points at a separate, throwaway database on the same Neon server (`CREATE DATABASE antu_shadow`). Prisma empties it every time a migration is generated, so it must **never** be the same database as `DATABASE_URL` / `DIRECT_URL` (CLAUDE.md rule 11).
+
+Leave `STEADFAST_LIVE_API` **unset** on every development machine. Until it is `enabled`, the app refuses to book real Steadfast parcels.
 
 ---
 
@@ -92,6 +97,15 @@ Claude Code reads `CLAUDE.md` automatically. Then work through `BUILD_PROMPTS.md
 
 Deployment follows the same shape as the Gift Valy server runbook: VPS + Node 20 + PM2 + Nginx + Certbot SSL, with real crontab entries for the Steadfast sync and trash cleanup (using `CRON_SECRET`), and a nightly `pg_dump` backup.
 
-Two things to remember on the day:
-- Point DNS at the VPS **before** running `certbot`.
-- Set the Steadfast webhook URL on the courier's panel to `https://<your-domain>/api/webhooks/steadfast`.
+### Production checklist
+
+- [ ] DNS points at the VPS **before** running `certbot`; SSL issued.
+- [ ] Production `.env` has fresh `NEXTAUTH_SECRET`, `COURIER_ENCRYPTION_KEY` and `CRON_SECRET`, and `NEXTAUTH_URL=https://<your-domain>`.
+- [ ] **`STEADFAST_LIVE_API=enabled`** in the production `.env` — production only. Without it, "Send to Steadfast" and the status sync are refused (only Test Connection and the balance work).
+- [ ] Steadfast API key + secret entered on the **Courier → Steadfast** page, **Test Connection** passes, integration switched on.
+- [ ] Webhook token generated on the same page. In the Steadfast panel → Webhook Integration, set the callback URL `https://<your-domain>/api/webhooks/steadfast` and paste the Bearer token.
+- [ ] Courier cost rates (Inside / Sub / Outside Dhaka) filled in on the Courier page.
+- [ ] Crontab: Steadfast sync every 15 minutes —
+      `*/15 * * * * curl -fsS -m 60 -H "Authorization: Bearer $CRON_SECRET" https://<your-domain>/api/cron/steadfast-sync`
+      — plus the trash-purge job and the nightly `pg_dump` backup.
+- [ ] "Last webhook received" and "Last sync" on the Courier page start filling after the first real parcel.

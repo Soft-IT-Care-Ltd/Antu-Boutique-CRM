@@ -23,7 +23,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const loaded = await loadOrderDetail(id);
   if (!loaded) notFound();
 
-  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment, canSendToSteadfast] =
+  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment, canSendToSteadfast, canOverrideCourier] =
     await Promise.all([
       can(user, "product.cost.view"),
       can(user, "order.edit"),
@@ -34,6 +34,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       can(user, "payment.delete"),
       can(user, "payment.verify"),
       can(user, "courier.create_shipment"),
+      can(user, "order.courier_status_override"),
     ]);
   const canManageImages = canManageOrderImages(user, scopedRow);
 
@@ -56,6 +57,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         canVerifyPayment={canVerifyPayment}
         shipment={shipment}
         canSendToSteadfast={canSendToSteadfast}
+        canOverrideCourier={canOverrideCourier}
       />
     </div>
   );

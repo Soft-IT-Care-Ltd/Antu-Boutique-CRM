@@ -32,6 +32,21 @@ export function computeOrderTotals(items: OrderLineInput[], deliveryCharge: numb
   return { subtotal, discountTotal, total };
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * P2.2 partial delivery: a line's money on the quantity the customer KEPT
+ * (qty − returnedQty), with the line discount pro-rated to it. The one
+ * formula behind the recomputed order total, the order screen's line totals
+ * and the regenerated invoice — so they always add up to the same figure.
+ * With nothing returned it is exactly qty × unitPrice − lineDiscount.
+ */
+export function keptLine(item: { qty: number; returnedQty: number; unitPrice: number; lineDiscount: number }): OrderLineInput & { lineTotal: number } {
+  const kept = Math.max(0, item.qty - item.returnedQty);
+  const lineDiscount = item.returnedQty === 0 || item.qty === 0 ? item.lineDiscount : round2((item.lineDiscount * kept) / item.qty);
+  return { qty: kept, unitPrice: item.unitPrice, lineDiscount, lineTotal: round2(kept * item.unitPrice - lineDiscount) };
+}
+
 // Deliberately not clamped at 0 — a negative due amount means the customer
 // has overpaid (a credit), which Accounts still needs to see, not a number
 // that silently disappears to zero.

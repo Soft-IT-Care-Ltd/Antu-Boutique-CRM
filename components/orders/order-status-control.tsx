@@ -30,11 +30,14 @@ export function OrderStatusControl({
   order,
   onChange,
   courierBooked = false,
+  canOverrideCourier = false,
 }: {
   order: OrderDetail;
   onChange: (order: OrderDetail) => void;
   /** A Steadfast consignment exists: its delivery statuses come from the courier sync, not this control. */
   courierBooked?: boolean;
+  /** Admin override (order.courier_status_override): may still pick courier-owned statuses, with a reason. */
+  canOverrideCourier?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [toStatus, setToStatus] = useState<OrderStatusValue | "">("");
@@ -42,7 +45,9 @@ export function OrderStatusControl({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const nextStatuses = nextSelectableStatuses(order.status).filter((s) => !(courierBooked && COURIER_OWNED_STATUSES.includes(s)));
+  const nextStatuses = nextSelectableStatuses(order.status).filter((s) => !(courierBooked && !canOverrideCourier && COURIER_OWNED_STATUSES.includes(s)));
+  const isOverride = courierBooked && toStatus !== "" && COURIER_OWNED_STATUSES.includes(toStatus);
+  const overrideReasonOk = note.trim().length >= 10;
   if (nextStatuses.length === 0) return null;
 
   async function submit() {
@@ -52,7 +57,7 @@ export function OrderStatusControl({
     try {
       const { order: updated } = await fetchJson<{ order: OrderDetail }>(`/api/orders/${order.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ toStatus, note: note.trim() || undefined }),
+        body: JSON.stringify(isOverride ? { toStatus, courierOverrideReason: note.trim() } : { toStatus, note: note.trim() || undefined }),
       });
       onChange(updated);
       setOpen(false);
@@ -88,12 +93,23 @@ export function OrderStatusControl({
               ))}
             </SelectContent>
           </Select>
-          <Textarea placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+          {isOverride ? (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+              This order is booked with Steadfast, so its delivery status normally comes from the courier. Overriding it is audit-logged and stops status
+              syncing for a final status. Say why — e.g. the courier API is down, or the parcel is lost.
+            </p>
+          ) : null}
+          <Textarea
+            placeholder={isOverride ? "Reason for overriding the courier status (required)" : "Note (optional)"}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+          />
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
         </div>
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-          <Button onClick={submit} disabled={!toStatus || saving}>
+          <Button onClick={submit} disabled={!toStatus || saving || (isOverride && !overrideReasonOk)}>
             {saving ? <Loader2 className="animate-spin" /> : null}
             Update status
           </Button>

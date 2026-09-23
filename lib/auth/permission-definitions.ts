@@ -45,6 +45,11 @@ export const PERMISSIONS = [
   { key: "order.delete", group: "Orders", label: "Delete orders" },
   { key: "order.status_update", group: "Orders", label: "Update order status" },
   {
+    key: "order.courier_status_override",
+    group: "Orders",
+    label: "Move a courier-booked order by hand (with a reason)",
+  },
+  {
     key: "order.stock_override",
     group: "Orders",
     label: "Sell below available stock with a reason",
@@ -129,7 +134,9 @@ const withoutKeys = (exclude: PermissionKey[]): PermissionKey[] =>
 export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
   ADMIN: ALL_KEYS,
 
-  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view"]),
+  // order.courier_status_override is Admin-only: it overrides what the
+  // courier reports (API down, parcel lost) and must stay rare.
+  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view", "order.courier_status_override"]),
 
   TEAM_LEADER: [
     "lead.view_team",

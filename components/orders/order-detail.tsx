@@ -39,6 +39,7 @@ export function OrderDetail({
   canVerifyPayment,
   shipment,
   canSendToSteadfast,
+  canOverrideCourier,
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -52,6 +53,7 @@ export function OrderDetail({
   canVerifyPayment: boolean;
   shipment: ShipmentDetailView | null;
   canSendToSteadfast: boolean;
+  canOverrideCourier: boolean;
 }) {
   const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
@@ -80,7 +82,7 @@ export function OrderDetail({
               Send to Steadfast
             </Button>
           ) : null}
-          {canUpdateStatus ? <OrderStatusControl order={order} onChange={setOrder} courierBooked={Boolean(shipment?.consignmentId)} /> : null}
+          {canUpdateStatus ? <OrderStatusControl order={order} onChange={setOrder} courierBooked={Boolean(shipment?.consignmentId)} canOverrideCourier={canOverrideCourier} /> : null}
           {canEdit ? (
             <Button render={<Link href={`/orders/${order.id}/edit`} />} nativeButton={false} variant="outline">
               <Pencil />

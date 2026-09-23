@@ -3,10 +3,12 @@ import { z } from "zod";
 
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
+import { can } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { COURIER_OWNED_STATUSES, IllegalTransitionError, moveOrderStatus, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/lifecycle";
+import { IllegalTransitionError, moveOrderStatus, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/lifecycle";
+import { decideCourierOverride } from "@/lib/orders/status-graph";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { ORDER_STATUS_VALUES } from "@/lib/orders/constants";
 import type { OrderStatusValue } from "@/lib/orders/constants";
@@ -14,6 +16,9 @@ import type { OrderStatusValue } from "@/lib/orders/constants";
 const statusUpdateSchema = z.object({
   toStatus: z.enum(ORDER_STATUS_VALUES),
   note: z.string().trim().max(500).optional(),
+  // Required to move a Steadfast-booked order into a courier-owned status by
+  // hand (order.courier_status_override, Admin only).
+  courierOverrideReason: z.string().trim().min(10, "Give a reason of at least 10 characters for overriding the courier status").max(500).optional(),
 });
 
 // PRD §4.6 lifecycle + §6 rule "illegal transitions rejected server-side."
@@ -39,7 +44,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { toStatus, note } = parsed.data;
+  const { toStatus, note, courierOverrideReason } = parsed.data;
 
   if (STATUSES_REQUIRING_DEDICATED_FLOW.includes(toStatus)) {
     return NextResponse.json(
@@ -50,13 +55,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   // P2.2: once Steadfast has the parcel, the courier sync owns its journey —
   // a hand-picked IN_TRANSIT/DELIVERED/RETURNED would drift from what
-  // Steadfast reports.
-  if (existing.shipment?.consignmentId && COURIER_OWNED_STATUSES.includes(toStatus)) {
-    return NextResponse.json(
-      { error: `This order is booked with Steadfast (consignment ${existing.shipment.consignmentId}) — its delivery status comes from the courier. Use "Sync now" on the Courier page.` },
-      { status: 409 },
-    );
-  }
+  // Steadfast reports. The one exception is an Admin override with a
+  // written reason (courier API down, parcel lost), audit-logged below.
+  const decision = decideCourierOverride({
+    consignmentId: existing.shipment?.consignmentId,
+    toStatus,
+    reason: courierOverrideReason,
+    canOverride: await can(guard.user, "order.courier_status_override"),
+  });
+  if (!decision.allowed) return NextResponse.json({ error: decision.error }, { status: decision.status });
+  const isCourierOverride = decision.isOverride;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -65,8 +73,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { id: existing.id, status: existing.status as OrderStatusValue, items: existing.items },
         toStatus,
         guard.user.id,
-        note,
+        isCourierOverride ? `Courier status override: ${courierOverrideReason}${note ? ` · ${note}` : ""}` : note,
       );
+      // A hand-set final status stops the poller from fighting it; a later
+      // webhook with a different outcome still gets flagged (lib/courier/sync.ts).
+      if (isCourierOverride && (toStatus === "DELIVERED" || toStatus === "RETURNED")) {
+        await tx.shipment.update({ where: { orderId: existing.id }, data: { finalizedAt: new Date() } });
+      }
       // CANCELLED after PACKED writes one RETURN_IN ledger row per line.
     }, { timeout: 30_000 });
   } catch (error) {
@@ -78,11 +91,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   await writeAuditLog({
     actorId: guard.user.id,
-    action: "order.status_update",
+    action: isCourierOverride ? "order.courier_status_override" : "order.status_update",
     entityType: "order",
     entityId: id,
     before: { status: existing.status },
-    after: { status: toStatus, note: note ?? null },
+    after: {
+      status: toStatus,
+      note: note ?? null,
+      ...(isCourierOverride ? { courierOverrideReason, consignmentId: existing.shipment!.consignmentId } : {}),
+    },
     request,
   });
 

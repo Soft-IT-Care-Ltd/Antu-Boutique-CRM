@@ -160,7 +160,7 @@ It must run the whole business in one place: lead → order → stock → packin
 **Order lifecycle**
 
 `LEAD → CONFIRMED → PACKED → HANDED_TO_COURIER → IN_TRANSIT → DELIVERED → COMPLETED`
-plus `ON_HOLD`, `CANCELLED`, `RETURNED`, `REFUNDED`, `EXCHANGE_REQUESTED`.
+plus `ON_HOLD`, `CANCELLED`, `RETURNED`, `REFUNDED`, `EXCHANGE_REQUESTED`, and `PARTIAL_DELIVERED` (courier-reported partial delivery — see §4.9 decisions).
 
 - Stock is **reserved at `CONFIRMED`** and **deducted at `PACKED`** (with `unit_cost_snapshot` frozen at that moment).
 - Cancelling before `PACKED` releases the reservation; cancelling after `PACKED` restores stock via a ledger row.
@@ -196,6 +196,18 @@ plus `ON_HOLD`, `CANCELLED`, `RETURNED`, `REFUNDED`, `EXCHANGE_REQUESTED`.
 - Courier API credentials stored **encrypted** with `COURIER_ENCRYPTION_KEY`.
 - **COD reconciliation:** courier statement (manual entry or CSV import) matched against orders; shows collected / not yet received / short; discrepancies flagged for Accounts.
 - Return flow from courier: `RETURNED` → condition check by Packing → restock (`RETURN_IN`) or write-off (`DAMAGE_OUT`) → courier return charge posted as an expense.
+
+#### Decisions made during build (P2.2)
+
+Recorded so later phases (P&L, reports, exchanges) build on the same rules.
+
+- **Live-API safety switch — `STEADFAST_LIVE_API`.** All Steadfast HTTP calls go through one client module (`lib/courier/steadfast/client.ts`). Booking consignments and the status API are refused unless `STEADFAST_LIVE_API=enabled`, which is set **on the production server only**. Test Connection and the balance (`GET /get_balance`) always work. A developer machine can therefore never book a real parcel, even by accident.
+- **Stricter webhook confirmation than Gift Valy.** Steadfast's webhook says `delivered` / `partial_delivered` / `cancelled` when the *rider* marks the parcel, before hub approval (Gift Valy Round 2 §2.6). A final webhook status is only applied once the status API confirms the same final status. If the API reports `*_approval_pending`, the order stays `IN_TRANSIT` with that sub-status. If the API is unreachable or disagrees, the order is **also** held at the approval-pending stage and the shipment is flagged `needs_attention`; the 15-minute poll finalizes it once the API confirms. An order never reaches `DELIVERED` / `RETURNED` on an unverified webhook. (Gift Valy trusted the webhook when the cross-check failed.) Steadfast's zone-less timestamps are read as Asia/Dhaka and stored UTC (Round 2 §2.5).
+- **Courier cost formula.** Courier cost (what *we* pay) is separate from the customer's delivery charge on the order. Per zone (Inside / Sub / Outside Dhaka): `base` covers the first kilogram, and each further *started* kilogram adds `per-kg` — cost = base + per-kg × (⌈weight kg⌉ − 1), with a missing weight treated as ≤ 1 kg. Weight is the sum of the variants' optional unit weights (grams). This estimate is stored per shipment; the courier's actual `delivery_charge` (webhook) overrides it, and P&L uses actual when known, else the estimate.
+- **Partial delivery — `PARTIAL_DELIVERED`.** Set only by the courier sync, never by hand. The shipment is flagged for ACCOUNTS, and staff record how many of each item the customer kept. Each line keeps its original `qty`; `returned_qty` records the rest. The order total is recomputed on the kept quantities, with line discounts pro-rated, and `due_amount` is recomputed from it (invariant 1). When the total changes, **the invoice is regenerated as a new version and old versions are kept** (invariant 8). The returned units go to the Packing condition check.
+- **Condition check and the courier return charge.** One reusable service (`lib/returns/condition-check.ts`) handles every return: courier returns, partial deliveries and, from Phase 3, exchanges. Good → `RETURN_IN` (`EXCHANGE_IN` for exchanges); Damaged → `RETURN_IN` then `DAMAGE_OUT` + an expense. Both are valued at the line's frozen `unit_cost_snapshot`. `RETURNED` alone never restocks. For a courier return, the courier's return charge is **posted once as an expense when the condition check completes**. It uses Steadfast's reported charge for that parcel, else the zone's configured return charge. **P&L must not count that charge again** as the returned shipment's courier cost.
+- **Rider note.** Orders have a separate *delivery instructions* field (`delivery_note`). It is the only text sent to Steadfast as the consignment `note`, which the rider reads. The internal staff note is never sent.
+- **Manual status moves after booking.** Once an order has a Steadfast consignment, it cannot be moved by hand into `IN_TRANSIT`, `DELIVERED`, `PARTIAL_DELIVERED` or `RETURNED`; those come from the courier sync. The one exception is an **Admin-only override** (`order.courier_status_override`) for when the courier API is down or a parcel is lost. It needs a written reason, is written to the audit log as `order.courier_status_override`, and stops status polling for a final status. A later webhook reporting a different outcome is flagged for attention.
 
 ### 4.10 Payments & wallets
 

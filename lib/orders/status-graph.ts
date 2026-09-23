@@ -42,6 +42,32 @@ export const STATUSES_REQUIRING_DEDICATED_FLOW: OrderStatusValue[] = ["PACKED", 
 // away from what Steadfast reports.
 export const COURIER_OWNED_STATUSES: OrderStatusValue[] = ["IN_TRANSIT", "DELIVERED", "PARTIAL_DELIVERED", "RETURNED"];
 
+export type CourierOverrideDecision = { allowed: true; isOverride: boolean } | { allowed: false; status: 403 | 409; error: string };
+
+/**
+ * P2.2 manual-move rule. Once a courier consignment exists, a hand-picked
+ * courier-owned status is refused — unless the caller holds
+ * order.courier_status_override (Admin) AND gives a reason. Pure, so the
+ * rule itself is unit-tested; the route supplies `canOverride` from RBAC.
+ */
+export function decideCourierOverride(input: {
+  consignmentId: string | null | undefined;
+  toStatus: OrderStatusValue;
+  reason: string | null | undefined;
+  canOverride: boolean;
+}): CourierOverrideDecision {
+  if (!input.consignmentId || !COURIER_OWNED_STATUSES.includes(input.toStatus)) return { allowed: true, isOverride: false };
+  if (!input.reason?.trim()) {
+    return {
+      allowed: false,
+      status: 409,
+      error: `This order is booked with Steadfast (consignment ${input.consignmentId}) — its delivery status comes from the courier. Use "Sync now" on the Courier page.`,
+    };
+  }
+  if (!input.canOverride) return { allowed: false, status: 403, error: "Only an Admin can override a courier-booked order's status" };
+  return { allowed: true, isOverride: true };
+}
+
 export function isTransitionAllowed(from: OrderStatusValue, to: OrderStatusValue): boolean {
   return ORDER_TRANSITIONS[from]?.includes(to) ?? false;
 }

@@ -528,6 +528,10 @@ describe("roles: courier data is scoped and cost/money never leaks", () => {
     expect(await can(roles.manager, "courier.manage")).toBe(true);
     expect(await can(roles.manager, "settings.manage")).toBe(false);
     expect(await can(roles.admin, "settings.manage")).toBe(true);
+    // Overriding a courier-booked order's status by hand is Admin-only.
+    for (const [role, user] of Object.entries(roles)) {
+      expect(await can(user, "order.courier_status_override"), `${role} courier override`).toBe(role === "admin");
+    }
   }, 60_000);
 
   it("Packing's shipment list has no COD and — after stripping — no courier cost; Admin's has both", async () => {

@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { formatBDT } from "@/lib/money";
 import { escapeHtml, formatPdfDate as formatInvoiceDate, getFontFaceCss, renderHtmlToPdf } from "@/lib/pdf/render";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
+import { keptLine } from "@/lib/orders/totals";
 import { resolveUploadPath } from "@/lib/uploads/storage";
 import type { OrderDetail } from "@/lib/orders/types";
 
@@ -25,19 +26,23 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
     .filter(Boolean)
     .join(", ");
 
+  // After a partial delivery (P2.2) the invoice bills what the customer
+  // kept: kept quantity, pro-rated discount, with the returned units noted.
   const rows = order.items
-    .map(
-      (item) => `
+    .map((item) => {
+      const line = keptLine({ qty: item.qty, returnedQty: item.returnedQty, unitPrice: Number(item.unitPrice), lineDiscount: Number(item.lineDiscount) });
+      const returnedNote = item.returnedQty > 0 ? `<div class="muted">${item.qty} sent, ${item.returnedQty} returned</div>` : "";
+      return `
       <tr>
         <td>${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
         <td>${escapeHtml(item.sizeName)}</td>
         <td>${escapeHtml(item.colorName)}</td>
-        <td class="num">${item.qty}</td>
+        <td class="num">${line.qty}${returnedNote}</td>
         <td class="num">${formatBDT(item.unitPrice)}</td>
-        <td class="num">${formatBDT(item.lineDiscount)}</td>
+        <td class="num">${formatBDT(line.lineDiscount)}</td>
         <td class="num">${formatBDT(item.lineTotal)}</td>
-      </tr>`,
-    )
+      </tr>`;
+    })
     .join("");
 
   return `<!doctype html>

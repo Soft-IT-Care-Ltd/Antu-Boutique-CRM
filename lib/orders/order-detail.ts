@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { toNumber } from "@/lib/money";
+import { keptLine } from "@/lib/orders/totals";
 import type { DeliveryZoneValue, OrderEditRequestStatusValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
 import type { OrderDetail } from "@/lib/orders/types";
 
@@ -101,7 +102,8 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
       qty: item.qty,
       unitPrice: item.unitPrice.toString(),
       lineDiscount: item.lineDiscount.toString(),
-      lineTotal: (item.qty * toNumber(item.unitPrice) - toNumber(item.lineDiscount)).toFixed(2),
+      // On the kept quantity (P2.2 partial delivery) — equal to qty × price − discount when nothing came back.
+      lineTotal: keptLine({ qty: item.qty, returnedQty: item.returnedQty, unitPrice: toNumber(item.unitPrice), lineDiscount: toNumber(item.lineDiscount) }).lineTotal.toFixed(2),
       unitCostSnapshot: item.unitCostSnapshot?.toString() ?? null,
       stockOverride: item.stockOverride,
       stockOverrideReason: item.stockOverrideReason,
