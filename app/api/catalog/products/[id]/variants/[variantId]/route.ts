@@ -22,6 +22,21 @@ export async function DELETE(
     );
   }
 
+  // The stock ledger and purchase lines reference the variant forever
+  // (append-only, FK Restrict) — a variant that ever moved stock can only
+  // be deactivated, never deleted.
+  const [movementCount, purchaseLineCount, orderLineCount] = await Promise.all([
+    prisma.stockMovement.count({ where: { variantId } }),
+    prisma.purchaseItem.count({ where: { variantId } }),
+    prisma.orderItem.count({ where: { variantId } }),
+  ]);
+  if (movementCount > 0 || purchaseLineCount > 0 || orderLineCount > 0) {
+    return NextResponse.json(
+      { error: "Variant has stock or order history. Deactivate it instead of deleting." },
+      { status: 409 },
+    );
+  }
+
   await prisma.productVariant.delete({ where: { id: variantId } });
 
   await writeAuditLog({

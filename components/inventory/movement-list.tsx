@@ -1,0 +1,205 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ApiError, fetchJson } from "@/lib/catalog/client";
+import {
+  formatDhakaDateTime,
+  STOCK_MOVEMENT_LABELS,
+  STOCK_MOVEMENT_TYPES,
+  STOCK_REFERENCE_LABELS,
+  type StockMovementTypeValue,
+} from "@/lib/inventory/constants";
+import type { StockMovementRow } from "@/lib/inventory/types";
+import { formatBDT } from "@/lib/money";
+
+const PAGE_SIZE = 30;
+
+type Props = {
+  hasCostAccess: boolean;
+  initialVariant: { id: string; sku: string } | null;
+};
+
+export function MovementList({ hasCostAccess, initialVariant }: Props) {
+  const [items, setItems] = useState<StockMovementRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [type, setType] = useState<"all" | StockMovementTypeValue>("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [variant, setVariant] = useState(initialVariant);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  useEffect(() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (debouncedQ) params.set("q", debouncedQ);
+    if (type !== "all") params.set("type", type);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (variant) params.set("variantId", variant.id);
+
+    fetchJson<{ items: StockMovementRow[]; total: number }>(`/api/inventory/movements?${params.toString()}`)
+      .then((data) => {
+        setItems(data.items);
+        setTotal(data.total);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the ledger."));
+  }, [debouncedQ, type, from, to, variant, page]);
+
+  function updateFilter<T>(setter: (value: T) => void, value: T) {
+    setter(value);
+    setPage(1);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="relative flex-1 lg:max-w-xs">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search SKU, product or note..." value={q} onChange={(e) => updateFilter(setQ, e.target.value)} className="pl-8" />
+        </div>
+        <Select value={type} onValueChange={(v) => updateFilter(setType, v as "all" | StockMovementTypeValue)}>
+          <SelectTrigger className="w-full lg:w-48">
+            <SelectValue placeholder="Movement type">
+              {(value: "all" | StockMovementTypeValue) => (value === "all" ? "All movement types" : STOCK_MOVEMENT_LABELS[value])}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All movement types</SelectItem>
+            {STOCK_MOVEMENT_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {STOCK_MOVEMENT_LABELS[t]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <Input type="date" aria-label="From date" value={from} onChange={(e) => updateFilter(setFrom, e.target.value)} />
+          <Input type="date" aria-label="To date" value={to} onChange={(e) => updateFilter(setTo, e.target.value)} />
+        </div>
+      </div>
+
+      {variant ? (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Showing one variant:</span>
+          <Badge variant="secondary" className="font-mono">
+            {variant.sku}
+          </Badge>
+          <Button variant="ghost" size="icon-xs" aria-label="Show all variants" onClick={() => updateFilter(setVariant, null)}>
+            <X />
+          </Button>
+        </div>
+      ) : null}
+
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+      {!items ? (
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-16 text-center">
+          <History className="size-8 text-muted-foreground" />
+          <p className="text-sm font-medium">No stock movements</p>
+          <p className="text-sm text-muted-foreground">Try a wider date range or a different type.</p>
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Variant</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Stock after</TableHead>
+              {hasCostAccess ? <TableHead className="text-right">Unit cost</TableHead> : null}
+              <TableHead>Reference</TableHead>
+              <TableHead>By / note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((m) => (
+              <TableRow key={m.id}>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{formatDhakaDateTime(m.createdAt)}</TableCell>
+                <TableCell>
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-3 shrink-0 rounded-full border border-border" style={{ backgroundColor: m.variant.colorHex }} />
+                    <span className="font-medium">{m.variant.productName}</span>
+                  </span>
+                  <div className="text-xs">
+                    <span className="font-semibold">
+                      {m.variant.sizeName} / {m.variant.colorName}
+                    </span>{" "}
+                    <span className="font-mono text-muted-foreground">{m.variant.sku}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={m.qty > 0 ? "secondary" : m.type === "DAMAGE_OUT" ? "destructive" : "outline"}>{STOCK_MOVEMENT_LABELS[m.type]}</Badge>
+                </TableCell>
+                <TableCell className={`text-right font-semibold tabular-nums ${m.qty > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}>
+                  {m.qty > 0 ? `+${m.qty}` : m.qty}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{m.stockAfter}</TableCell>
+                {hasCostAccess ? (
+                  <TableCell className="text-right text-muted-foreground tabular-nums">{m.unitCostSnapshot ? formatBDT(m.unitCostSnapshot) : "—"}</TableCell>
+                ) : null}
+                <TableCell>
+                  <div className="text-xs text-muted-foreground">{STOCK_REFERENCE_LABELS[m.referenceType] ?? m.referenceType}</div>
+                  {m.referenceLabel ? (
+                    m.referenceHref ? (
+                      <Link href={m.referenceHref} className="text-sm hover:underline">
+                        {m.referenceLabel}
+                      </Link>
+                    ) : (
+                      <span className="text-sm">{m.referenceLabel}</span>
+                    )
+                  ) : null}
+                </TableCell>
+                <TableCell className="max-w-64">
+                  <div className="text-sm">{m.actorName ?? "System"}</div>
+                  {m.note ? <div className="truncate text-xs text-muted-foreground" title={m.note}>{m.note}</div> : null}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {items && items.length > 0 ? (
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            Page {page} of {totalPages} · {total} movements
+          </span>
+          <div className="flex gap-1">
+            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+              <ChevronLeft />
+            </Button>
+            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+              <ChevronRight />
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

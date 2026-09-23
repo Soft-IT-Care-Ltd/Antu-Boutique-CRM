@@ -21,6 +21,16 @@ const COST_FIELD_NAMES = new Set([
   "totalProfit",
   "margin",
   "marginPercent",
+  // Inventory (P2.1): stock valuation and purchase costing.
+  "valueAtCost",
+  "itemsSubtotal",
+  "transportCost",
+  "otherCost",
+  "lineCost",
+  "allocatedCost",
+  "landedUnitCost",
+  "wacBefore",
+  "wacAfter",
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

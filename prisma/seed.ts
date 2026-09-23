@@ -2,6 +2,12 @@ import { PrismaClient, type RoleName } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { PERMISSIONS, ROLE_TEMPLATES } from "../lib/auth/permission-definitions";
+// Imported, not duplicated: these take a transaction client and are free of
+// "server-only", so demo stock moves through the exact code the app uses —
+// the DB's stock/ledger consistency trigger would reject anything else.
+import { adjustStock, writeOffDamagedStock } from "../lib/inventory/adjustments";
+import { recordStockMovement } from "../lib/inventory/ledger";
+import { createPurchase } from "../lib/inventory/purchases";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
 // for the same "server-only" reason as buildVariantSku/nextOrderNo above.
@@ -149,9 +155,10 @@ async function seedCatalogMasters() {
   }
 }
 
-// Demo catalog data. Stock is written directly here (bypassing
-// stock_movements) only because Phase 2 hasn't built the ledger yet — see
-// CLAUDE.md P1.1: "for now seed stock through the seed script only."
+// Demo catalog data. `stock`/`cost` are the variant's OPENING balance: a
+// newly created variant gets them as one OPENING_BALANCE ledger row (see
+// seedCatalogProducts). Re-running the seed never touches stock or cost of
+// an existing variant — those only move through the ledger.
 type DemoVariant = { size: string; color: string; stock: number; cost: number; threshold?: number; priceOverride?: number };
 type DemoProduct = {
   code: string;
@@ -264,24 +271,40 @@ async function seedCatalogProducts() {
       const color = colorByName.get(variant.color);
       if (!size || !color) continue;
 
-      await prisma.productVariant.upsert({
+      const existing = await prisma.productVariant.findUnique({
         where: { productId_sizeId_colorId: { productId: product.id, sizeId: size.id, colorId: color.id } },
-        update: {
-          stockQty: variant.stock,
-          weightedAvgCost: variant.cost,
-          lowStockThreshold: variant.threshold ?? null,
-          priceOverride: variant.priceOverride ?? null,
-        },
-        create: {
-          productId: product.id,
-          sizeId: size.id,
-          colorId: color.id,
-          sku: buildVariantSku(demo.code, size.name, color.name),
-          stockQty: variant.stock,
-          weightedAvgCost: variant.cost,
-          lowStockThreshold: variant.threshold ?? null,
-          priceOverride: variant.priceOverride ?? null,
-        },
+      });
+      if (existing) {
+        await prisma.productVariant.update({
+          where: { id: existing.id },
+          data: { lowStockThreshold: variant.threshold ?? null, priceOverride: variant.priceOverride ?? null },
+        });
+        continue;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const created = await tx.productVariant.create({
+          data: {
+            productId: product.id,
+            sizeId: size.id,
+            colorId: color.id,
+            sku: buildVariantSku(demo.code, size.name, color.name),
+            weightedAvgCost: variant.cost,
+            lowStockThreshold: variant.threshold ?? null,
+            priceOverride: variant.priceOverride ?? null,
+          },
+        });
+        if (variant.stock !== 0) {
+          await recordStockMovement(tx, {
+            variantId: created.id,
+            type: "ADJUSTMENT",
+            qty: variant.stock,
+            unitCost: variant.cost,
+            referenceType: "OPENING_BALANCE",
+            actorId: null,
+            note: "Opening balance (seed)",
+          });
+        }
       });
     }
   }
@@ -585,6 +608,90 @@ async function seedDemoOrders() {
   });
 }
 
+// PRD §4.3 demo inventory — suppliers, two purchases (one with transport
+// cost to allocate, one part-paid so the supplier-due column has content),
+// a stock-count adjustment and a damage write-off, so the stock report,
+// ledger and purchase screens can be judged with real-looking data. Guarded
+// on "any purchase exists": every one of these moves stock and appends to
+// the immutable ledger, so none of it is safely re-appliable.
+async function seedInventory() {
+  if ((await prisma.purchase.count()) > 0) return;
+
+  const admin = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000001" } });
+  const manager = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000002" } });
+  const variantFor = (code: string, size: string, color: string) =>
+    prisma.productVariant.findFirstOrThrow({ where: { product: { code }, size: { name: size }, color: { name: color } } });
+
+  const rupkotha = await prisma.supplier.upsert({
+    where: { name: "Rupkotha Fabrics (Islampur)" },
+    update: {},
+    create: { name: "Rupkotha Fabrics (Islampur)", phone: "01819445566", address: "Islampur, Old Dhaka", notes: "Jamdani and cotton sarees. Pays transport by pickup van." },
+  });
+  const nakshi = await prisma.supplier.upsert({
+    where: { name: "Nakshi Stitch House" },
+    update: {},
+    create: { name: "Nakshi Stitch House", phone: "01912778899", address: "Mirpur 10, Dhaka", notes: "Kurti and three-piece job work." },
+  });
+
+  const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+  const [sareeMaroon, sareeBlack, kurtiMM, kurtiLM, kurtiLMustard, threePcPink] = await Promise.all([
+    variantFor("SAREE01", "Free", "Maroon"),
+    variantFor("SAREE01", "Free", "Black"),
+    variantFor("KURTI12", "M", "Maroon"),
+    variantFor("KURTI12", "L", "Maroon"),
+    variantFor("KURTI12", "L", "Mustard Yellow"),
+    variantFor("3PC05", "L", "Pink"),
+  ]);
+
+  await prisma.$transaction(
+    async (tx) => {
+      await createPurchase(
+        tx,
+        {
+          supplierId: rupkotha.id,
+          purchaseDate: daysAgo(12),
+          invoiceNo: "RF-7781",
+          allocationMethod: "BY_VALUE",
+          transportCost: 600,
+          otherCost: 0,
+          amountPaid: 14_200,
+          note: "Eid restock — paid in full by bKash merchant.",
+          items: [
+            { variantId: sareeMaroon.id, qty: 4, unitCost: 2300 },
+            { variantId: sareeBlack.id, qty: 2, unitCost: 2300 },
+          ],
+        },
+        manager.id,
+      );
+
+      await createPurchase(
+        tx,
+        {
+          supplierId: nakshi.id,
+          purchaseDate: daysAgo(4),
+          invoiceNo: "NSH-0412",
+          allocationMethod: "BY_QTY",
+          transportCost: 250,
+          otherCost: 150,
+          amountPaid: 5_000,
+          note: "Balance due after quality check.",
+          items: [
+            { variantId: kurtiMM.id, qty: 6, unitCost: 720 },
+            { variantId: kurtiLM.id, qty: 4, unitCost: 720 },
+            { variantId: kurtiLMustard.id, qty: 5, unitCost: 760 },
+            { variantId: threePcPink.id, qty: 3, unitCost: 1650 },
+          ],
+        },
+        manager.id,
+      );
+
+      await adjustStock(tx, { variantId: kurtiMM.id, qty: -1, reason: "Monthly stock count — one short against the ledger" }, admin.id);
+      await writeOffDamagedStock(tx, { variantId: sareeMaroon.id, qty: 1, reason: "Dye bleed along the border, not sellable" }, manager.id);
+    },
+    { timeout: 60_000 },
+  );
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -607,6 +714,7 @@ async function main() {
   await seedCouriers();
   await seedSettings();
   await seedDemoOrders();
+  await seedInventory();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

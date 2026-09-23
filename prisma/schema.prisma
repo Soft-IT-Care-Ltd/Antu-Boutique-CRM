@@ -177,6 +177,9 @@ model User {
   reviewedOrderEdits  OrderEditRequest[]       @relation("OrderEditReviewedBy")
   generatedInvoices   Invoice[]                @relation("InvoiceGeneratedBy")
   updatedSettings     Setting[]                @relation("SettingUpdatedBy")
+  stockMovements      StockMovement[]          @relation("StockMovementActor")
+  createdPurchases    Purchase[]               @relation("PurchaseCreatedBy")
+  createdExpenses     Expense[]                @relation("ExpenseCreatedBy")
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
 
@@ -271,9 +274,13 @@ model ProductImage {
   @@map("product_images")
 }
 
-// PRD §4.2 — what actually has stock and a sellable price. Stock is never
-// written here directly outside the seed script; Phase 2 moves it only
-// through stock_movements, one DB transaction per change (CLAUDE.md rule 2).
+// PRD §4.2 — what actually has stock and a sellable price. `stockQty` is
+// only ever moved by lib/inventory/ledger.ts's recordStockMovement, which
+// writes the stock_movements row in the same transaction (CLAUDE.md rule 2).
+// The DB backs this up: a deferred constraint trigger (migration
+// 20260923081635_stock_ledger_purchases) rejects any COMMIT where stockQty
+// differs from sum(stock_movements.qty) for that variant. `reservedQty` is a counter,
+// not a movement — reserving/releasing it never writes a ledger row.
 model ProductVariant {
   id        String  @id @default(cuid())
   productId String
@@ -293,7 +300,9 @@ model ProductVariant {
   lowStockThreshold Int?
   isActive          Boolean  @default(true)
 
-  orderItems OrderItem[]
+  orderItems     OrderItem[]
+  stockMovements StockMovement[]
+  purchaseItems  PurchaseItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -627,4 +636,196 @@ model Setting {
   updatedAt   DateTime @updatedAt
 
   @@map("settings")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.3 — Inventory: suppliers, purchases and the stock ledger (P2.1)
+// ---------------------------------------------------------------------------
+
+enum StockMovementType {
+  PURCHASE_IN
+  SALE_OUT
+  RETURN_IN
+  EXCHANGE_OUT
+  EXCHANGE_IN
+  DAMAGE_OUT
+  ADJUSTMENT
+  POS_SALE_OUT
+}
+
+// What a ledger row points back to (`referenceId` is that entity's id, or
+// null for OPENING_BALANCE / a manual ADJUSTMENT, where the row itself is
+// the record). RETURN / EXCHANGE are reserved for P3.2.
+enum StockReferenceType {
+  OPENING_BALANCE
+  PURCHASE
+  ORDER
+  ADJUSTMENT
+  DAMAGE
+  RETURN
+  EXCHANGE
+}
+
+// How a purchase's transport/other cost is spread across its lines before
+// it lands in each variant's weighted average cost.
+enum CostAllocationMethod {
+  BY_VALUE
+  BY_QTY
+}
+
+enum ExpenseNature {
+  FIXED
+  VARIABLE
+}
+
+model Supplier {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  phone     String?
+  address   String?
+  notes     String?
+  isActive  Boolean    @default(true)
+  purchases Purchase[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("suppliers")
+}
+
+// PRD §4.3 purchase entry. Never deleted or re-itemised once saved — its
+// lines have already moved stock and WAC; a mistake is corrected with a
+// manual ADJUSTMENT. Only the payment side (amountPaid, invoiceNo, note)
+// stays editable. `dueAmount` is always totalCost − amountPaid, computed
+// server-side (lib/inventory/purchases.ts), never taken from the client.
+model Purchase {
+  id               String               @id @default(cuid())
+  supplierId       String
+  supplier         Supplier             @relation(fields: [supplierId], references: [id])
+  purchaseDate     DateTime
+  invoiceNo        String?
+  allocationMethod CostAllocationMethod @default(BY_VALUE)
+
+  itemsSubtotal Decimal @db.Decimal(12, 2)
+  transportCost Decimal @default(0) @db.Decimal(12, 2)
+  otherCost     Decimal @default(0) @db.Decimal(12, 2)
+  totalCost     Decimal @db.Decimal(12, 2)
+  amountPaid    Decimal @default(0) @db.Decimal(12, 2)
+  dueAmount     Decimal @default(0) @db.Decimal(12, 2)
+
+  note String?
+
+  createdById String?
+  createdBy   User?   @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+
+  items PurchaseItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Same supplier invoice can't be entered twice (NULL invoiceNo is exempt —
+  // Postgres treats NULLs as distinct in a unique index).
+  @@unique([supplierId, invoiceNo])
+  @@index([purchaseDate])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id         String         @id @default(cuid())
+  purchaseId String
+  purchase   Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  qty            Int
+  unitCost       Decimal @db.Decimal(12, 2)
+  lineCost       Decimal @db.Decimal(12, 2)
+  allocatedCost  Decimal @default(0) @db.Decimal(12, 2)
+  landedUnitCost Decimal @db.Decimal(12, 2)
+
+  // Frozen at save time so the purchase screen can show exactly how this
+  // line moved the variant's weighted average cost.
+  stockBefore Int
+  wacBefore   Decimal @db.Decimal(12, 2)
+  wacAfter    Decimal @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([purchaseId])
+  @@index([variantId])
+  @@map("purchase_items")
+}
+
+// PRD §4.3 — immutable, append-only. A BEFORE UPDATE/DELETE trigger in the
+// migration rejects any change to an existing row; corrections are new
+// rows. `qty` is signed (+in / −out); `stockAfter` is the variant's
+// stockQty right after this row, so the ledger reads as a running balance.
+// Every FK here is Restrict: a cascade/set-null would be an UPDATE/DELETE
+// on the ledger, which the trigger forbids anyway.
+model StockMovement {
+  id               String             @id @default(cuid())
+  variantId        String
+  variant          ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  type             StockMovementType
+  qty              Int
+  stockAfter       Int
+  unitCostSnapshot Decimal            @db.Decimal(12, 2)
+  referenceType    StockReferenceType
+  referenceId      String?
+  note             String?
+
+  actorId String?
+  actor   User?   @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  expense Expense?
+
+  createdAt DateTime @default(now())
+
+  @@index([variantId, createdAt])
+  @@index([referenceType, referenceId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("stock_movements")
+}
+
+// PRD §4.12 — only the columns P2.1 needs to post a damage write-off at
+// cost. P2.3 adds the wallet it was paid from, attachments and the entry UI
+// on top of this same table.
+model ExpenseCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  expenses  Expense[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("expense_categories")
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  expenseDate DateTime
+  categoryId  String
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
+  nature      ExpenseNature
+  amount      Decimal         @db.Decimal(12, 2)
+  note        String?
+
+  // Set when the expense was posted by a stock event (DAMAGE_OUT write-off
+  // at cost) rather than typed in by hand.
+  stockMovementId String?        @unique
+  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
+
+  createdById String?
+  createdBy   User?   @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expenseDate])
+  @@index([categoryId])
+  @@index([deletedAt])
+  @@map("expenses")
 }

@@ -26,7 +26,7 @@ type OrderForPacking = {
  * The one place an order reaches PACKED (PRD §4.8, CLAUDE.md rule 2 + 3 +
  * 10). For every line: freezes unit_cost_snapshot from the variant's
  * CURRENT weighted average cost (never touched again — rule 3) and deducts
- * real stock (rule 10), then moves the order to PACKED via the same
+ * real stock with a SALE_OUT ledger row at that same cost (rules 2 + 10), then moves the order to PACKED via the same
  * status-history writer every other transition uses. All of it — item
  * updates, stock deduction, status move — runs in the caller's transaction,
  * so a failure anywhere rolls the whole pack back (rule 2).
@@ -50,7 +50,13 @@ export async function packOrder(
       where: { id: item.id },
       data: { unitCostSnapshot: variant.weightedAvgCost },
     });
-    await deductVariantStockAtPack(tx, item.variantId, item.qty);
+    await deductVariantStockAtPack(tx, {
+      orderId: order.id,
+      variantId: item.variantId,
+      qty: item.qty,
+      unitCost: variant.weightedAvgCost,
+      actorId: packerId,
+    });
   }
 
   await moveOrderStatus(

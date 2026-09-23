@@ -54,7 +54,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         guard.user.id,
         note,
       );
-    });
+      // CANCELLED after PACKED writes one RETURN_IN ledger row per line.
+    }, { timeout: 30_000 });
   } catch (error) {
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json({ error: error.message }, { status: 409 });

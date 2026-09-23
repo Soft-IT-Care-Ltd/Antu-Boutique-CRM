@@ -50,7 +50,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         guard.user.id,
         note,
       );
-    });
+      // Each line is a cost freeze + a SALE_OUT ledger write; give a big
+      // order room over Prisma's 5s default.
+    }, { timeout: 30_000 });
   } catch (error) {
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json({ error: error.message }, { status: 409 });

@@ -44,7 +44,13 @@ export async function moveOrderStatus(
       // unitCostSnapshot is only ever set at PACKED (CLAUDE.md rule 3) — its
       // presence is the signal that stock was deducted, not just reserved.
       if (item.unitCostSnapshot !== null) {
-        await restoreVariantStockAfterPack(tx, item.variantId, item.qty);
+        await restoreVariantStockAfterPack(tx, {
+          orderId: order.id,
+          variantId: item.variantId,
+          qty: item.qty,
+          unitCostSnapshot: item.unitCostSnapshot,
+          actorId: changedById,
+        });
       } else {
         await releaseVariantStock(tx, item.variantId, item.qty);
       }
