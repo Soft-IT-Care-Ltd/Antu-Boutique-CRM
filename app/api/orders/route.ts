@@ -119,6 +119,7 @@ const createOrderSchema = z
     expectedDeliveryDate: z.coerce.date().nullish(),
     advancePayment: advancePaymentSchema.nullish(),
     internalNote: z.string().trim().max(2000).nullish(),
+    deliveryNote: z.string().trim().max(200).nullish(),
   })
   .refine((data) => Boolean(data.customerId) !== Boolean(data.customer), {
     message: "Provide either an existing customerId or new customer details, not both",
@@ -133,7 +134,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { customerId, customer: newCustomerInput, items, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote } =
+  const { customerId, customer: newCustomerInput, items, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote, deliveryNote } =
     parsed.data;
 
   // Section 1 — resolve the one person on this order. Existing customer
@@ -266,6 +267,7 @@ export async function POST(request: NextRequest) {
           total: totals.total,
           dueAmount,
           internalNote: internalNote || null,
+          deliveryNote: deliveryNote || null,
           createdById: guard.user.id,
           teamId: guard.user.teamId,
         },

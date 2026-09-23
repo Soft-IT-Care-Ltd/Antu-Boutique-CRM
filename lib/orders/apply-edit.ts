@@ -30,6 +30,7 @@ export type OrderEditInput = {
   deliveryCharge?: number;
   expectedDeliveryDate?: Date | null;
   internalNote?: string | null;
+  deliveryNote?: string | null;
 };
 
 type ValidatedItem = OrderEditItemInput;
@@ -59,6 +60,7 @@ export function parseStoredOrderEditInput(raw: unknown): OrderEditInput {
     deliveryCharge: typeof obj.deliveryCharge === "number" ? obj.deliveryCharge : undefined,
     expectedDeliveryDate: rawDate === undefined ? undefined : rawDate === null ? null : new Date(rawDate as string),
     internalNote: obj.internalNote === undefined ? undefined : (obj.internalNote as string | null),
+    deliveryNote: obj.deliveryNote === undefined ? undefined : (obj.deliveryNote as string | null),
   };
 }
 
@@ -192,6 +194,7 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
         deliveryCharge: validation.effectiveDeliveryCharge,
         expectedDeliveryDate: input.expectedDeliveryDate === undefined ? undefined : input.expectedDeliveryDate,
         internalNote: input.internalNote === undefined ? undefined : input.internalNote || null,
+        deliveryNote: input.deliveryNote === undefined ? undefined : input.deliveryNote || null,
         subtotal: validation.subtotal,
         discountTotal: validation.discountTotal,
         total: validation.total,

@@ -38,6 +38,7 @@ Learned the hard way in P0.1 — don't rediscover these:
 - This shadcn install is **base-ui powered (`@base-ui/react`), not Radix**. Don't reach for Radix APIs or docs.
 - **`asChild` does not exist.** Base UI components take a `render` prop instead: `<SidebarMenuButton render={<Link href="/x" />}>` not `<SidebarMenuButton asChild><Link ...></SidebarMenuButton>`.
 - **`DropdownMenuLabel` must be wrapped in a `DropdownMenuGroup`.** Base UI's menu requires every label/item to sit inside a group — an unwrapped `DropdownMenuLabel` breaks. See `components/app-shell/topbar.tsx` for the working pattern.
+- **Generating a migration without a TTY:** `prisma migrate dev` refuses to run non-interactively. Use `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL" --script > prisma/migrations/<ts>_<name>/migration.sql`, then `npx prisma migrate deploy`. The shadow URL is ONLY ever `SHADOW_DATABASE_URL` (rule 11).
 - Future phases must follow this — check how an existing `components/ui/*` primitive is used elsewhere before assuming Radix conventions apply.
 
 ---
@@ -56,6 +57,7 @@ Check these on every change. They are the rules the business runs on.
 8. **Soft delete, never hard delete** for orders, customers, products — trash with 30-day restore, purged by cron.
 9. **Zod-validate every API input.** Never trust the client.
 10. **Stock is reserved at `CONFIRMED`, deducted at `PACKED`.**
+11. **Never aim a database-wiping command at a real database.** Never pass `DATABASE_URL` or `DIRECT_URL` to any command that can reset or wipe a database — `prisma migrate diff --shadow-database-url`, `prisma migrate reset`, `prisma db push --force-reset`, `DROP SCHEMA`/`DROP DATABASE`, or anything like them. Shadowing uses **only** `SHADOW_DATABASE_URL` (the throwaway `antu_shadow` database, wired as `shadowDatabaseUrl` in the Prisma datasource). **Any destructive database command needs the owner's explicit OK first — even on dev.** (Learned the hard way in P2.2: a shadow URL pointed at `DIRECT_URL` wiped the dev database.)
 
 ---
 

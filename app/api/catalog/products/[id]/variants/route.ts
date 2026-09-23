@@ -30,7 +30,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 }
 
 // PRD §4.2 variant matrix grid: editable columns are SKU (once), price
-// override, low-stock threshold and active flag. Stock/cost are read-only
+// override, low-stock threshold, weight (P2.2) and active flag. Stock/cost are read-only
 // here — they only move through stock_movements (Phase 2), per CLAUDE.md
 // rule 2 and the P1.1 build prompt.
 const editSchema = z.object({
@@ -38,6 +38,8 @@ const editSchema = z.object({
   sku: z.string().trim().min(1).max(60).optional(),
   priceOverride: z.union([z.coerce.number().nonnegative(), z.null()]).optional(),
   lowStockThreshold: z.union([z.coerce.number().int().min(0), z.null()]).optional(),
+  // P2.2 — optional parcel weight per unit (grams), for courier cost estimates.
+  weightGrams: z.union([z.coerce.number().int().min(1).max(50_000), z.null()]).optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -94,6 +96,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
       if (edit.priceOverride !== undefined) data.priceOverride = edit.priceOverride;
       if (edit.lowStockThreshold !== undefined) data.lowStockThreshold = edit.lowStockThreshold;
+      if (edit.weightGrams !== undefined) data.weightGrams = edit.weightGrams;
       if (edit.isActive !== undefined) data.isActive = edit.isActive;
 
       return prisma.productVariant.update({
@@ -109,8 +112,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     action: "catalog.variant.bulk_update",
     entityType: "product",
     entityId: id,
-    before: existing.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, isActive: v.isActive })),
-    after: updated.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, isActive: v.isActive })),
+    before: existing.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, weightGrams: v.weightGrams, isActive: v.isActive })),
+    after: updated.map((v) => ({ id: v.id, sku: v.sku, priceOverride: v.priceOverride?.toString(), lowStockThreshold: v.lowStockThreshold, weightGrams: v.weightGrams, isActive: v.isActive })),
     request,
   });
 

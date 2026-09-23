@@ -32,6 +32,7 @@ const STATUS_BADGE_VARIANT: Partial<Record<OrderStatusValue, "default" | "second
   RETURNED: "destructive",
   REFUNDED: "destructive",
   EXCHANGE_REQUESTED: "outline",
+  PARTIAL_DELIVERED: "outline",
 };
 
 export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; canFilterBySe: boolean }) {

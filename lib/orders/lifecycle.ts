@@ -3,10 +3,17 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { releaseVariantStock, restoreVariantStockAfterPack } from "@/lib/orders/stock";
+import { openReturnInspection } from "@/lib/returns/condition-check";
 import { isTransitionAllowed } from "@/lib/orders/status-graph";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 
-export { isTransitionAllowed, nextLegalStatuses, nextSelectableStatuses, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/status-graph";
+export {
+  COURIER_OWNED_STATUSES,
+  isTransitionAllowed,
+  nextLegalStatuses,
+  nextSelectableStatuses,
+  STATUSES_REQUIRING_DEDICATED_FLOW,
+} from "@/lib/orders/status-graph";
 
 type OrderWithItemsForMove = {
   id: string;
@@ -31,7 +38,8 @@ export async function moveOrderStatus(
   tx: Prisma.TransactionClient,
   order: OrderWithItemsForMove,
   toStatus: OrderStatusValue,
-  changedById: string,
+  /** null = the system (courier webhook / poll) — shown as "System" in history. */
+  changedById: string | null,
   note?: string | null,
 ): Promise<void> {
   const fromStatus = order.status;
@@ -61,4 +69,19 @@ export async function moveOrderStatus(
   await tx.orderStatusHistory.create({
     data: { orderId: order.id, fromStatus, toStatus, changedById, note: note || null },
   });
+
+  // PRD §4.9 / §4.11: goods coming back are never restocked on the status
+  // move itself — a Packing condition check decides Good vs Damaged. Any
+  // path into RETURNED (courier sync or a manual move) opens that task;
+  // PARTIAL_DELIVERED opens it one step earlier, waiting for staff to mark
+  // which items the customer kept.
+  if (toStatus === "RETURNED") {
+    const courierLeg: OrderStatusValue[] = ["HANDED_TO_COURIER", "IN_TRANSIT", "ON_HOLD"];
+    await openReturnInspection(tx, {
+      orderId: order.id,
+      source: courierLeg.includes(fromStatus) ? "COURIER_RETURN" : "CUSTOMER_RETURN",
+    });
+  } else if (toStatus === "PARTIAL_DELIVERED") {
+    await openReturnInspection(tx, { orderId: order.id, source: "PARTIAL_DELIVERY" });
+  }
 }

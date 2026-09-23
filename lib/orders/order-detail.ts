@@ -88,6 +88,7 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
     total: order.total.toString(),
     dueAmount: order.dueAmount.toString(),
     internalNote: order.internalNote,
+    deliveryNote: order.deliveryNote,
     items: order.items.map((item) => ({
       id: item.id,
       variantId: item.variantId,
@@ -104,6 +105,7 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
       unitCostSnapshot: item.unitCostSnapshot?.toString() ?? null,
       stockOverride: item.stockOverride,
       stockOverrideReason: item.stockOverrideReason,
+      returnedQty: item.returnedQty,
     })),
     images: order.images.map((image) => ({
       id: image.id,

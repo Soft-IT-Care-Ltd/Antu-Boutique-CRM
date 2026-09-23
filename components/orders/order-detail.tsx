@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { FileText, Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { FileText, Pencil, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { OrderEditRequestBanner } from "@/components/orders/order-edit-request-banner";
 import { OrderImagesField } from "@/components/orders/order-images-field";
 import { OrderPaymentsPanel } from "@/components/orders/order-payments-panel";
+import { OrderShipmentCard } from "@/components/orders/order-shipment-card";
 import { OrderStatusControl } from "@/components/orders/order-status-control";
+import { SendToSteadfastDialog } from "@/components/courier/send-to-steadfast-dialog";
+import type { ShipmentDetailView } from "@/lib/courier/types";
 import { formatBDT } from "@/lib/money";
+import { fetchJson } from "@/lib/orders/client";
 import { DELIVERY_ZONE_LABELS, ORDER_STATUS_LABELS } from "@/lib/orders/constants";
 import { orderUploadUrl } from "@/lib/orders/types";
 import type { OrderDetail as OrderDetailType } from "@/lib/orders/types";
@@ -32,6 +37,8 @@ export function OrderDetail({
   canEditPayment,
   canDeletePayment,
   canVerifyPayment,
+  shipment,
+  canSendToSteadfast,
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -43,8 +50,12 @@ export function OrderDetail({
   canEditPayment: boolean;
   canDeletePayment: boolean;
   canVerifyPayment: boolean;
+  shipment: ShipmentDetailView | null;
+  canSendToSteadfast: boolean;
 }) {
+  const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
+  const [sendOpen, setSendOpen] = useState(false);
   const [images, setImages] = useState(initialOrder.images);
 
   const pendingEditRequest = order.editRequests.find((r) => r.status === "PENDING") ?? null;
@@ -63,7 +74,13 @@ export function OrderDetail({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canUpdateStatus ? <OrderStatusControl order={order} onChange={setOrder} /> : null}
+          {canSendToSteadfast && order.status === "PACKED" && !shipment ? (
+            <Button onClick={() => setSendOpen(true)}>
+              <Send />
+              Send to Steadfast
+            </Button>
+          ) : null}
+          {canUpdateStatus ? <OrderStatusControl order={order} onChange={setOrder} courierBooked={Boolean(shipment?.consignmentId)} /> : null}
           {canEdit ? (
             <Button render={<Link href={`/orders/${order.id}/edit`} />} nativeButton={false} variant="outline">
               <Pencil />
@@ -137,6 +154,17 @@ export function OrderDetail({
         </Card>
       </div>
 
+      {shipment ? <OrderShipmentCard shipment={shipment} /> : null}
+
+      <SendToSteadfastDialog orderIds={sendOpen ? [order.id] : null} onOpenChange={setSendOpen} onDone={() => {
+          // The order moved to HANDED_TO_COURIER server-side: reload it, and
+          // refresh the server props so the shipment card appears.
+          fetchJson<{ order: OrderDetailType }>(`/api/orders/${order.id}`)
+            .then((data) => setOrder(data.order))
+            .catch(() => {});
+          router.refresh();
+        }} />
+
       <Card>
         <CardHeader>
           <CardTitle>Items</CardTitle>
@@ -170,7 +198,10 @@ export function OrderDetail({
                       </Badge>
                     ) : null}
                   </TableCell>
-                  <TableCell>{item.qty}</TableCell>
+                  <TableCell>
+                    {item.qty}
+                    {item.returnedQty > 0 ? <div className="text-xs text-amber-600">{item.returnedQty} returned</div> : null}
+                  </TableCell>
                   <TableCell>{formatBDT(item.unitPrice)}</TableCell>
                   <TableCell>{formatBDT(item.lineDiscount)}</TableCell>
                   {hasCostAccess ? <TableCell className="text-muted-foreground">{item.unitCostSnapshot ? formatBDT(item.unitCostSnapshot) : "—"}</TableCell> : null}
@@ -265,6 +296,13 @@ export function OrderDetail({
               canDelete={canDeletePayment}
               canVerify={canVerifyPayment}
             />
+
+            {order.deliveryNote ? (
+              <div className="border-t pt-3">
+                <p className="text-xs font-medium text-muted-foreground">Delivery instructions (sent to the courier)</p>
+                <p className="text-sm">{order.deliveryNote}</p>
+              </div>
+            ) : null}
 
             {order.internalNote ? (
               <div className="border-t pt-3">

@@ -9,6 +9,10 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  // Throwaway `antu_shadow` database. Prisma WIPES the shadow database
+  // before replaying migrations into it — it must never be DATABASE_URL or
+  // DIRECT_URL (see CLAUDE.md, non-negotiable rule 11).
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 enum RoleName {
@@ -55,6 +59,10 @@ enum OrderStatus {
   RETURNED
   REFUNDED
   EXCHANGE_REQUESTED
+  // P2.2 — the courier delivered part of the parcel (customer kept some
+  // items, sent the rest back with the rider). Only ever set by the courier
+  // sync (lib/courier/sync.ts), never by the generic status route.
+  PARTIAL_DELIVERED
 }
 
 // PRD §4.9 courier zone tiers.
@@ -148,40 +156,44 @@ model UserPermissionOverride {
 }
 
 model User {
-  id                  String                   @id @default(cuid())
-  name                String
-  phone               String                   @unique
-  email               String?                  @unique
-  passwordHash        String
-  avatarUrl           String?
-  roleId              String
-  role                Role                     @relation(fields: [roleId], references: [id])
-  teamId              String?
-  team                Team?                    @relation("TeamMembers", fields: [teamId], references: [id])
-  ledTeam             Team?                    @relation("TeamLeader")
-  isActive            Boolean                  @default(true)
-  mustChangePassword  Boolean                  @default(true)
-  failedLoginCount    Int                      @default(0)
-  lockedUntil         DateTime?
-  lastLoginAt         DateTime?
-  joinDate            DateTime                 @default(now())
-  permissionOverrides UserPermissionOverride[]
-  auditLogs           AuditLog[]
-  createdProducts     Product[]                @relation("ProductCreatedBy")
-  createdCustomers    Customer[]               @relation("CustomerCreatedBy")
-  createdOrders       Order[]                  @relation("OrderCreatedBy")
-  uploadedOrderImages OrderImage[]             @relation("OrderImageUploadedBy")
-  orderStatusChanges  OrderStatusHistory[]     @relation("OrderStatusChangedBy")
-  receivedPayments    Payment[]                @relation("PaymentReceivedBy")
-  requestedOrderEdits OrderEditRequest[]       @relation("OrderEditRequestedBy")
-  reviewedOrderEdits  OrderEditRequest[]       @relation("OrderEditReviewedBy")
-  generatedInvoices   Invoice[]                @relation("InvoiceGeneratedBy")
-  updatedSettings     Setting[]                @relation("SettingUpdatedBy")
-  stockMovements      StockMovement[]          @relation("StockMovementActor")
-  createdPurchases    Purchase[]               @relation("PurchaseCreatedBy")
-  createdExpenses     Expense[]                @relation("ExpenseCreatedBy")
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
+  id                        String                   @id @default(cuid())
+  name                      String
+  phone                     String                   @unique
+  email                     String?                  @unique
+  passwordHash              String
+  avatarUrl                 String?
+  roleId                    String
+  role                      Role                     @relation(fields: [roleId], references: [id])
+  teamId                    String?
+  team                      Team?                    @relation("TeamMembers", fields: [teamId], references: [id])
+  ledTeam                   Team?                    @relation("TeamLeader")
+  isActive                  Boolean                  @default(true)
+  mustChangePassword        Boolean                  @default(true)
+  failedLoginCount          Int                      @default(0)
+  lockedUntil               DateTime?
+  lastLoginAt               DateTime?
+  joinDate                  DateTime                 @default(now())
+  permissionOverrides       UserPermissionOverride[]
+  auditLogs                 AuditLog[]
+  createdProducts           Product[]                @relation("ProductCreatedBy")
+  createdCustomers          Customer[]               @relation("CustomerCreatedBy")
+  createdOrders             Order[]                  @relation("OrderCreatedBy")
+  uploadedOrderImages       OrderImage[]             @relation("OrderImageUploadedBy")
+  orderStatusChanges        OrderStatusHistory[]     @relation("OrderStatusChangedBy")
+  receivedPayments          Payment[]                @relation("PaymentReceivedBy")
+  requestedOrderEdits       OrderEditRequest[]       @relation("OrderEditRequestedBy")
+  reviewedOrderEdits        OrderEditRequest[]       @relation("OrderEditReviewedBy")
+  generatedInvoices         Invoice[]                @relation("InvoiceGeneratedBy")
+  updatedSettings           Setting[]                @relation("SettingUpdatedBy")
+  stockMovements            StockMovement[]          @relation("StockMovementActor")
+  createdPurchases          Purchase[]               @relation("PurchaseCreatedBy")
+  createdExpenses           Expense[]                @relation("ExpenseCreatedBy")
+  bookedShipments           Shipment[]               @relation("ShipmentBookedBy")
+  accountsReviewedShipments Shipment[]               @relation("ShipmentAccountsReviewedBy")
+  inspectedReturns          ReturnInspection[]       @relation("ReturnInspectedBy")
+  keptItemsMarked           ReturnInspection[]       @relation("ReturnKeptItemsMarkedBy")
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
 
   @@map("users")
 }
@@ -298,6 +310,9 @@ model ProductVariant {
   weightedAvgCost   Decimal  @default(0) @db.Decimal(12, 2)
   priceOverride     Decimal? @db.Decimal(12, 2)
   lowStockThreshold Int?
+  // P2.2 — optional parcel weight per unit, in grams (integer, never a
+  // float). Summed per order to pre-fill the courier cost estimate.
+  weightGrams       Int?
   isActive          Boolean  @default(true)
 
   orderItems     OrderItem[]
@@ -374,14 +389,20 @@ model AuditLog {
 // Phase 2 (P2.2) extends CourierCompany with Steadfast credentials,
 // consignment tracking and COD reconciliation without touching this shape.
 model CourierCompany {
-  id        String        @id @default(cuid())
-  name      String        @unique
-  contact   String?
-  isActive  Boolean       @default(true)
-  zones     CourierZone[]
-  orders    Order[]
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id          String              @id @default(cuid())
+  name        String              @unique
+  contact     String?
+  // P2.2 — which API integration (if any) drives this courier. The schema
+  // stays multi-courier; only Steadfast has an integration today.
+  provider    CourierProvider?    @unique
+  isActive    Boolean             @default(true)
+  zones       CourierZone[]
+  costRates   CourierCostRate[]
+  integration CourierIntegration?
+  shipments   Shipment[]
+  orders      Order[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   @@map("courier_companies")
 }
@@ -440,6 +461,10 @@ model Order {
   dueAmount     Decimal @default(0) @db.Decimal(12, 2)
 
   internalNote String?
+  // P2.2 — delivery instructions for the rider ("call before coming", "gate
+  // 3"). This, and ONLY this, is sent as the courier consignment `note` —
+  // internalNote is staff-only and must never leave the building.
+  deliveryNote String?
 
   createdById String?
   createdBy   User?   @relation("OrderCreatedBy", fields: [createdById], references: [id])
@@ -449,12 +474,14 @@ model Order {
   teamId      String?
   team        Team?   @relation("OrderTeam", fields: [teamId], references: [id])
 
-  items         OrderItem[]
-  images        OrderImage[]
-  payments      Payment[]
-  statusHistory OrderStatusHistory[]
-  editRequests  OrderEditRequest[]
-  invoices      Invoice[]
+  items             OrderItem[]
+  images            OrderImage[]
+  payments          Payment[]
+  statusHistory     OrderStatusHistory[]
+  editRequests      OrderEditRequest[]
+  invoices          Invoice[]
+  shipment          Shipment?
+  returnInspections ReturnInspection[]
 
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
@@ -490,7 +517,13 @@ model OrderItem {
   stockOverride       Boolean @default(false)
   stockOverrideReason String?
 
-  images OrderImage[]
+  // P2.2 partial delivery — how many units of this line the customer sent
+  // back with the rider. The order total is recomputed on the kept quantity
+  // (lib/courier/partial-delivery.ts); qty itself never changes.
+  returnedQty Int @default(0)
+
+  images                OrderImage[]
+  returnInspectionLines ReturnInspectionLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -816,6 +849,12 @@ model Expense {
   stockMovementId String?        @unique
   stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
 
+  // P2.2 — set when the expense is the courier return charge for a returned
+  // parcel, posted once when its condition check completes. Unique, so a
+  // replayed check can never post the charge twice.
+  returnChargeInspectionId String?           @unique
+  returnChargeInspection   ReturnInspection? @relation("ReturnChargeExpense", fields: [returnChargeInspectionId], references: [id], onDelete: Restrict)
+
   createdById String?
   createdBy   User?   @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
 
@@ -828,4 +867,241 @@ model Expense {
   @@index([categoryId])
   @@index([deletedAt])
   @@map("expenses")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.9 — Courier & delivery: Steadfast integration, shipments, courier
+// cost, and the courier return condition check (P2.2)
+// ---------------------------------------------------------------------------
+
+enum CourierProvider {
+  STEADFAST
+}
+
+// Where a courier status reached us from. API = the raw create-order
+// response logged at booking time (undocumented fields stay discoverable).
+enum ShipmentEventSource {
+  WEBHOOK
+  POLL
+  API
+}
+
+// What the parcel is doing INSIDE the courier while the order status sits
+// at IN_TRANSIT. The *_APPROVAL_PENDING values are Gift Valy's Round 2 §2.6
+// lesson: the rider has marked the parcel, but the hub hasn't approved it
+// yet (COD not in our balance), so the order must not move on.
+enum ShipmentSubStatus {
+  PENDING
+  DELIVERY_APPROVAL_PENDING
+  PARTIAL_DELIVERY_APPROVAL_PENDING
+  RETURN_APPROVAL_PENDING
+}
+
+enum ReturnInspectionSource {
+  COURIER_RETURN
+  PARTIAL_DELIVERY
+  CUSTOMER_RETURN
+  EXCHANGE
+}
+
+enum ReturnInspectionStatus {
+  // Partial delivery only: waiting for staff to say which items were kept.
+  AWAITING_KEPT_ITEMS
+  // The goods are on their way back / at the door: Packing to check them.
+  PENDING
+  COMPLETED
+}
+
+// CORRECTIONS Courier §1 — what WE pay the courier, per zone: `baseRate`
+// covers the first kilogram, `perKgRate` each further started kilogram.
+// Separate from CourierZone.charge, which is what the CUSTOMER is charged
+// for delivery (and is often waived). Cost data: stripped for roles without
+// product.cost.view.
+model CourierCostRate {
+  id        String         @id @default(cuid())
+  courierId String
+  courier   CourierCompany @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  zone      DeliveryZone
+  baseRate  Decimal        @default(0) @db.Decimal(10, 2)
+  perKgRate Decimal        @default(0) @db.Decimal(10, 2)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([courierId, zone])
+  @@map("courier_cost_rates")
+}
+
+// One row per integrated courier. Every secret column is AES-256-GCM
+// ciphertext under COURIER_ENCRYPTION_KEY (lib/courier/crypto.ts) and is
+// only ever decrypted server-side; the browser gets a masked view.
+model CourierIntegration {
+  id                    String          @id @default(cuid())
+  courierId             String          @unique
+  courier               CourierCompany  @relation(fields: [courierId], references: [id], onDelete: Cascade)
+  provider              CourierProvider @unique
+  apiKeyEncrypted       String?
+  secretKeyEncrypted    String?
+  webhookTokenEncrypted String?
+  isEnabled             Boolean         @default(false)
+  pollingMinutes        Int             @default(15)
+  connectedAt           DateTime?
+  lastBalance           Decimal?        @db.Decimal(12, 2)
+  lastBalanceAt         DateTime?
+  lastSyncAt            DateTime?
+  lastWebhookAt         DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@map("courier_integrations")
+}
+
+// PRD §4.9 — one shipment per order (orderId is unique: that IS the
+// database-level double-send guard). A row with bookedAt = null is a
+// booking claim taken just before the courier API call, so two concurrent
+// "Send" clicks can't both reach the courier.
+model Shipment {
+  id        String         @id @default(cuid())
+  orderId   String         @unique
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  courierId String
+  courier   CourierCompany @relation(fields: [courierId], references: [id])
+
+  consignmentId   String?            @unique
+  trackingCode    String?
+  trackingUrl     String?
+  // Exactly what the courier last reported, lowercased (e.g. "in_review",
+  // "delivered_approval_pending"). The order status is the mapped view.
+  steadfastStatus String?
+  subStatus       ShipmentSubStatus?
+  onHold          Boolean            @default(false)
+  needsAttention  Boolean            @default(false)
+  attentionReason String?
+
+  zone                DeliveryZone?
+  weightGrams         Int?
+  codAmount           Decimal       @default(0) @db.Decimal(12, 2)
+  // Cost fields — stripped for roles without product.cost.view. The actual
+  // (from the courier webhook's delivery_charge) always wins over the
+  // zone+weight estimate for P&L (lib/courier/cost.ts effectiveCourierCost).
+  courierCostEstimate Decimal?      @db.Decimal(10, 2)
+  courierCostActual   Decimal?      @db.Decimal(10, 2)
+
+  // COD the courier reports as collected at the door (delivered / partial),
+  // and when the courier actually paid it out to us (COD reconciliation).
+  codCollected  Decimal?  @db.Decimal(12, 2)
+  codReceivedAt DateTime?
+
+  // Partial delivery: flagged for ACCOUNTS until someone reviews the money.
+  accountsReviewRequired Boolean   @default(false)
+  accountsReviewedAt     DateTime?
+  accountsReviewedById   String?
+  accountsReviewedBy     User?     @relation("ShipmentAccountsReviewedBy", fields: [accountsReviewedById], references: [id])
+
+  bookedAt     DateTime?
+  bookedById   String?
+  bookedBy     User?     @relation("ShipmentBookedBy", fields: [bookedById], references: [id])
+  inTransitAt  DateTime?
+  deliveredAt  DateTime?
+  returnedAt   DateTime?
+  // Set once the courier reports a FINAL status (delivered / partial /
+  // cancelled after hub approval). Polling skips finalized shipments.
+  finalizedAt  DateTime?
+  // Last webhook or poll that touched this shipment, and last poll alone.
+  lastStatusAt DateTime?
+  lastPolledAt DateTime?
+
+  statusLogs        ShipmentStatusLog[]
+  trackingEvents    ShipmentTrackingEvent[]
+  returnInspections ReturnInspection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courierId])
+  @@index([finalizedAt])
+  @@index([needsAttention])
+  @@map("shipments")
+}
+
+// Every status payload we ever received (webhook or poll) or sent back
+// from the create call, verbatim — the audit trail and the only way to
+// diagnose courier-side surprises. shipmentId is null for payloads whose
+// consignment we couldn't match.
+model ShipmentStatusLog {
+  id         String              @id @default(cuid())
+  shipmentId String?
+  shipment   Shipment?           @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  source     ShipmentEventSource
+  rawStatus  String?
+  rawPayload Json
+  receivedAt DateTime            @default(now())
+
+  @@index([shipmentId, receivedAt])
+  @@index([receivedAt])
+  @@map("shipment_status_logs")
+}
+
+// Steadfast's `tracking_update` webhook: free-text timeline entries, no
+// status change. eventAt is the courier's own timestamp (Asia/Dhaka local
+// on the wire, stored UTC — CORRECTIONS Round 2 §2.5).
+model ShipmentTrackingEvent {
+  id         String              @id @default(cuid())
+  shipmentId String
+  shipment   Shipment            @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  message    String
+  eventAt    DateTime
+  source     ShipmentEventSource
+  createdAt  DateTime            @default(now())
+
+  @@index([shipmentId, eventAt])
+  @@map("shipment_tracking_events")
+}
+
+// PRD §4.9 / §4.11 — the Packing condition check for goods coming back:
+// Good → back on the shelf (RETURN_IN / EXCHANGE_IN), Damaged → DAMAGE_OUT
+// write-off with an expense at cost. lib/returns/condition-check.ts is the
+// one service that completes these; courier returns, partial deliveries
+// and (Phase 3) exchanges all create a row here and call it.
+model ReturnInspection {
+  id         String                 @id @default(cuid())
+  orderId    String
+  order      Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  shipmentId String?
+  shipment   Shipment?              @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  source     ReturnInspectionSource
+  status     ReturnInspectionStatus @default(PENDING)
+
+  keptItemsMarkedAt   DateTime?
+  keptItemsMarkedById String?
+  keptItemsMarkedBy   User?     @relation("ReturnKeptItemsMarkedBy", fields: [keptItemsMarkedById], references: [id])
+
+  inspectedAt   DateTime?
+  inspectedById String?
+  inspectedBy   User?     @relation("ReturnInspectedBy", fields: [inspectedById], references: [id])
+  note          String?
+
+  lines               ReturnInspectionLine[]
+  returnChargeExpense Expense?               @relation("ReturnChargeExpense")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@map("return_inspections")
+}
+
+model ReturnInspectionLine {
+  id           String           @id @default(cuid())
+  inspectionId String
+  inspection   ReturnInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  orderItemId  String
+  orderItem    OrderItem        @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  // Units expected back, then how the inspector split them.
+  qty          Int
+  goodQty      Int              @default(0)
+  damagedQty   Int              @default(0)
+
+  @@unique([inspectionId, orderItemId])
+  @@map("return_inspection_lines")
 }

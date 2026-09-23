@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, StockReferenceType } from "@prisma/client";
 
 import { fromPaisa, toPaisa } from "./costing";
 import { WRITE_OFF_EXPENSE_CATEGORY } from "./constants";
@@ -35,8 +35,19 @@ export async function adjustStock(tx: Prisma.TransactionClient, input: StockChan
   });
 }
 
+export type WriteOffOptions = {
+  /**
+   * Value the units at this cost instead of the current weighted average —
+   * returned goods are written off at the unit_cost_snapshot they left with,
+   * so the write-off matches the RETURN_IN that just put them back.
+   */
+  unitCost?: Prisma.Decimal;
+  referenceType?: StockReferenceType;
+  referenceId?: string | null;
+};
+
 /** Takes `qty` (positive) damaged units off the shelf and books their cost as an expense, atomically. */
-export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: StockChangeRequest, actorId: string) {
+export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: StockChangeRequest, actorId: string | null, options: WriteOffOptions = {}) {
   const reason = input.reason.trim();
   if (!reason) throw new StockMovementError("A reason is required for a write-off");
   if (!Number.isInteger(input.qty) || input.qty <= 0) throw new StockMovementError("Write-off quantity must be a positive whole number");
@@ -47,12 +58,14 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
     throw new StockMovementError(`Only ${locked.stockQty} on hand — can't write off ${input.qty}`);
   }
 
+  const unitCost = options.unitCost ?? locked.weightedAvgCost;
   const movement = await recordStockMovement(tx, {
     variantId: input.variantId,
     type: "DAMAGE_OUT",
     qty: -input.qty,
-    unitCost: locked.weightedAvgCost,
-    referenceType: "DAMAGE",
+    unitCost,
+    referenceType: options.referenceType ?? "DAMAGE",
+    referenceId: options.referenceId ?? null,
     actorId,
     note: reason,
   });
@@ -69,7 +82,7 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
       expenseDate: movement.createdAt,
       categoryId: category.id,
       nature: "VARIABLE",
-      amount: fromPaisa(toPaisa(locked.weightedAvgCost) * input.qty),
+      amount: fromPaisa(toPaisa(unitCost) * input.qty),
       note: `Write-off: ${input.qty} × ${variant.sku} — ${reason}`,
       stockMovementId: movement.id,
       createdById: actorId,

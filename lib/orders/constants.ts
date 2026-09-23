@@ -18,6 +18,7 @@ export const ORDER_STATUS_VALUES = [
   "RETURNED",
   "REFUNDED",
   "EXCHANGE_REQUESTED",
+  "PARTIAL_DELIVERED",
 ] as const;
 export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
 
@@ -34,15 +35,18 @@ export const ORDER_STATUS_LABELS: Record<OrderStatusValue, string> = {
   RETURNED: "Returned",
   REFUNDED: "Refunded",
   EXCHANGE_REQUESTED: "Exchange requested",
+  PARTIAL_DELIVERED: "Partially delivered",
 };
 
 export const DELIVERY_ZONE_VALUES = ["INSIDE_CITY", "SUB_CITY", "OUTSIDE_CITY"] as const;
 export type DeliveryZoneValue = (typeof DELIVERY_ZONE_VALUES)[number];
 
 export const DELIVERY_ZONE_LABELS: Record<DeliveryZoneValue, string> = {
-  INSIDE_CITY: "Inside city",
-  SUB_CITY: "Sub-city",
-  OUTSIDE_CITY: "Outside city",
+  // PRD §4.9's inside city / sub-city / outside city, named for the
+  // showroom's city — the same three tiers Steadfast bills by.
+  INSIDE_CITY: "Inside Dhaka",
+  SUB_CITY: "Sub Dhaka",
+  OUTSIDE_CITY: "Outside Dhaka",
 };
 
 export const PAYMENT_METHOD_VALUES = ["BKASH", "NAGAD", "ROCKET", "BANK", "CASH", "CARD"] as const;

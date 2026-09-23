@@ -45,7 +45,7 @@ export async function releaseVariantStock(
 // when the line was packed.
 export async function restoreVariantStockAfterPack(
   tx: Prisma.TransactionClient,
-  input: { orderId: string; variantId: string; qty: number; unitCostSnapshot: Prisma.Decimal; actorId: string },
+  input: { orderId: string; variantId: string; qty: number; unitCostSnapshot: Prisma.Decimal; actorId: string | null },
 ): Promise<void> {
   if (input.qty === 0) return;
   await recordStockMovement(tx, {

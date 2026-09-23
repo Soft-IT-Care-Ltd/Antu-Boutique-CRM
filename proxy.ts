@@ -33,6 +33,10 @@ export default auth((req) => {
   return NextResponse.next();
 });
 
+// api/webhooks and api/cron are machine-to-machine: Steadfast and the cron
+// scheduler have no session, so the login redirect must never touch them.
+// Each of those routes authenticates itself with its own Bearer secret
+// (the Steadfast webhook token / CRON_SECRET) before reading anything.
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|uploads).*)"],
+  matcher: ["/((?!api/auth|api/webhooks|api/cron|_next/static|_next/image|favicon.ico|uploads).*)"],
 };

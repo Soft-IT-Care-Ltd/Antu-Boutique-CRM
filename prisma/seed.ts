@@ -461,6 +461,7 @@ async function seedCustomers() {
 type DemoCourier = {
   name: string;
   contact: string;
+  provider?: "STEADFAST";
   zones: Array<{ zone: "INSIDE_CITY" | "SUB_CITY" | "OUTSIDE_CITY"; charge: number; codChargePercent: number; returnCharge: number }>;
 };
 
@@ -468,6 +469,7 @@ const DEMO_COURIERS: DemoCourier[] = [
   {
     name: "Steadfast Courier",
     contact: "16374",
+    provider: "STEADFAST",
     zones: [
       { zone: "INSIDE_CITY", charge: 60, codChargePercent: 1, returnCharge: 60 },
       { zone: "SUB_CITY", charge: 100, codChargePercent: 1, returnCharge: 80 },
@@ -489,8 +491,8 @@ async function seedCouriers() {
   for (const courier of DEMO_COURIERS) {
     const row = await prisma.courierCompany.upsert({
       where: { name: courier.name },
-      update: { contact: courier.contact },
-      create: { name: courier.name, contact: courier.contact },
+      update: { contact: courier.contact, provider: courier.provider ?? null },
+      create: { name: courier.name, contact: courier.contact, provider: courier.provider ?? null },
     });
     for (const zone of courier.zones) {
       await prisma.courierZone.upsert({
@@ -692,6 +694,314 @@ async function seedInventory() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// P2.2 — courier cost rates, variant weights, and demo shipments
+// ---------------------------------------------------------------------------
+
+// What Steadfast charges US (base covers the first kg, per-kg each extra
+// started kg) — separate from the customer's delivery charge above.
+const STEADFAST_COST_RATES = [
+  { zone: "INSIDE_CITY", baseRate: 60, perKgRate: 20 },
+  { zone: "SUB_CITY", baseRate: 100, perKgRate: 25 },
+  { zone: "OUTSIDE_CITY", baseRate: 120, perKgRate: 25 },
+] as const;
+
+// Parcel weight per unit in grams. WEST02 is deliberately left blank so the
+// send dialog's "some items have no weight" warning has something to show.
+const VARIANT_WEIGHTS_GRAMS: Record<string, number> = { SAREE01: 650, KURTI12: 250, "3PC05": 480 };
+
+async function seedCourierCosts() {
+  const steadfast = await prisma.courierCompany.findUniqueOrThrow({ where: { provider: "STEADFAST" } });
+  for (const rate of STEADFAST_COST_RATES) {
+    await prisma.courierCostRate.upsert({
+      where: { courierId_zone: { courierId: steadfast.id, zone: rate.zone } },
+      update: {},
+      create: { courierId: steadfast.id, ...rate },
+    });
+  }
+  for (const [code, grams] of Object.entries(VARIANT_WEIGHTS_GRAMS)) {
+    await prisma.productVariant.updateMany({ where: { product: { code }, weightGrams: null }, data: { weightGrams: grams } });
+  }
+}
+
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+type CourierDemoStage = "PACKED" | "HANDED_TO_COURIER" | "IN_TRANSIT" | "APPROVAL_PENDING" | "DELIVERED" | "RETURNED" | "PARTIAL_DELIVERED";
+
+type CourierDemoSpec = {
+  stage: CourierDemoStage;
+  customerPhone: string;
+  lines: { code: string; size: string; color: string; qty: number; unitPrice: number }[];
+  zone: "INSIDE_CITY" | "SUB_CITY" | "OUTSIDE_CITY";
+  advance?: number;
+  deliveryNote?: string;
+  internalNote?: string;
+  hoursAgo: number;
+};
+
+// One demo order per courier stage so every Courier-page tab has content.
+// Written the way the app writes them — reserve at CONFIRMED, SALE_OUT +
+// cost snapshot at PACKED through the real ledger function, status history
+// at each step — because lib/orders/pack.ts and lib/courier/* are
+// "server-only" and can't run under tsx. Consignment ids / tracking codes
+// are obviously fake (DEMO…) — never a real Steadfast parcel.
+const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
+  {
+    stage: "PACKED",
+    customerPhone: "01812345678",
+    lines: [{ code: "KURTI12", size: "M", color: "Mustard Yellow", qty: 1, unitPrice: 1450 }],
+    zone: "INSIDE_CITY",
+    deliveryNote: "Call before coming — office hours only, 10am–6pm.",
+    internalNote: "Customer is a repeat buyer; gave 50 tk discount last time.",
+    hoursAgo: 5,
+  },
+  {
+    stage: "PACKED",
+    customerPhone: "01511998877",
+    lines: [
+      { code: "3PC05", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
+      { code: "WEST02", size: "S", color: "White", qty: 1, unitPrice: 990 },
+    ],
+    zone: "OUTSIDE_CITY",
+    advance: 500,
+    hoursAgo: 3,
+  },
+  {
+    stage: "HANDED_TO_COURIER",
+    customerPhone: "01711998800",
+    lines: [{ code: "SAREE01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
+    zone: "OUTSIDE_CITY",
+    advance: 1000,
+    hoursAgo: 20,
+  },
+  {
+    stage: "IN_TRANSIT",
+    customerPhone: "01911223344",
+    lines: [{ code: "KURTI12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 }],
+    zone: "INSIDE_CITY",
+    deliveryNote: "Leave with the guard if not home.",
+    hoursAgo: 30,
+  },
+  {
+    stage: "APPROVAL_PENDING",
+    customerPhone: "01611556677",
+    lines: [{ code: "3PC05", size: "L", color: "Pink", qty: 1, unitPrice: 2750 }],
+    zone: "OUTSIDE_CITY",
+    hoursAgo: 52,
+  },
+  {
+    stage: "DELIVERED",
+    customerPhone: "01812345678",
+    lines: [{ code: "SAREE01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
+    zone: "INSIDE_CITY",
+    advance: 1200,
+    hoursAgo: 75,
+  },
+  {
+    stage: "RETURNED",
+    customerPhone: "01511998877",
+    lines: [{ code: "KURTI12", size: "M", color: "Mustard Yellow", qty: 2, unitPrice: 1450 }],
+    zone: "OUTSIDE_CITY",
+    hoursAgo: 96,
+  },
+  {
+    stage: "PARTIAL_DELIVERED",
+    customerPhone: "01911223344",
+    lines: [
+      { code: "KURTI12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 },
+      { code: "3PC05", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
+    ],
+    zone: "INSIDE_CITY",
+    hoursAgo: 60,
+  },
+];
+
+const STEADFAST_STAGE_STATUS: Record<Exclude<CourierDemoStage, "PACKED">, string> = {
+  HANDED_TO_COURIER: "in_review",
+  IN_TRANSIT: "pending",
+  APPROVAL_PENDING: "delivered_approval_pending",
+  DELIVERED: "delivered",
+  RETURNED: "cancelled",
+  PARTIAL_DELIVERED: "partial_delivered",
+};
+
+async function seedCourierDemo() {
+  if ((await prisma.shipment.count()) > 0) return;
+
+  const se = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000004" } });
+  const packer = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000005" } });
+  const steadfast = await prisma.courierCompany.findUniqueOrThrow({ where: { provider: "STEADFAST" }, include: { zones: true } });
+  const rates = await prisma.courierCostRate.findMany({ where: { courierId: steadfast.id } });
+
+  let n = 0;
+  for (const spec of COURIER_DEMO_ORDERS) {
+    n += 1;
+    await prisma.$transaction(
+      async (tx: Tx) => {
+        const at = (hoursAfterCreate: number) => new Date(Date.now() - (spec.hoursAgo - hoursAfterCreate) * 60 * 60 * 1000);
+        const customer = await tx.customer.findUniqueOrThrow({ where: { phone: spec.customerPhone } });
+        const zoneRow = steadfast.zones.find((z) => z.zone === spec.zone)!;
+        const variants = await Promise.all(
+          spec.lines.map((l) =>
+            tx.productVariant.findFirstOrThrow({ where: { product: { code: l.code }, size: { name: l.size }, color: { name: l.color } } }),
+          ),
+        );
+        const subtotal = spec.lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0);
+        const deliveryCharge = Number(zoneRow.charge);
+        const total = subtotal + deliveryCharge;
+        const advance = spec.advance ?? 0;
+
+        const order = await tx.order.create({
+          data: {
+            orderNo: await nextOrderNo(tx, at(0)),
+            channel: "ONLINE",
+            status: "CONFIRMED",
+            customerId: customer.id,
+            courierId: steadfast.id,
+            courierZoneId: zoneRow.id,
+            deliveryCharge,
+            subtotal,
+            discountTotal: 0,
+            total,
+            dueAmount: total - advance,
+            deliveryNote: spec.deliveryNote ?? null,
+            internalNote: spec.internalNote ?? null,
+            createdById: se.id,
+            teamId: se.teamId,
+            createdAt: at(0),
+          },
+        });
+        const items = [];
+        for (const [i, line] of spec.lines.entries()) {
+          items.push(await tx.orderItem.create({ data: { orderId: order.id, variantId: variants[i].id, qty: line.qty, unitPrice: line.unitPrice } }));
+          await tx.productVariant.update({ where: { id: variants[i].id }, data: { reservedQty: { increment: line.qty } } });
+        }
+        await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "CONFIRMED", changedById: se.id, note: "Order created", createdAt: at(0) } });
+        if (advance > 0) {
+          await tx.payment.create({
+            data: { orderId: order.id, amount: advance, method: "BKASH", wallet: "bKash Personal", transactionId: `SEED-SF-${n}`, receivedById: se.id, verified: true, paidAt: at(0) },
+          });
+        }
+
+        // PACKED — cost snapshot + SALE_OUT through the real ledger function.
+        for (const [i, item] of items.entries()) {
+          await tx.orderItem.update({ where: { id: item.id }, data: { unitCostSnapshot: variants[i].weightedAvgCost } });
+          await recordStockMovement(tx, {
+            variantId: variants[i].id,
+            type: "SALE_OUT",
+            qty: -item.qty,
+            unitCost: variants[i].weightedAvgCost,
+            referenceType: "ORDER",
+            referenceId: order.id,
+            actorId: packer.id,
+            releaseReserved: item.qty,
+          });
+        }
+        await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: "CONFIRMED", toStatus: "PACKED", changedById: packer.id, note: "Packing checklist complete", createdAt: at(1) } });
+        await tx.order.update({ where: { id: order.id }, data: { status: "PACKED" } });
+        if (spec.stage === "PACKED") return;
+
+        // HANDED_TO_COURIER — booked with Steadfast.
+        const weightGrams = spec.lines.reduce((sum, l, i) => sum + (variants[i].weightGrams ?? 0) * l.qty, 0) || null;
+        const rate = rates.find((r) => r.zone === spec.zone)!;
+        const kg = Math.max(1, Math.ceil((weightGrams ?? 0) / 1000));
+        const estimate = Number(rate.baseRate) + Number(rate.perKgRate) * (kg - 1);
+        const trackingCode = `DEMOSF${String(n).padStart(4, "0")}`;
+        const cod = Math.max(0, total - advance);
+        const steadfastStatus = STEADFAST_STAGE_STATUS[spec.stage];
+        const final = ["DELIVERED", "RETURNED", "PARTIAL_DELIVERED"].includes(spec.stage);
+        const orderStatus =
+          spec.stage === "APPROVAL_PENDING" ? "IN_TRANSIT" : (spec.stage as "HANDED_TO_COURIER" | "IN_TRANSIT" | "DELIVERED" | "RETURNED" | "PARTIAL_DELIVERED");
+
+        const shipment = await tx.shipment.create({
+          data: {
+            orderId: order.id,
+            courierId: steadfast.id,
+            consignmentId: `DEMO-${100000 + n}`,
+            trackingCode,
+            trackingUrl: `https://steadfast.com.bd/tl/${trackingCode}`,
+            steadfastStatus,
+            subStatus:
+              spec.stage === "IN_TRANSIT" ? "PENDING" : spec.stage === "APPROVAL_PENDING" ? "DELIVERY_APPROVAL_PENDING" : null,
+            zone: spec.zone,
+            weightGrams,
+            codAmount: cod,
+            courierCostEstimate: estimate,
+            courierCostActual: final ? estimate + 10 : null,
+            codCollected: spec.stage === "DELIVERED" ? cod : spec.stage === "PARTIAL_DELIVERED" ? spec.lines[0].unitPrice + deliveryCharge : null,
+            accountsReviewRequired: spec.stage === "PARTIAL_DELIVERED",
+            bookedAt: at(2),
+            bookedById: packer.id,
+            inTransitAt: spec.stage === "HANDED_TO_COURIER" ? null : at(8),
+            deliveredAt: spec.stage === "DELIVERED" || spec.stage === "PARTIAL_DELIVERED" ? at(30) : null,
+            returnedAt: spec.stage === "RETURNED" ? at(40) : null,
+            finalizedAt: final ? at(spec.stage === "RETURNED" ? 40 : 30) : null,
+            lastStatusAt: at(final ? 30 : 8),
+            createdAt: at(2),
+          },
+        });
+        await tx.shipmentStatusLog.create({
+          data: { shipmentId: shipment.id, source: "API", rawStatus: "in_review", rawPayload: { status: 200, consignment: { consignment_id: 100000 + n, invoice: order.orderNo, tracking_code: trackingCode, status: "in_review" }, demo: true }, receivedAt: at(2) },
+        });
+        await tx.order.update({ where: { id: order.id }, data: { status: orderStatus } });
+        const history: { from: string; to: string; by: string | null; note: string; h: number }[] = [
+          { from: "PACKED", to: "HANDED_TO_COURIER", by: packer.id, note: `Sent via Steadfast API, tracking ${trackingCode}`, h: 2 },
+        ];
+        if (spec.stage !== "HANDED_TO_COURIER") {
+          history.push({ from: "HANDED_TO_COURIER", to: "IN_TRANSIT", by: null, note: "Steadfast webhook: pending", h: 8 });
+          await tx.shipmentTrackingEvent.createMany({
+            data: [
+              { shipmentId: shipment.id, message: "Parcel received at Steadfast hub (Tejgaon).", eventAt: at(8), source: "WEBHOOK" },
+              { shipmentId: shipment.id, message: "Parcel dispatched to the delivery hub.", eventAt: at(14), source: "WEBHOOK" },
+            ],
+          });
+          await tx.shipmentStatusLog.create({
+            data: { shipmentId: shipment.id, source: "WEBHOOK", rawStatus: "pending", rawPayload: { notification_type: "delivery_status", consignment_id: 100000 + n, invoice: order.orderNo, status: "pending", demo: true }, receivedAt: at(8) },
+          });
+        }
+        if (final) {
+          const to = orderStatus;
+          history.push({ from: "IN_TRANSIT", to, by: null, note: `Steadfast webhook: ${steadfastStatus}`, h: spec.stage === "RETURNED" ? 40 : 30 });
+          await tx.shipmentStatusLog.create({
+            data: {
+              shipmentId: shipment.id,
+              source: "WEBHOOK",
+              rawStatus: steadfastStatus,
+              rawPayload: { notification_type: "delivery_status", consignment_id: 100000 + n, invoice: order.orderNo, status: steadfastStatus, delivery_charge: estimate + 10, status_api_cross_check: steadfastStatus, demo: true },
+              receivedAt: at(30),
+            },
+          });
+        }
+        for (const hEntry of history) {
+          await tx.orderStatusHistory.create({
+            data: { orderId: order.id, fromStatus: hEntry.from as never, toStatus: hEntry.to as never, changedById: hEntry.by, note: hEntry.note, createdAt: at(hEntry.h) },
+          });
+        }
+
+        // Goods coming back wait for Packing's condition check.
+        if (spec.stage === "RETURNED") {
+          await tx.returnInspection.create({
+            data: {
+              orderId: order.id,
+              shipmentId: shipment.id,
+              source: "COURIER_RETURN",
+              status: "PENDING",
+              createdAt: at(40),
+              lines: { create: items.map((item) => ({ orderItemId: item.id, qty: item.qty })) },
+            },
+          });
+        }
+        if (spec.stage === "PARTIAL_DELIVERED") {
+          await tx.returnInspection.create({
+            data: { orderId: order.id, shipmentId: shipment.id, source: "PARTIAL_DELIVERY", status: "AWAITING_KEPT_ITEMS", createdAt: at(30) },
+          });
+        }
+      },
+      { timeout: 60_000 },
+    );
+  }
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -715,6 +1025,8 @@ async function main() {
   await seedSettings();
   await seedDemoOrders();
   await seedInventory();
+  await seedCourierCosts();
+  await seedCourierDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

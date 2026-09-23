@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ORDER_STATUS_LABELS } from "@/lib/orders/constants";
-import { nextSelectableStatuses } from "@/lib/orders/status-graph";
+import { COURIER_OWNED_STATUSES, nextSelectableStatuses } from "@/lib/orders/status-graph";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import type { OrderDetail } from "@/lib/orders/types";
 
@@ -29,9 +29,12 @@ import type { OrderDetail } from "@/lib/orders/types";
 export function OrderStatusControl({
   order,
   onChange,
+  courierBooked = false,
 }: {
   order: OrderDetail;
   onChange: (order: OrderDetail) => void;
+  /** A Steadfast consignment exists: its delivery statuses come from the courier sync, not this control. */
+  courierBooked?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [toStatus, setToStatus] = useState<OrderStatusValue | "">("");
@@ -39,7 +42,7 @@ export function OrderStatusControl({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const nextStatuses = nextSelectableStatuses(order.status);
+  const nextStatuses = nextSelectableStatuses(order.status).filter((s) => !(courierBooked && COURIER_OWNED_STATUSES.includes(s)));
   if (nextStatuses.length === 0) return null;
 
   async function submit() {

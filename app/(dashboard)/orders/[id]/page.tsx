@@ -8,6 +8,7 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { prisma } from "@/lib/prisma";
 import { canManageOrderImages } from "@/lib/orders/access";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
+import { loadShipmentDetail } from "@/lib/courier/queries";
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await guardPage("/orders");
@@ -22,7 +23,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const loaded = await loadOrderDetail(id);
   if (!loaded) notFound();
 
-  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment] =
+  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment, canSendToSteadfast] =
     await Promise.all([
       can(user, "product.cost.view"),
       can(user, "order.edit"),
@@ -32,10 +33,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       can(user, "payment.edit"),
       can(user, "payment.delete"),
       can(user, "payment.verify"),
+      can(user, "courier.create_shipment"),
     ]);
   const canManageImages = canManageOrderImages(user, scopedRow);
 
   const order = await stripCostFieldsForUser(serializeOrderDetail(loaded), user);
+  // Anyone who can open this page already sees the order's money, so COD is shown; courier cost is stripped by role.
+  const shipment = await stripCostFieldsForUser(await loadShipmentDetail(id, true), user);
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-5xl md:p-6">
@@ -50,6 +54,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         canEditPayment={canEditPayment}
         canDeletePayment={canDeletePayment}
         canVerifyPayment={canVerifyPayment}
+        shipment={shipment}
+        canSendToSteadfast={canSendToSteadfast}
       />
     </div>
   );

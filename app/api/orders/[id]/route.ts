@@ -48,6 +48,7 @@ const updateOrderSchema = z.object({
   deliveryCharge: z.coerce.number().min(0).optional(),
   expectedDeliveryDate: z.coerce.date().nullish(),
   internalNote: z.string().trim().max(2000).nullish(),
+  deliveryNote: z.string().trim().max(200).nullish(),
 });
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

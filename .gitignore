@@ -50,3 +50,4 @@ backups/
 
 # stray agent worktrees (contain their own nested .git — never vendor these in)
 .claude/worktrees/
+.scratch/

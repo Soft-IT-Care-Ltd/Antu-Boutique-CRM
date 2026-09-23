@@ -43,6 +43,7 @@ export type OrderItemView = {
   unitCostSnapshot?: string | null;
   stockOverride: boolean;
   stockOverrideReason: string | null;
+  returnedQty: number;
 };
 
 export type PaymentView = {
@@ -111,6 +112,7 @@ export type OrderDetail = {
   total: string;
   dueAmount: string;
   internalNote: string | null;
+  deliveryNote: string | null;
   items: OrderItemView[];
   images: OrderImageView[];
   payments: PaymentView[];

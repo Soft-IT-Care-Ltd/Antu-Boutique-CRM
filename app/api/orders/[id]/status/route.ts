@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { IllegalTransitionError, moveOrderStatus, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/lifecycle";
+import { COURIER_OWNED_STATUSES, IllegalTransitionError, moveOrderStatus, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/lifecycle";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { ORDER_STATUS_VALUES } from "@/lib/orders/constants";
 import type { OrderStatusValue } from "@/lib/orders/constants";
@@ -28,7 +28,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params;
   const existing = await prisma.order.findFirst({
     where: scopedWhere({ id, deletedAt: null }, guard.user),
-    include: { items: { select: { variantId: true, qty: true, unitCostSnapshot: true } } },
+    include: {
+      items: { select: { variantId: true, qty: true, unitCostSnapshot: true } },
+      shipment: { select: { consignmentId: true } },
+    },
   });
   if (!existing) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
@@ -42,6 +45,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json(
       { error: `Moving an order to ${toStatus} goes through its own dedicated flow, not a plain status change.` },
       { status: 400 },
+    );
+  }
+
+  // P2.2: once Steadfast has the parcel, the courier sync owns its journey —
+  // a hand-picked IN_TRANSIT/DELIVERED/RETURNED would drift from what
+  // Steadfast reports.
+  if (existing.shipment?.consignmentId && COURIER_OWNED_STATUSES.includes(toStatus)) {
+    return NextResponse.json(
+      { error: `This order is booked with Steadfast (consignment ${existing.shipment.consignmentId}) — its delivery status comes from the courier. Use "Sync now" on the Courier page.` },
+      { status: 409 },
     );
   }
 

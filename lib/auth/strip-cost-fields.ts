@@ -31,6 +31,14 @@ const COST_FIELD_NAMES = new Set([
   "landedUnitCost",
   "wacBefore",
   "wacAfter",
+  // Courier (P2.2): what WE pay the courier — it feeds per-order profit.
+  "courierCostEstimate",
+  "courierCostActual",
+  "baseRate",
+  "perKgRate",
+  "returnCharge",
+  "codChargePercent",
+  "lastBalance",
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

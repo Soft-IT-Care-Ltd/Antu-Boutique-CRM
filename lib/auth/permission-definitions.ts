@@ -71,6 +71,8 @@ export const PERMISSIONS = [
   { key: "courier.view", group: "Courier", label: "View shipments" },
   { key: "courier.create_shipment", group: "Courier", label: "Hand over to courier" },
   { key: "courier.reconcile", group: "Courier", label: "Reconcile courier statements" },
+  { key: "courier.manage", group: "Courier", label: "Manage courier integration, cost rates & sync" },
+  { key: "courier.return_check", group: "Courier", label: "Condition-check returned parcels" },
 
   // Payments
   { key: "payment.view", group: "Payments", label: "View payments & wallets" },
@@ -187,6 +189,7 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "order.status_update",
     "inventory.view",
     "courier.create_shipment",
+    "courier.return_check",
     "attendance.view_own",
     "attendance.mark",
   ],

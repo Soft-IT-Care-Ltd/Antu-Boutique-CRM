@@ -30,6 +30,7 @@ type EditableFields = {
   sku?: string;
   priceOverride?: string;
   lowStockThreshold?: string;
+  weightGrams?: string;
   isActive?: boolean;
 };
 
@@ -78,6 +79,7 @@ export function VariantMatrix({
     if (field === "sku") return variant.sku;
     if (field === "priceOverride") return variant.priceOverride ?? "";
     if (field === "lowStockThreshold") return variant.lowStockThreshold?.toString() ?? "";
+    if (field === "weightGrams") return variant.weightGrams?.toString() ?? "";
     if (field === "isActive") return variant.isActive;
     return undefined;
   }
@@ -128,6 +130,7 @@ export function VariantMatrix({
           ...(fields.lowStockThreshold !== undefined
             ? { lowStockThreshold: fields.lowStockThreshold === "" ? null : Number(fields.lowStockThreshold) }
             : {}),
+          ...(fields.weightGrams !== undefined ? { weightGrams: fields.weightGrams === "" ? null : Number(fields.weightGrams) } : {}),
           ...(fields.isActive !== undefined ? { isActive: fields.isActive } : {}),
         })),
       };
@@ -219,6 +222,7 @@ export function VariantMatrix({
                 <TableHead>SKU</TableHead>
                 <TableHead>Price</TableHead>
                 <TableHead>Low stock at</TableHead>
+                <TableHead title="Parcel weight per unit, for courier cost estimates">Weight (g)</TableHead>
                 <TableHead>Stock</TableHead>
                 <TableHead>Reserved</TableHead>
                 <TableHead>Available</TableHead>
@@ -269,6 +273,17 @@ export function VariantMatrix({
                         value={fieldValue(variant, "lowStockThreshold") as string}
                         disabled={!canEdit}
                         onChange={(e) => setField(variant, "lowStockThreshold", e.target.value)}
+                        className="h-7 w-20"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="—"
+                        value={fieldValue(variant, "weightGrams") as string}
+                        disabled={!canEdit}
+                        onChange={(e) => setField(variant, "weightGrams", e.target.value)}
                         className="h-7 w-20"
                       />
                     </TableCell>

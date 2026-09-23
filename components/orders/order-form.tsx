@@ -116,6 +116,7 @@ export function OrderForm({
   const [deliveryCharge, setDeliveryCharge] = useState(order?.deliveryCharge ?? "0");
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(order?.expectedDeliveryDate?.slice(0, 10) ?? "");
   const [internalNote, setInternalNote] = useState(order?.internalNote ?? "");
+  const [deliveryNote, setDeliveryNote] = useState(order?.deliveryNote ?? "");
 
   const [advanceEnabled, setAdvanceEnabled] = useState(false);
   const [advanceMethod, setAdvanceMethod] = useState<PaymentMethodValue>("BKASH");
@@ -248,6 +249,7 @@ export function OrderForm({
             deliveryCharge: Number(deliveryCharge) || 0,
             expectedDeliveryDate: expectedDeliveryDate || null,
             internalNote: internalNote || null,
+            deliveryNote: deliveryNote || null,
           }),
         });
         router.push(`/orders/${order.id}`);
@@ -261,6 +263,7 @@ export function OrderForm({
         deliveryCharge: Number(deliveryCharge) || 0,
         expectedDeliveryDate: expectedDeliveryDate || null,
         internalNote: internalNote || null,
+        deliveryNote: deliveryNote || null,
       };
       if (customer.customerId) {
         payload.customerId = customer.customerId;
@@ -705,6 +708,17 @@ export function OrderForm({
               ) : null}
             </div>
           ) : null}
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="order-delivery-note">Delivery instructions for the rider</Label>
+            <Input
+              id="order-delivery-note"
+              value={deliveryNote}
+              maxLength={200}
+              onChange={(e) => setDeliveryNote(e.target.value)}
+              placeholder="e.g. Call before coming, gate 3. Sent to the courier — no internal info."
+            />
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="order-internal-note">Internal note</Label>

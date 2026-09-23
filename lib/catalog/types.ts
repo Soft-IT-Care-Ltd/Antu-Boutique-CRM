@@ -73,6 +73,7 @@ export type ProductVariant = {
   weightedAvgCost?: string;
   priceOverride: string | null;
   lowStockThreshold: number | null;
+  weightGrams: number | null;
   isActive: boolean;
 };
 

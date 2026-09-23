@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/db/tx";
 import { prisma } from "@/lib/prisma";
 
 // CLAUDE.md rule 7: every sensitive mutation writes an audit_logs row —
@@ -25,9 +26,18 @@ export function getClientIp(request: Request): string | null {
 }
 
 export async function writeAuditLog(input: AuditLogInput): Promise<void> {
+  await writeAuditLogWith(prisma, input);
+}
+
+/**
+ * Same row, written through a given client — used by services that take a
+ * `Db` (lib/db/tx.ts) so the audit row commits (or rolls back) together with
+ * the mutation it describes.
+ */
+export async function writeAuditLogWith(db: Db, input: AuditLogInput): Promise<void> {
   const ipAddress = input.ipAddress ?? (input.request ? getClientIp(input.request) : null);
 
-  await prisma.auditLog.create({
+  await db.auditLog.create({
     data: {
       actorId: input.actorId,
       action: input.action,

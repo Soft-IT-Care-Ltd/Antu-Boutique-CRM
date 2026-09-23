@@ -68,7 +68,7 @@ export const navGroups: NavGroup[] = [
     label: "Fulfilment",
     items: [
       { label: "Packing", href: "/packing", icon: PackageCheck, permission: "packing.view_queue" },
-      { label: "Courier", href: "/courier", icon: Truck, permission: ["courier.view", "courier.create_shipment", "courier.reconcile"] },
+      { label: "Courier", href: "/courier", icon: Truck, permission: ["courier.view", "courier.create_shipment", "courier.reconcile", "courier.manage", "courier.return_check"] },
     ],
   },
   {

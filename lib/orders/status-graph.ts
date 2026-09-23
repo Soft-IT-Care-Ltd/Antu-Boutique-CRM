@@ -16,7 +16,7 @@ export const ORDER_TRANSITIONS: Record<OrderStatusValue, OrderStatusValue[]> = {
   CONFIRMED: ["PACKED", "ON_HOLD", "CANCELLED"],
   PACKED: ["HANDED_TO_COURIER", "ON_HOLD", "CANCELLED"],
   HANDED_TO_COURIER: ["IN_TRANSIT", "ON_HOLD", "RETURNED"],
-  IN_TRANSIT: ["DELIVERED", "RETURNED"],
+  IN_TRANSIT: ["DELIVERED", "PARTIAL_DELIVERED", "RETURNED"],
   DELIVERED: ["COMPLETED", "RETURNED", "EXCHANGE_REQUESTED"],
   COMPLETED: ["RETURNED", "EXCHANGE_REQUESTED"],
   ON_HOLD: ["CONFIRMED", "PACKED", "HANDED_TO_COURIER", "IN_TRANSIT", "CANCELLED"],
@@ -24,12 +24,23 @@ export const ORDER_TRANSITIONS: Record<OrderStatusValue, OrderStatusValue[]> = {
   RETURNED: ["REFUNDED"],
   REFUNDED: [],
   EXCHANGE_REQUESTED: ["COMPLETED", "CANCELLED"],
+  // P2.2 — the customer kept part of the parcel. Once kept items are marked
+  // and Accounts has reviewed the money, the order completes (or, Phase 3,
+  // turns into an exchange).
+  PARTIAL_DELIVERED: ["COMPLETED", "EXCHANGE_REQUESTED"],
 };
 
 // PACKED is reserved for P1.6's packing checklist (stock deduction + cost
 // snapshot in the same transaction as the status move) — never a plain
 // status change.
-export const STATUSES_REQUIRING_DEDICATED_FLOW: OrderStatusValue[] = ["PACKED"];
+// PARTIAL_DELIVERED only ever comes from the courier (lib/courier/sync.ts),
+// which also opens the kept-items / condition-check task for it.
+export const STATUSES_REQUIRING_DEDICATED_FLOW: OrderStatusValue[] = ["PACKED", "PARTIAL_DELIVERED"];
+
+// Statuses a booked courier shipment owns: once a consignment exists, only
+// the courier sync may move the order into these, so the order can't drift
+// away from what Steadfast reports.
+export const COURIER_OWNED_STATUSES: OrderStatusValue[] = ["IN_TRANSIT", "DELIVERED", "PARTIAL_DELIVERED", "RETURNED"];
 
 export function isTransitionAllowed(from: OrderStatusValue, to: OrderStatusValue): boolean {
   return ORDER_TRANSITIONS[from]?.includes(to) ?? false;
