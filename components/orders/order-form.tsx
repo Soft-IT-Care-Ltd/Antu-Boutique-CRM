@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { OrderImagesField, type StagedImage } from "@/components/orders/order-images-field";
 import { OrderItemPicker, type PickedVariant } from "@/components/orders/order-item-picker";
 import { WalletSelect } from "@/components/wallets/wallet-select";
+import { newLocalId } from "@/lib/browser/local-id";
 import { isValidBdPhone } from "@/lib/customers/phone";
 import { BD_DIVISIONS } from "@/lib/customers/constants";
 import type { CustomerListItem } from "@/lib/customers/types";
@@ -182,7 +183,7 @@ export function OrderForm({
     setItems((prev) => [
       ...prev,
       {
-        localId: crypto.randomUUID(),
+        localId: newLocalId(),
         variantId: variant.variantId,
         productName: variant.productName,
         sku: variant.sku,

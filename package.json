@@ -8,11 +8,19 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "check:ios": "node scripts/check-ios-bundles.mjs .next/static/chunks"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
+  "browserslist": [
+    "chrome >= 111",
+    "edge >= 111",
+    "firefox >= 111",
+    "safari >= 15",
+    "ios_saf >= 15"
+  ],
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@prisma/client": "^6.19.3",
@@ -43,6 +51,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "acorn": "8.18.0",
     "dotenv": "^18.0.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",

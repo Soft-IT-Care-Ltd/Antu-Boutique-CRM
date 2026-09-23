@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiError, fetchJson } from "@/lib/orders/client";
+import { newLocalId } from "@/lib/browser/local-id";
 import { MAX_ORDER_IMAGES } from "@/lib/orders/constants";
 import { orderUploadUrl } from "@/lib/orders/types";
 import type { OrderImageView } from "@/lib/orders/types";
@@ -107,7 +108,7 @@ export function OrderImagesField(props: StagedProps | PersistedProps) {
 
     if (props.mode === "staged") {
       const next: StagedImage[] = files.map((file) => ({
-        localId: crypto.randomUUID(),
+        localId: newLocalId(),
         file,
         previewUrl: URL.createObjectURL(file),
         caption: "",

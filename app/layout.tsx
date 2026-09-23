@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Noto_Sans_Bengali } from "next/font/google";
 
+import { BootMarker } from "@/components/boot-marker";
 import { Providers } from "@/components/providers";
+import { BOOT_GUARD_SCRIPT } from "@/lib/browser/boot-guard";
 
 import "./globals.css";
 
@@ -32,8 +34,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${notoSansBengali.variable} h-full antialiased`}
     >
+      <head>
+        {/* Must run before any bundle — see lib/browser/boot-guard.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: BOOT_GUARD_SCRIPT }} />
+      </head>
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
+        <BootMarker />
       </body>
     </html>
   );

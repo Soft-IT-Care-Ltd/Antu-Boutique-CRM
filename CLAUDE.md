@@ -40,6 +40,7 @@ Learned the hard way in P0.1 — don't rediscover these:
 - **`DropdownMenuLabel` must be wrapped in a `DropdownMenuGroup`.** Base UI's menu requires every label/item to sit inside a group — an unwrapped `DropdownMenuLabel` breaks. See `components/app-shell/topbar.tsx` for the working pattern.
 - **Generating a migration without a TTY:** `prisma migrate dev` refuses to run non-interactively. Use `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL" --script > prisma/migrations/<ts>_<name>/migration.sql`, then `npx prisma migrate deploy`. The shadow URL is ONLY ever `SHADOW_DATABASE_URL` (rule 11).
 - Future phases must follow this — check how an existing `components/ui/*` primitive is used elsewhere before assuming Radix conventions apply.
+- **iPhones and the showroom iPad (P3.0).** Client code must run on iOS Safari 15. The `browserslist` in `package.json` lowers syntax, but it never adds missing functions. After `npm run build`, run **`npm run check:ios`**: it fails on syntax old Safari can't parse (one bad chunk = a blank page, Gift Valy Round 2 §2.8) and on runtime APIs that aren't polyfilled. Missing APIs go in `lib/browser/polyfills.ts`. Never call `crypto.randomUUID()` in client code — use `newLocalId()` from `lib/browser/local-id.ts` (randomUUID is also missing over plain `http://`). Tailwind v4's CSS itself needs iOS **15.4+** (cascade layers, `oklch`), so iOS 15.0–15.3 devices must update (every iOS 15 device can reach 15.8).
 
 ---
 
