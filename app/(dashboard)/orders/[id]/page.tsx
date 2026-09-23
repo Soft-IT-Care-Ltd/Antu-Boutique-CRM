@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { canManageOrderImages } from "@/lib/orders/access";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { loadShipmentDetail } from "@/lib/courier/queries";
+import { listWalletOptions } from "@/lib/wallets/service";
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await guardPage("/orders");
@@ -23,7 +24,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const loaded = await loadOrderDetail(id);
   if (!loaded) notFound();
 
-  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment, canSendToSteadfast, canOverrideCourier] =
+  const [hasCostAccess, canEdit, canUpdateStatus, canReviewEditRequests, canRecordPayment, canEditPayment, canDeletePayment, canVerifyPayment, canSendToSteadfast, canOverrideCourier, canRequestRefund, canDecideRefund] =
     await Promise.all([
       can(user, "product.cost.view"),
       can(user, "order.edit"),
@@ -35,7 +36,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       can(user, "payment.verify"),
       can(user, "courier.create_shipment"),
       can(user, "order.courier_status_override"),
+      can(user, "payment.refund"),
+      can(user, "payment.refund_approve"),
     ]);
+  // Names only (no balances) — anyone recording a payment picks the wallet it went into.
+  const wallets = canRecordPayment || canEditPayment || canRequestRefund ? await listWalletOptions(prisma) : [];
   const canManageImages = canManageOrderImages(user, scopedRow);
 
   const order = await stripCostFieldsForUser(serializeOrderDetail(loaded), user);
@@ -55,6 +60,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         canEditPayment={canEditPayment}
         canDeletePayment={canDeletePayment}
         canVerifyPayment={canVerifyPayment}
+        canRequestRefund={canRequestRefund}
+        canDecideRefund={canDecideRefund}
+        wallets={wallets}
+        currentUserId={user.id}
         shipment={shipment}
         canSendToSteadfast={canSendToSteadfast}
         canOverrideCourier={canOverrideCourier}

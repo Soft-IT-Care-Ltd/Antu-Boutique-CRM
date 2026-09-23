@@ -5,6 +5,7 @@ import { ReturnsCheck } from "@/components/courier/returns-check";
 import { ShipmentList } from "@/components/courier/shipment-list";
 import { SteadfastSettings } from "@/components/courier/steadfast-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { WalletOption } from "@/lib/wallets/constants";
 
 export type CourierWorkspaceProps = {
   canViewShipments: boolean;
@@ -17,6 +18,8 @@ export type CourierWorkspaceProps = {
   canEditSettings: boolean;
   canSeeCost: boolean;
   openReturns: number;
+  /** Where a courier payout can land (P2.3 wallets). */
+  payoutWallets: WalletOption[];
 };
 
 // CORRECTIONS Courier §2: the Courier page IS the Steadfast page — shipments,
@@ -48,7 +51,7 @@ export function CourierWorkspace(props: CourierWorkspaceProps) {
       ) : null}
       {props.canReconcile ? (
         <TabsContent value="cod" className="pt-4">
-          <CodReconciliation canSyncPayouts={props.canReconcile || props.canSync} />
+          <CodReconciliation canSyncPayouts={props.canReconcile || props.canSync} payoutWallets={props.payoutWallets} />
         </TabsContent>
       ) : null}
       {props.canSeeIntegration ? (

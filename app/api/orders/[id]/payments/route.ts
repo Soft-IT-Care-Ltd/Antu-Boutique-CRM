@@ -9,6 +9,7 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { createPaymentSchema } from "@/lib/orders/payment-validation";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 // PRD §4.10: multiple payments per order (advance, partial, COD collection,
 // post-delivery settlement) on top of the one recorded at order creation.
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { amount, method, wallet, transactionId, paidAt, note } = parsed.data;
+  const { amount, method, walletId, transactionId, paidAt, note } = parsed.data;
 
   try {
     const payment = await prisma.$transaction(async (tx) => {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           orderId: id,
           amount,
           method,
-          wallet: wallet || null,
+          walletId: await resolvePaymentWalletId(tx, method, walletId),
           transactionId: transactionId || null,
           paidAt: paidAt ?? new Date(),
           receivedById: guard.user.id,
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       action: "payment.create",
       entityType: "order",
       entityId: id,
-      after: { paymentId: payment.id, amount: payment.amount.toString(), method: payment.method },
+      after: { paymentId: payment.id, amount: payment.amount.toString(), method: payment.method, walletId: payment.walletId, transactionId: payment.transactionId },
       request,
     });
 
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return NextResponse.json({ error: "This transaction ID has already been used" }, { status: 409 });
     }
+    if (error instanceof WalletError) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }
 }

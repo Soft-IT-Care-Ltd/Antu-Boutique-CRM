@@ -3,6 +3,7 @@ import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import { scopedWhere } from "@/lib/auth/scope";
 import { prisma } from "@/lib/prisma";
+import { listWalletOptions } from "@/lib/wallets/service";
 
 export default async function CourierPage() {
   const user = await guardPage("/courier");
@@ -19,6 +20,7 @@ export default async function CourierPage() {
   const openReturns = canViewReturns
     ? await prisma.returnInspection.count({ where: { status: { not: "COMPLETED" }, order: scopedWhere({ deletedAt: null }, user) } })
     : 0;
+  const payoutWallets = canReconcile ? (await listWalletOptions(prisma)).filter((w) => w.type === "BANK" || w.type === "BKASH") : [];
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
@@ -37,6 +39,7 @@ export default async function CourierPage() {
         canEditSettings={canEditSettings}
         canSeeCost={canSeeCost}
         openReturns={openReturns}
+        payoutWallets={payoutWallets}
       />
     </div>
   );

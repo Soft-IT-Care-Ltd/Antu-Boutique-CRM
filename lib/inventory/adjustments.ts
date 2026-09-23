@@ -74,7 +74,7 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
   const category = await tx.expenseCategory.upsert({
     where: { name: WRITE_OFF_EXPENSE_CATEGORY },
     update: {},
-    create: { name: WRITE_OFF_EXPENSE_CATEGORY, sortOrder: 10 },
+    create: { name: WRITE_OFF_EXPENSE_CATEGORY, sortOrder: 10, kind: "MISC", isSystem: true },
   });
 
   const expense = await tx.expense.create({

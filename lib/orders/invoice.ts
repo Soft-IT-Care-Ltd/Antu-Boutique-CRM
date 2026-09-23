@@ -21,7 +21,8 @@ import type { OrderDetail } from "@/lib/orders/types";
 // shared with lib/packing/slip.ts's packing slip.
 
 async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
-  const paid = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  // Same rule as due_amount: a refund only counts once approved.
+  const paid = order.payments.filter((p) => p.kind === "PAYMENT" || p.refundStatus === "APPROVED").reduce((sum, p) => sum + Number(p.amount), 0);
   const address = [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
     .filter(Boolean)
     .join(", ");

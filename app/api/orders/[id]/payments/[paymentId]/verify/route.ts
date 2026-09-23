@@ -25,6 +25,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const payment = await prisma.payment.findFirst({ where: { id: paymentId, orderId: id } });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+  if (payment.kind === "REFUND") return NextResponse.json({ error: "Refunds are approved, not verified." }, { status: 409 });
 
   const parsed = verifySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
@@ -32,7 +33,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   const { verified } = parsed.data;
 
-  await prisma.payment.update({ where: { id: paymentId }, data: { verified } });
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: verified ? { verified, verifiedById: guard.user.id, verifiedAt: new Date() } : { verified, verifiedById: null, verifiedAt: null },
+  });
 
   await writeAuditLog({
     actorId: guard.user.id,

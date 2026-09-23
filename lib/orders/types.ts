@@ -48,14 +48,26 @@ export type OrderItemView = {
 
 export type PaymentView = {
   id: string;
+  /** REFUND rows are negative. */
   amount: string;
   method: PaymentMethodValue;
-  wallet: string | null;
+  kind: "PAYMENT" | "REFUND";
+  walletId: string | null;
+  walletName: string | null;
   transactionId: string | null;
   paidAt: string;
   receivedBy: { id: string; name: string } | null;
   verified: boolean;
+  verifiedBy: { id: string; name: string } | null;
+  verifiedAt: string | null;
   note: string | null;
+  refundReason: string | null;
+  refundStatus: "PENDING" | "APPROVED" | "REJECTED" | null;
+  decidedBy: { id: string; name: string } | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  /** Settled from a courier statement — locked on this panel (P2.2b). */
+  fromCourierStatement: boolean;
 };
 
 export type OrderStatusHistoryEntry = {

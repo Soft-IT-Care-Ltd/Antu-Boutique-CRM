@@ -573,7 +573,7 @@ async function seedDemoOrders() {
         orderId: order1.id,
         amount: advance1,
         method: "BKASH",
-        wallet: "bKash Personal",
+        walletId: "wallet_bkash_personal",
         transactionId: "SEED-TXN-0001",
         receivedById: se.id,
         verified: true,
@@ -879,7 +879,7 @@ async function seedCourierDemo() {
         await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "CONFIRMED", changedById: se.id, note: "Order created", createdAt: at(0) } });
         if (advance > 0) {
           await tx.payment.create({
-            data: { orderId: order.id, amount: advance, method: "BKASH", wallet: "bKash Personal", transactionId: `SEED-SF-${n}`, receivedById: se.id, verified: true, paidAt: at(0) },
+            data: { orderId: order.id, amount: advance, method: "BKASH", walletId: "wallet_bkash_personal", transactionId: `SEED-SF-${n}`, receivedById: se.id, verified: true, paidAt: at(0) },
           });
         }
 
@@ -1026,7 +1026,7 @@ async function seedCourierStatementsDemo() {
       deliveryCharge: charge,
       codCharge: fee,
       netAmount: cod - charge - fee,
-      wallet: "Bank Account",
+      walletId: "wallet_bank",
       rawPayload: { payment_id: "SFC-DEMO-0001", status_label: "processing", demo: true },
       lines: { create: [{ lineNo: 1, consignmentId: delivered.consignmentId, invoice: delivered.order.orderNo, codAmount: cod }] },
     },
@@ -1042,7 +1042,7 @@ async function seedCourierStatementsDemo() {
       deliveryCharge: 110,
       codCharge: 17,
       netAmount: 1723,
-      wallet: "Bank Account",
+      walletId: "wallet_bank",
       rawPayload: { payment_id: "SFC-DEMO-0002", status_label: "paid", demo: true },
       lines: {
         create: [
@@ -1060,6 +1060,151 @@ async function seedCourierStatementsDemo() {
   });
 }
 
+// P2.3 — the wallets PRD §4.10 names. Same fixed ids as the migration
+// (20260923200000_wallets_refunds_expenses), so re-seeding never duplicates.
+const SEED_WALLETS = [
+  { id: "wallet_bkash_personal", name: "bKash Personal", type: "BKASH", sortOrder: 1, opening: 25_000 },
+  { id: "wallet_bkash_merchant", name: "bKash Merchant", type: "BKASH", sortOrder: 2, opening: 40_000 },
+  { id: "wallet_nagad", name: "Nagad", type: "NAGAD", sortOrder: 3, opening: 8_000 },
+  { id: "wallet_rocket", name: "Rocket", type: "ROCKET", sortOrder: 4, opening: 0 },
+  { id: "wallet_bank", name: "Bank Account", type: "BANK", sortOrder: 5, opening: 1_50_000 },
+  { id: "wallet_showroom_cash", name: "Showroom Cash", type: "CASH", sortOrder: 6, opening: 12_000 },
+] as const;
+
+async function seedWallets() {
+  for (const w of SEED_WALLETS) {
+    await prisma.wallet.upsert({
+      where: { id: w.id },
+      update: {},
+      create: { id: w.id, name: w.name, type: w.type, sortOrder: w.sortOrder, openingBalance: 0, openingDate: new Date("2025-12-31T18:00:00Z") },
+    });
+  }
+}
+
+/**
+ * P2.3 demo money: opening balances, a verification queue, a refund waiting
+ * for approval, a month of expenses, a week of Facebook ad spend (each
+ * posting its "Ad cost" expense, as lib/expenses/service.ts does), a cash
+ * top-up and a bKash→bank transfer. Skipped once any wallet entry exists.
+ */
+async function seedFinanceDemo() {
+  if ((await prisma.walletEntry.count()) > 0) return;
+  const admin = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000001" } });
+  const accounts = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000006" } });
+  const se = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000004" } });
+  const dayMs = 24 * 60 * 60 * 1000;
+  // Dhaka midnight `n` days ago, as UTC.
+  const dhakaDay = (n: number) => {
+    const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date(Date.now() - n * dayMs));
+    return new Date(`${ymd}T00:00:00+06:00`);
+  };
+
+  // Opening balances counted on the 1st of last month.
+  const openingDate = dhakaDay(new Date().getDate() + 30);
+  for (const w of SEED_WALLETS) {
+    await prisma.wallet.update({ where: { id: w.id }, data: { openingBalance: w.opening, openingDate } });
+  }
+
+  // Verification queue: part-payments on open orders, not yet verified.
+  const openOrders = await prisma.order.findMany({
+    where: { deletedAt: null, status: { in: ["CONFIRMED", "PACKED"] }, dueAmount: { gt: 300 } },
+    orderBy: { createdAt: "asc" },
+    take: 3,
+  });
+  const queue = [
+    { method: "NAGAD", walletId: "wallet_nagad", trx: "SEED-NGD-7781", note: "Customer sent a Nagad screenshot on Messenger" },
+    { method: "BKASH", walletId: "wallet_bkash_merchant", trx: "SEED-BKM-5520", note: null },
+    { method: "BKASH", walletId: "wallet_bkash_personal", trx: "SEED-BKP-9914", note: "Paid from her husband's number" },
+  ] as const;
+  for (const [i, order] of openOrders.entries()) {
+    const q = queue[i];
+    await prisma.payment.create({
+      data: { orderId: order.id, amount: 300, method: q.method, walletId: q.walletId, transactionId: q.trx, receivedById: se.id, verified: false, paidAt: new Date(Date.now() - (i + 1) * 3 * 60 * 60 * 1000), note: q.note },
+    });
+    await recomputeDue(order.id);
+  }
+
+  // A refund Accounts asked for, waiting for a Manager/Admin.
+  const paidOrder = await prisma.order.findFirst({ where: { deletedAt: null, payments: { some: { kind: "PAYMENT", verified: true, method: "BKASH", amount: { gte: 400 } } } }, orderBy: { createdAt: "asc" } });
+  if (paidOrder) {
+    await prisma.payment.create({
+      data: {
+        orderId: paidOrder.id,
+        kind: "REFUND",
+        amount: -200,
+        method: "BKASH",
+        walletId: "wallet_bkash_personal",
+        receivedById: accounts.id,
+        refundReason: "Customer sent the advance twice (৳200 extra) — returning the difference.",
+        refundStatus: "PENDING",
+        paidAt: new Date(),
+      },
+    });
+  }
+
+  // A month of running costs.
+  const expenses = [
+    { cat: "expcat_rent", nature: "FIXED", amount: 35_000, wallet: "wallet_bank", day: 20, note: "Showroom rent — this month" },
+    { cat: "expcat_salary", nature: "FIXED", amount: 18_000, wallet: "wallet_bank", day: 18, note: "Packing staff salary" },
+    { cat: "expcat_salary", nature: "FIXED", amount: 22_000, wallet: "wallet_bank", day: 18, note: "Sales team salary" },
+    { cat: "expcat_utility", nature: "FIXED", amount: 4_850, wallet: "wallet_bkash_merchant", day: 15, note: "DESCO electricity bill" },
+    { cat: "expcat_utility", nature: "FIXED", amount: 1_500, wallet: "wallet_bkash_merchant", day: 14, note: "Internet (ISP)" },
+    { cat: "expcat_packaging", nature: "VARIABLE", amount: 3_200, wallet: "wallet_showroom_cash", day: 12, note: "Poly mailers ×500, tape" },
+    { cat: "expcat_packaging", nature: "VARIABLE", amount: 1_150, wallet: "wallet_showroom_cash", day: 4, note: "Gift boxes ×50" },
+    { cat: "expcat_transport", nature: "VARIABLE", amount: 650, wallet: "wallet_showroom_cash", day: 9, note: "CNG to Islampur wholesale market" },
+    { cat: "expcat_transport", nature: "VARIABLE", amount: 420, wallet: "wallet_showroom_cash", day: 2, note: "Rickshaw van — parcel drop at Steadfast hub" },
+    { cat: "expcat_courier", nature: "VARIABLE", amount: 780, wallet: "wallet_showroom_cash", day: 6, note: "Sundarban Courier — 6 outside-Dhaka parcels (cash)" },
+    { cat: "expcat_misc", nature: "VARIABLE", amount: 300, wallet: "wallet_showroom_cash", day: 3, note: "Tea & snacks for customers" },
+  ] as const;
+  for (const e of expenses) {
+    await prisma.expense.create({
+      data: { expenseDate: dhakaDay(e.day), categoryId: e.cat, nature: e.nature, amount: e.amount, walletId: e.wallet, note: e.note, createdById: accounts.id },
+    });
+  }
+
+  // A week of Facebook boosts, each posting its Ad cost expense.
+  const adDays = [7, 6, 5, 4, 3, 2, 1, 0];
+  const adAmounts = [1200, 950, 1500, 800, 1100, 1350, 1000, 700];
+  for (const [i, n] of adDays.entries()) {
+    const spend = await prisma.dailyAdSpend.create({
+      data: { spendDate: dhakaDay(n), platform: i % 4 === 3 ? "INSTAGRAM" : "FACEBOOK", amount: adAmounts[i], walletId: "wallet_bkash_merchant", createdById: admin.id },
+    });
+    await prisma.expense.create({
+      data: {
+        expenseDate: spend.spendDate,
+        categoryId: "expcat_ad_cost",
+        nature: "VARIABLE",
+        amount: spend.amount,
+        walletId: spend.walletId,
+        note: `Ad spend — ${spend.platform === "INSTAGRAM" ? "Instagram" : "Facebook"}`,
+        adSpendId: spend.id,
+        createdById: admin.id,
+      },
+    });
+  }
+
+  // Owner topped up the cash drawer; bKash personal cashed out to the bank.
+  await prisma.walletEntry.create({
+    data: { walletId: "wallet_showroom_cash", type: "MANUAL_IN", amount: 5_000, entryDate: dhakaDay(10), note: "Owner added change for the cash drawer", createdById: admin.id },
+  });
+  const transferId = "seed-transfer-0001";
+  for (const [walletId, type] of [["wallet_bkash_personal", "TRANSFER_OUT"], ["wallet_bank", "TRANSFER_IN"]] as const) {
+    await prisma.walletEntry.create({
+      data: { walletId, type, amount: 15_000, entryDate: dhakaDay(8), note: "bKash cash-out to bank", transferId, createdById: accounts.id },
+    });
+  }
+}
+
+/** Mirror of lib/orders/totals.ts recomputeOrderDueAmount (server-only, so not importable here). */
+async function recomputeDue(orderId: string) {
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { total: true } });
+  const paid = await prisma.payment.aggregate({
+    where: { orderId, OR: [{ kind: "PAYMENT" }, { kind: "REFUND", refundStatus: "APPROVED" }] },
+    _sum: { amount: true },
+  });
+  await prisma.order.update({ where: { id: orderId }, data: { dueAmount: Number(order.total) - Number(paid._sum.amount ?? 0) } });
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -1071,6 +1216,8 @@ async function seedSettings() {
     update: {},
     create: { key: PACKING_SLA_HOURS_SETTING_KEY, value: String(DEFAULT_PACKING_SLA_HOURS) },
   });
+  // Mirrors lib/expenses/constants.ts AD_ALLOCATION_SETTING_KEY / DEFAULT_AD_ALLOCATION.
+  await prisma.setting.upsert({ where: { key: "ad_cost_allocation" }, update: {}, create: { key: "ad_cost_allocation", value: "EQUAL" } });
 }
 
 async function main() {
@@ -1080,12 +1227,14 @@ async function main() {
   await seedUsers(roleIds);
   await seedCustomers();
   await seedCouriers();
+  await seedWallets();
   await seedSettings();
   await seedDemoOrders();
   await seedInventory();
   await seedCourierCosts();
   await seedCourierDemo();
   await seedCourierStatementsDemo();
+  await seedFinanceDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

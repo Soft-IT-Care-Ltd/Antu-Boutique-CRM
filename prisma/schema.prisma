@@ -197,6 +197,10 @@ model User {
   keptItemsMarked           ReturnInspection[]       @relation("ReturnKeptItemsMarkedBy")
   createdStatements         CourierStatement[]       @relation("CourierStatementCreatedBy")
   resolvedStatementLines    CourierStatementLine[]   @relation("CourierStatementLineResolvedBy")
+  verifiedPayments          Payment[]                @relation("PaymentVerifiedBy")
+  decidedRefunds            Payment[]                @relation("RefundDecidedBy")
+  walletEntries             WalletEntry[]            @relation("WalletEntryCreatedBy")
+  adSpends                  DailyAdSpend[]           @relation("AdSpendCreatedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -586,22 +590,39 @@ model OrderStatusHistory {
 // table. `transactionId`'s `@unique` is a nullable unique index, which
 // Postgres treats as unique-among-non-null-values — exactly CLAUDE.md rule
 // 4's "globally unique where not null", no extra constraint needed.
-// `wallet` names which specific account received the money (e.g. "bKash
-// Personal" vs "bKash Merchant") since PRD §4.10 wallets-with-balances is a
-// Phase 2 module — free text for now, not yet backed by a Wallet master.
+// P2.3: `walletId` links the Wallet that received the money (e.g. "bKash
+// Personal" vs "bKash Merchant"); the old free-text `wallet` was migrated.
 model Payment {
   id            String        @id @default(cuid())
   orderId       String
   order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // P2.3: REFUND rows are negative (DB CHECK) — money going back out.
+  kind          PaymentKind   @default(PAYMENT)
   amount        Decimal       @db.Decimal(12, 2)
   method        PaymentMethod
-  wallet        String?
+  // Which wallet received (or, for a refund, paid out) the money. Always
+  // null for COURIER_COD (DB CHECK): that money reaches a wallet as the
+  // courier statement's net payout, never parcel by parcel.
+  walletId      String?
+  wallet        Wallet?       @relation(fields: [walletId], references: [id], onDelete: Restrict)
   transactionId String?       @unique
   paidAt        DateTime      @default(now())
   receivedById  String?
   receivedBy    User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
   verified      Boolean       @default(false)
+  verifiedById  String?
+  verifiedBy    User?         @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt    DateTime?
   note          String?
+
+  // P2.3 — refunds need a reason and a second person's approval. Only an
+  // APPROVED refund counts toward due_amount and the wallet balance.
+  refundReason String?
+  refundStatus RefundStatus?
+  decidedById  String?
+  decidedBy    User?         @relation("RefundDecidedBy", fields: [decidedById], references: [id])
+  decidedAt    DateTime?
+  decisionNote String?
 
   // P2.2b — set when this payment settled a courier statement line.
   courierStatementLine CourierStatementLine?
@@ -610,6 +631,10 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   @@index([orderId])
+  @@index([walletId])
+  @@index([verified])
+  @@index([refundStatus])
+  @@index([paidAt])
   @@map("payments")
 }
 
@@ -834,13 +859,19 @@ model StockMovement {
 // cost. P2.3 adds the wallet it was paid from, attachments and the entry UI
 // on top of this same table.
 model ExpenseCategory {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  sortOrder Int       @default(0)
-  isActive  Boolean   @default(true)
-  expenses  Expense[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id            String        @id @default(cuid())
+  name          String        @unique
+  // P2.3 — the PRD §4.12 heading this category reports under.
+  kind          ExpenseKind   @default(MISC)
+  defaultNature ExpenseNature @default(VARIABLE)
+  // Posted by the system only (courier charges, write-offs, ad spend) —
+  // never picked on the expense form, so nothing is entered twice.
+  isSystem      Boolean       @default(false)
+  sortOrder     Int           @default(0)
+  isActive      Boolean       @default(true)
+  expenses      Expense[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@map("expense_categories")
 }
@@ -853,6 +884,20 @@ model Expense {
   nature      ExpenseNature
   amount      Decimal         @db.Decimal(12, 2)
   note        String?
+
+  // P2.3 — the wallet it was paid from. Null for non-cash postings (stock
+  // write-offs) and courier charges the courier deducted from its payout.
+  walletId String?
+  wallet   Wallet? @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  // Optional receipt: an image (compressed) or a PDF under expenses/<id>/.
+  attachmentPath String?
+  attachmentMime String?
+  attachmentName String?
+
+  // P2.3 — the posting of a daily ad spend row (edited/deleted with it).
+  adSpendId String?       @unique
+  adSpend   DailyAdSpend? @relation(fields: [adSpendId], references: [id], onDelete: Restrict)
 
   // Set when the expense was posted by a stock event (DAMAGE_OUT write-off
   // at cost) rather than typed in by hand.
@@ -877,8 +922,138 @@ model Expense {
 
   @@index([expenseDate])
   @@index([categoryId])
+  @@index([walletId])
   @@index([deletedAt])
   @@map("expenses")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.10 / §4.12 — wallets, manual wallet entries, daily ad spend (P2.3)
+// ---------------------------------------------------------------------------
+
+enum PaymentKind {
+  PAYMENT
+  REFUND
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// The PRD §4.12 expense headings.
+enum ExpenseKind {
+  AD_COST
+  PURCHASE
+  COURIER
+  SALARY
+  RENT
+  UTILITY
+  PACKAGING
+  TRANSPORT
+  EXCHANGE_RETURN
+  MISC
+}
+
+enum WalletType {
+  BKASH
+  NAGAD
+  ROCKET
+  BANK
+  CASH
+}
+
+enum WalletEntryType {
+  MANUAL_IN
+  MANUAL_OUT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum AdPlatform {
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+  GOOGLE
+  OTHER
+}
+
+// A wallet has no stored balance. Its balance is always derived
+// (lib/wallets/ledger.ts): opening balance + verified payments − approved
+// refunds − expenses paid from it ± manual entries + courier payouts into it,
+// all dated on/after openingDate. Nothing can drift out of step.
+model Wallet {
+  id             String     @id @default(cuid())
+  name           String     @unique
+  type           WalletType
+  accountNo      String?
+  openingBalance Decimal    @default(0) @db.Decimal(12, 2)
+  // Midnight (Dhaka) of the day the opening balance was counted. Money dated
+  // before it is already inside the opening balance.
+  openingDate    DateTime
+  isActive       Boolean    @default(true)
+  sortOrder      Int        @default(0)
+  note           String?
+
+  payments          Payment[]
+  expenses          Expense[]
+  entries           WalletEntry[]
+  courierStatements CourierStatement[]
+  adSpends          DailyAdSpend[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("wallets")
+}
+
+// Money in or out of a wallet that isn't a payment, refund, expense or
+// courier payout: an owner's cash top-up, a bank charge, a transfer between
+// wallets (two rows sharing transferId). Voided, never deleted.
+model WalletEntry {
+  id          String          @id @default(cuid())
+  walletId    String
+  wallet      Wallet          @relation(fields: [walletId], references: [id])
+  type        WalletEntryType
+  // Always positive (DB CHECK); the type says which way it moved.
+  amount      Decimal         @db.Decimal(12, 2)
+  entryDate   DateTime
+  note        String
+  transferId  String?
+  createdById String?
+  createdBy   User?           @relation("WalletEntryCreatedBy", fields: [createdById], references: [id])
+  voidedAt    DateTime?
+  voidReason  String?
+  createdAt   DateTime        @default(now())
+
+  @@index([walletId, entryDate])
+  @@index([transferId])
+  @@map("wallet_entries")
+}
+
+// PRD §4.12 — one row per day's ad spend (per platform). Each posts exactly
+// one "Ad cost" expense (Expense.adSpendId, unique) so it reaches the
+// wallet, the expense report and P&L once; the per-order allocation reads
+// this table (lib/expenses/ad-allocation.ts).
+model DailyAdSpend {
+  id          String     @id @default(cuid())
+  // Midnight (Dhaka) of the day the money was spent, as UTC.
+  spendDate   DateTime
+  platform    AdPlatform @default(FACEBOOK)
+  amount      Decimal    @db.Decimal(12, 2)
+  walletId    String
+  wallet      Wallet     @relation(fields: [walletId], references: [id])
+  note        String?
+  expense     Expense?
+  createdById String?
+  createdBy   User?      @relation("AdSpendCreatedBy", fields: [createdById], references: [id])
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([spendDate])
+  @@map("daily_ad_spend")
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,8 +1349,10 @@ model CourierStatement {
   deliveryCharge Decimal @default(0) @db.Decimal(12, 2)
   codCharge      Decimal @default(0) @db.Decimal(12, 2)
   netAmount      Decimal @default(0) @db.Decimal(12, 2)
-  // Where the net lands (free text until the P2.3 wallets master exists).
-  wallet         String?
+  // The wallet the courier paid the net into — this statement's net is that
+  // wallet's inflow (the COD payments themselves carry no wallet).
+  walletId       String?
+  wallet         Wallet? @relation(fields: [walletId], references: [id], onDelete: Restrict)
   note           String?
 
   rawPayload       Json?

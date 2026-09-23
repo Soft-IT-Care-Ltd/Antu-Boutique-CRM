@@ -234,7 +234,7 @@ async function postCourierReturnCharge(
   const category = await tx.expenseCategory.upsert({
     where: { name: COURIER_RETURN_CHARGE_EXPENSE_CATEGORY },
     update: {},
-    create: { name: COURIER_RETURN_CHARGE_EXPENSE_CATEGORY, sortOrder: 11 },
+    create: { name: COURIER_RETURN_CHARGE_EXPENSE_CATEGORY, sortOrder: 12, kind: "COURIER", isSystem: true },
   });
   await tx.expense.create({
     data: {

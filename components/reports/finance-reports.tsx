@@ -1,0 +1,312 @@
+"use client";
+
+import { useEffect, useState, type ReactNode } from "react";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EXPENSE_KIND_LABELS, EXPENSE_NATURE_LABELS, type ExpenseKindValue, type ExpenseNatureValue } from "@/lib/expenses/constants";
+import { formatDhakaDate } from "@/lib/inventory/constants";
+import { formatBDT } from "@/lib/money";
+import { ApiError, fetchJson } from "@/lib/orders/client";
+import { PAYMENT_METHOD_LABELS, type PaymentMethodValue } from "@/lib/orders/constants";
+
+// P2.3 collection report and expense report — a date range (Dhaka days,
+// inclusive) and a few breakdowns. Same data as /api/reports/*.
+
+function useReport<T>(endpoint: string, from: string, to: string) {
+  const [report, setReport] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!from || !to) return;
+    fetchJson<{ report: T }>(`${endpoint}?from=${from}&to=${to}`)
+      .then((r) => {
+        setReport(r.report);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the report."));
+  }, [endpoint, from, to]);
+  return { report, error };
+}
+
+function RangePicker({ from, to, setFrom, setTo }: { from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:w-80">
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="rep-from" className="text-xs">
+          From
+        </Label>
+        <Input id="rep-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="rep-to" className="text-xs">
+          To
+        </Label>
+        <Input id="rep-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Card>
+      <CardContent className="py-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-lg font-semibold tabular-nums">{formatBDT(value)}</p>
+        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <p className="py-6 text-center text-sm text-muted-foreground">{text}</p>;
+}
+
+function Loading() {
+  return (
+    <div className="grid gap-3 md:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Skeleton key={i} className="h-20 w-full" />
+      ))}
+    </div>
+  );
+}
+
+const dayLabel = (ymd: string) => formatDhakaDate(`${ymd}T00:00:00+06:00`);
+
+// ---------------------------------------------------------------------------
+
+type CollectionReport = {
+  totals: { collected: string; verified: string; unverified: string; refunds: string; net: string; paymentCount: number; refundCount: number };
+  byMethod: { method: PaymentMethodValue; count: number; collected: string; refunds: string }[];
+  byWallet: { walletId: string | null; label: string; collected: string; refunds: string; net: string }[];
+  byDay: { day: string; collected: string; refunds: string; net: string }[];
+  byStaff: { name: string; count: number; collected: string }[];
+};
+
+export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
+  const [from, setFrom] = useState(initialFrom);
+  const [to, setTo] = useState(initialTo);
+  const { report, error } = useReport<CollectionReport>("/api/reports/collection", from, to);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {!report ? (
+        <Loading />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Collected" value={report.totals.collected} hint={`${report.totals.paymentCount} payments`} />
+            <Stat label="Of which unverified" value={report.totals.unverified} />
+            <Stat label="Refunds (approved)" value={report.totals.refunds} hint={`${report.totals.refundCount} refunds`} />
+            <Stat label="Net collection" value={report.totals.net} />
+          </div>
+          {report.totals.paymentCount + report.totals.refundCount === 0 ? (
+            <Empty text="No payments in this range." />
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Section title="By method">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Payments</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Refunds</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byMethod.map((m) => (
+                      <TableRow key={m.method}>
+                        <TableCell>{PAYMENT_METHOD_LABELS[m.method]}</TableCell>
+                        <TableCell className="text-right tabular-nums">{m.count}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(m.collected)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatBDT(m.refunds)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Section>
+              <Section title="By wallet">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Wallet</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Refunds</TableHead>
+                      <TableHead className="text-right">Net</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byWallet.map((w) => (
+                      <TableRow key={w.walletId ?? w.label}>
+                        <TableCell>{w.label}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(w.collected)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatBDT(w.refunds)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">{formatBDT(w.net)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Section>
+              <Section title="By day">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Day</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Refunds</TableHead>
+                      <TableHead className="text-right">Net</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byDay.map((d) => (
+                      <TableRow key={d.day}>
+                        <TableCell className="whitespace-nowrap">{dayLabel(d.day)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(d.collected)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatBDT(d.refunds)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">{formatBDT(d.net)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Section>
+              <Section title="Recorded by">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Staff</TableHead>
+                      <TableHead className="text-right">Payments</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byStaff.map((s) => (
+                      <TableRow key={s.name}>
+                        <TableCell>{s.name}</TableCell>
+                        <TableCell className="text-right tabular-nums">{s.count}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(s.collected)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Section>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+type ExpenseReport = {
+  total: string;
+  count: number;
+  byNature: { nature: ExpenseNatureValue; amount: string }[];
+  byKind: { kind: ExpenseKindValue; amount: string; categories: { name: string; count: number; amount: string }[] }[];
+  byWallet: { walletId: string | null; label: string; amount: string }[];
+  byDay: { day: string; amount: string }[];
+};
+
+export function ExpenseReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
+  const [from, setFrom] = useState(initialFrom);
+  const [to, setTo] = useState(initialTo);
+  const { report, error } = useReport<ExpenseReport>("/api/reports/expenses", from, to);
+  const nature = (n: ExpenseNatureValue) => report?.byNature.find((b) => b.nature === n)?.amount ?? "0";
+
+  return (
+    <div className="flex flex-col gap-4">
+      <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {!report ? (
+        <Loading />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Stat label="Total expenses" value={report.total} hint={`${report.count} entries`} />
+            <Stat label={EXPENSE_NATURE_LABELS.FIXED} value={nature("FIXED")} />
+            <Stat label={EXPENSE_NATURE_LABELS.VARIABLE} value={nature("VARIABLE")} />
+          </div>
+          {report.count === 0 ? (
+            <Empty text="No expenses in this range." />
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Section title="By category">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Category</TableHead>
+                      <TableHead className="text-right">Entries</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byKind.flatMap((k) => [
+                      <TableRow key={k.kind} className="bg-muted/40">
+                        <TableCell className="font-medium">{EXPENSE_KIND_LABELS[k.kind]}</TableCell>
+                        <TableCell />
+                        <TableCell className="text-right font-medium tabular-nums">{formatBDT(k.amount)}</TableCell>
+                      </TableRow>,
+                      ...k.categories.map((c) => (
+                        <TableRow key={`${k.kind}-${c.name}`}>
+                          <TableCell className="pl-6 text-sm text-muted-foreground">{c.name}</TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">{c.count}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatBDT(c.amount)}</TableCell>
+                        </TableRow>
+                      )),
+                    ])}
+                  </TableBody>
+                </Table>
+              </Section>
+              <div className="flex flex-col gap-3">
+                <Section title="Paid from">
+                  <Table>
+                    <TableBody>
+                      {report.byWallet.map((w) => (
+                        <TableRow key={w.walletId ?? "none"}>
+                          <TableCell className="text-sm">{w.label}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatBDT(w.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Section>
+                <Section title="By day">
+                  <Table>
+                    <TableBody>
+                      {report.byDay.map((d) => (
+                        <TableRow key={d.day}>
+                          <TableCell className="whitespace-nowrap text-sm">{dayLabel(d.day)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatBDT(d.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Section>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

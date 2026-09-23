@@ -54,6 +54,15 @@ export function computeDueAmount(total: number, paidSoFar: number): number {
   return total - paidSoFar;
 }
 
+/**
+ * The payments that count toward what the customer has paid: every PAYMENT,
+ * plus refunds only once APPROVED (a refund is a negative row). A pending
+ * or rejected refund moves no money, so it can't move due_amount either.
+ */
+export const COUNTED_PAYMENTS_WHERE = {
+  OR: [{ kind: "PAYMENT" }, { kind: "REFUND", refundStatus: "APPROVED" }],
+} satisfies Prisma.PaymentWhereInput;
+
 // The one write path every payment create/update/delete route must call,
 // inside the same transaction as its own write. Sums `payments` fresh from
 // the DB rather than trusting anything the caller passed in, so a
@@ -62,7 +71,7 @@ export function computeDueAmount(total: number, paidSoFar: number): number {
 export async function recomputeOrderDueAmount(tx: Prisma.TransactionClient, orderId: string): Promise<number> {
   const [order, paidAgg] = await Promise.all([
     tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { total: true } }),
-    tx.payment.aggregate({ where: { orderId }, _sum: { amount: true } }),
+    tx.payment.aggregate({ where: { orderId, ...COUNTED_PAYMENTS_WHERE }, _sum: { amount: true } }),
   ]);
   const dueAmount = computeDueAmount(toNumber(order.total), toNumber(paidAgg._sum.amount ?? 0));
   await tx.order.update({ where: { id: orderId }, data: { dueAmount } });

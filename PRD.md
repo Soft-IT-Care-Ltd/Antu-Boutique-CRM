@@ -255,6 +255,23 @@ Recorded so later phases (P&L, reports, exchanges) build on the same rules.
 - Wallet running balances and a cash-position view.
 - **Admin/Manager only.** Not visible to SE, TL, Packing.
 
+#### Decisions made during build (P2.3 — wallets, verification, refunds, expenses)
+
+Covers §4.10 and §4.12. Recorded so P&L (Phase 4) and returns/exchanges (P3) build on the same rules.
+
+- **Wallets store no balance.** A balance is always derived (`lib/wallets/ledger.ts`): opening balance + **verified** payments into it − **approved** refunds out of it − expenses paid from it ± manual entries/transfers + courier payouts (statement **net**, once `PAID`) into it. Only money dated on/after the wallet's opening date counts. Unverified payments show as "pending" next to the balance, not in it. Wallets are deactivated, never deleted.
+- **Default wallets** (bKash Personal, bKash Merchant, Nagad, Rocket, Bank Account, Showroom Cash) are created by the migration with opening balance 0 dated 1 Jan 2026. **Set the real opening balances before go-live** (SETUP.md).
+- **Which wallet a payment lands in** is checked against its method (bKash → a bKash wallet, card → bank, cash → cash). With none picked, the first active matching wallet is used. The old free-text `wallet` values were migrated to wallet links (unmatched text kept in the payment's note).
+- **Courier COD carries no wallet** (DB CHECK). That money reaches the bank as the courier statement's net payout, so courier charges the courier deducted are expenses with no wallet either. The P2.2b payout wallet (`courier_statements.wallet`, free text) is now `walletId`; new statements default to the first active bank wallet.
+- **Verification.** Accounts verifies from a queue (oldest first, bulk). Each verification is audited with who and when. Editing the amount, method, wallet or TrxID of a verified payment sends it back to the queue.
+- **Refunds** are `payments` rows with `kind = REFUND` and a negative amount (DB CHECK), a required reason, and a `PENDING → APPROVED/REJECTED` decision by someone holding `payment.refund_approve` (Admin, Manager) **who didn't request it**. Only an approved refund counts toward `due_amount` and the wallet. A refund can't exceed verified money received less other pending/approved refunds. Refunds are never edited or deleted — rejected and re-requested. Order status is untouched (P3 returns move it to `REFUNDED`).
+- **Expense categories map to the §4.12 headings** (`expense_categories.kind`). System categories — Ad cost, courier delivery/COD/return charges, stock write-off — are posted by the app and can't be picked on the expense form, so nothing is entered twice. A system-posted expense is changed at its source, never on the expense screen. Stock write-off reports under Misc.
+- **Daily ad spend** (`daily_ad_spend`) is the only way to enter ad cost. Each row posts exactly one "Ad cost" expense from its wallet (edited/deleted with it).
+- **Ad-cost allocation** (setting `ad_cost_allocation`: `EQUAL` default, or `BY_VALUE`; changed by Admin) spreads a day's spend over the orders **first confirmed that Dhaka day**, excluding deleted and cancelled orders. POS sales never pass through CONFIRMED, so they carry none. It's derived on demand (`lib/expenses/ad-allocation.ts`), not stored, and splits in whole paisa that add back to the day's spend. A day with spend but no confirmed orders stays unallocated. It still counts as an expense.
+- **P&L must not double count.** Operating expenses come from `expenses`. `PURCHASE`-kind expenses (paying a supplier) are cash-out only: stock cost reaches P&L as COGS through `unit_cost_snapshot`, so P&L must leave them out.
+- **Receipts** (one per expense, image or PDF) live under `uploads/expenses/<id>/` and are served only to `expense.view`.
+- **Who sees what.** Wallets, expenses, ad spend, refunds and both reports are Admin/Manager/Accounts only (`wallet.*`, `expense.*`, `payment.*`). Accounts can request refunds and record wallet entries but not approve refunds or add wallets / change opening balances.
+
 ### 4.13 Targets, rewards, leaderboard
 
 - Monthly target per SE and per team: order count and/or order value.

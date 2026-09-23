@@ -6,7 +6,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import { toNumber } from "@/lib/money";
 import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { releaseVariantStock, reserveVariantStock } from "@/lib/orders/stock";
-import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
+import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE } from "@/lib/orders/totals";
 
 // Shared by the direct in-window PATCH (app/api/orders/[id]/route.ts) and
 // the TL/Admin edit-request approval (app/api/order-edit-requests/[id]/
@@ -68,7 +68,7 @@ export function parseStoredOrderEditInput(raw: unknown): OrderEditInput {
 export async function validateOrderEdit(orderId: string, input: OrderEditInput, actor: SessionUser): Promise<OrderEditValidation> {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true, payments: { select: { amount: true } } },
+    include: { items: true, payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } } },
   });
   if (!existing) return { ok: false, error: "Order not found", status: 404 };
 

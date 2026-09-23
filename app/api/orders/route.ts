@@ -19,6 +19,7 @@ import { reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
 import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
+import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 const VIEW_PERMISSIONS: PermissionKey[] = ["order.view_own", "order.view_team", "order.view_all"];
 
@@ -104,7 +105,7 @@ const newCustomerSchema = z.object({
 const advancePaymentSchema = z.object({
   method: z.enum(PAYMENT_METHOD_VALUES),
   amount: z.coerce.number().positive(),
-  wallet: z.string().trim().max(60).optional(),
+  walletId: z.string().trim().min(1).max(50).optional(),
   transactionId: z.string().trim().max(100).optional(),
 });
 
@@ -309,7 +310,7 @@ export async function POST(request: NextRequest) {
             orderId: created.id,
             amount: advancePayment.amount,
             method: advancePayment.method,
-            wallet: advancePayment.wallet || null,
+            walletId: await resolvePaymentWalletId(tx, advancePayment.method, advancePayment.walletId),
             transactionId: advancePayment.transactionId || null,
             receivedById: guard.user.id,
             verified: false,
@@ -343,6 +344,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(await stripCostFieldsForUser({ order: serialized, itemIds }, guard.user), { status: 201 });
   } catch (error) {
+    if (error instanceof WalletError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       // Two distinct unique constraints can land here: transactionId
       // (CLAUDE.md rule 4 — a bKash/Nagad TrxID reused) or orderNo (the

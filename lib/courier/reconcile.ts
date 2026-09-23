@@ -33,7 +33,15 @@ export class ReconcileError extends Error {}
 
 export const COURIER_DELIVERY_CHARGE_EXPENSE_CATEGORY = "Courier delivery charge";
 export const COD_CHARGE_EXPENSE_CATEGORY = "COD charge";
-export const DEFAULT_COURIER_PAYOUT_WALLET = "Bank Account";
+
+/**
+ * Where a courier's net payout lands when nobody says otherwise: the first
+ * active bank wallet (P2.3). Couriers pay out to the bank account.
+ */
+export async function defaultCourierPayoutWalletId(tx: Prisma.TransactionClient): Promise<string | null> {
+  const wallet = await tx.wallet.findFirst({ where: { isActive: true, type: "BANK" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true } });
+  return wallet?.id ?? null;
+}
 
 export type StatementLineInput = {
   consignmentId?: string | null;
@@ -54,7 +62,8 @@ export type StatementInput = {
   deliveryCharge?: number | null;
   codCharge?: number | null;
   netAmount?: number | null;
-  wallet?: string | null;
+  /** The wallet the net lands in; defaults to the first active bank wallet. */
+  walletId?: string | null;
   note?: string | null;
   rawPayload?: unknown;
   rawDetailPayload?: unknown;
@@ -77,7 +86,7 @@ export type IngestOutcome = {
 const SETTLED = ["MATCHED", "ACCEPTED"] as const;
 
 async function expenseCategoryId(tx: Prisma.TransactionClient, name: string, sortOrder: number): Promise<string> {
-  const category = await tx.expenseCategory.upsert({ where: { name }, update: {}, create: { name, sortOrder } });
+  const category = await tx.expenseCategory.upsert({ where: { name }, update: {}, create: { name, sortOrder, kind: "COURIER", isSystem: true } });
   return category.id;
 }
 
@@ -118,7 +127,7 @@ export async function ingestCourierStatement(tx: Prisma.TransactionClient, input
           status,
           statementDate: input.statementDate,
           ...amounts,
-          wallet: input.wallet?.trim() || DEFAULT_COURIER_PAYOUT_WALLET,
+          walletId: input.walletId || (await defaultCourierPayoutWalletId(tx)),
           note: input.note?.trim() || null,
           rawPayload: (input.rawPayload ?? undefined) as Prisma.InputJsonValue | undefined,
           rawDetailPayload: (input.rawDetailPayload ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -307,7 +316,8 @@ async function settleLine(
         orderId: order.id,
         amount: payAmount,
         method: "COURIER_COD",
-        wallet: statement.wallet,
+        // No wallet: this money reaches the bank as the statement's net
+        // payout (courier_statements.walletId), never parcel by parcel.
         // Globally unique (CLAUDE.md rule 4) and stable, so a replay can't double-pay.
         transactionId: `COD-${statement.reference}-${line.consignmentId ?? `L${line.lineNo}`}`,
         paidAt: statement.statementDate,

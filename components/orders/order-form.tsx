@@ -21,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { OrderImagesField, type StagedImage } from "@/components/orders/order-images-field";
 import { OrderItemPicker, type PickedVariant } from "@/components/orders/order-item-picker";
+import { WalletSelect } from "@/components/wallets/wallet-select";
 import { isValidBdPhone } from "@/lib/customers/phone";
 import { BD_DIVISIONS } from "@/lib/customers/constants";
 import type { CustomerListItem } from "@/lib/customers/types";
@@ -29,6 +30,7 @@ import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import type { PaymentMethodValue } from "@/lib/orders/constants";
 import type { CourierCompanyOption, OrderDetail, OrderImageView } from "@/lib/orders/types";
+import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
 
 type ItemRow = {
   localId: string;
@@ -83,11 +85,14 @@ export function OrderForm({
   hasCostAccess,
   canStockOverride,
   couriers,
+  wallets = [],
 }: {
   order?: OrderDetail;
   hasCostAccess: boolean;
   canStockOverride: boolean;
   couriers: CourierCompanyOption[];
+  /** Active wallets, for which one the advance went into (P2.3). */
+  wallets?: WalletOption[];
 }) {
   const router = useRouter();
   const isEdit = Boolean(order);
@@ -122,6 +127,8 @@ export function OrderForm({
   const [advanceMethod, setAdvanceMethod] = useState<PaymentMethodValue>("BKASH");
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceTxnId, setAdvanceTxnId] = useState("");
+  const [advanceWalletId, setAdvanceWalletId] = useState(() => walletsForMethod(wallets, "BKASH")[0]?.id ?? "");
+  const advanceWallets = walletsForMethod(wallets, advanceMethod);
 
   const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
   const [persistedImages, setPersistedImages] = useState<OrderImageView[]>(order?.images ?? []);
@@ -279,7 +286,12 @@ export function OrderForm({
         };
       }
       if (advanceEnabled && advanceAmountNum > 0) {
-        payload.advancePayment = { method: advanceMethod, amount: advanceAmountNum, transactionId: advanceTxnId.trim() || undefined };
+        payload.advancePayment = {
+          method: advanceMethod,
+          amount: advanceAmountNum,
+          walletId: advanceWallets.some((w) => w.id === advanceWalletId) ? advanceWalletId : undefined,
+          transactionId: advanceTxnId.trim() || undefined,
+        };
       }
 
       const { order: created, itemIds } = await fetchJson<{ order: OrderDetail; itemIds: string[] }>("/api/orders", {
@@ -673,10 +685,17 @@ export function OrderForm({
                 <Switch id="order-advance-toggle" checked={advanceEnabled} onCheckedChange={setAdvanceEnabled} />
               </div>
               {advanceEnabled ? (
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <Label>Method</Label>
-                    <Select value={advanceMethod} onValueChange={(v) => setAdvanceMethod(v as PaymentMethodValue)}>
+                    <Select
+                      value={advanceMethod}
+                      onValueChange={(v) => {
+                        const method = v as PaymentMethodValue;
+                        setAdvanceMethod(method);
+                        setAdvanceWalletId(walletsForMethod(wallets, method)[0]?.id ?? "");
+                      }}
+                    >
                       <SelectTrigger className="w-full">
                         <SelectValue>{(value: PaymentMethodValue) => PAYMENT_METHOD_LABELS[value]}</SelectValue>
                       </SelectTrigger>
@@ -699,6 +718,14 @@ export function OrderForm({
                       value={advanceAmount}
                       onChange={(e) => setAdvanceAmount(e.target.value)}
                     />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="order-advance-wallet">Received into</Label>
+                    {advanceWallets.length > 0 ? (
+                      <WalletSelect id="order-advance-wallet" wallets={advanceWallets} value={advanceWalletId} onChange={setAdvanceWalletId} />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No active {PAYMENT_METHOD_LABELS[advanceMethod]} wallet.</p>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="order-advance-txn">Transaction ID</Label>

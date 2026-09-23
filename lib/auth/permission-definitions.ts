@@ -85,6 +85,13 @@ export const PERMISSIONS = [
   { key: "payment.edit", group: "Payments", label: "Edit payments" },
   { key: "payment.delete", group: "Payments", label: "Delete payments" },
   { key: "payment.verify", group: "Payments", label: "Verify payments" },
+  { key: "payment.refund", group: "Payments", label: "Request refunds" },
+  { key: "payment.refund_approve", group: "Payments", label: "Approve or reject refunds" },
+
+  // Wallets (P2.3)
+  { key: "wallet.view", group: "Wallets", label: "View wallet balances & statements" },
+  { key: "wallet.entry", group: "Wallets", label: "Record manual wallet entries & transfers" },
+  { key: "wallet.manage", group: "Wallets", label: "Add wallets & set opening balances" },
 
   // Expenses
   { key: "expense.view", group: "Expenses", label: "View expenses" },
@@ -201,11 +208,16 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "attendance.mark",
   ],
 
+  // Refunds are requested by Accounts and approved by a Manager/Admin —
+  // payment.refund_approve is deliberately absent here.
   ACCOUNTS: [
     "payment.view",
     "payment.create",
     "payment.edit",
     "payment.verify",
+    "payment.refund",
+    "wallet.view",
+    "wallet.entry",
     "expense.view",
     "expense.create",
     "expense.edit",

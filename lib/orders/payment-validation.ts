@@ -12,7 +12,8 @@ import { PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 export const createPaymentSchema = z.object({
   amount: z.coerce.number().positive(),
   method: z.enum(PAYMENT_METHOD_VALUES),
-  wallet: z.string().trim().max(60).optional(),
+  // Omitted → the first active wallet matching the method (lib/wallets/service.ts).
+  walletId: z.string().trim().min(1).max(50).optional(),
   transactionId: z.string().trim().max(100).optional(),
   paidAt: z.coerce.date().optional(),
   note: z.string().trim().max(500).optional(),
@@ -24,8 +25,25 @@ export const createPaymentSchema = z.object({
 export const updatePaymentSchema = z.object({
   amount: z.coerce.number().positive().optional(),
   method: z.enum(PAYMENT_METHOD_VALUES).optional(),
-  wallet: z.string().trim().max(60).nullish(),
+  walletId: z.string().trim().min(1).max(50).optional(),
   transactionId: z.string().trim().max(100).nullish(),
   paidAt: z.coerce.date().optional(),
   note: z.string().trim().max(500).nullish(),
+});
+
+// P2.3 — a refund: a positive amount here, stored negative. Reason required;
+// it waits for a second person's approval (lib/payments/refunds.ts).
+export const createRefundSchema = z.object({
+  amount: z.coerce.number().positive("Enter an amount greater than zero").max(100_000_000),
+  method: z.enum(PAYMENT_METHOD_VALUES),
+  walletId: z.string().trim().min(1).max(50).optional(),
+  transactionId: z.string().trim().max(100).optional(),
+  paidAt: z.coerce.date().optional(),
+  reason: z.string().trim().min(3, "Give the reason for the refund").max(500),
+});
+
+export const refundDecisionSchema = z.object({
+  decision: z.enum(["APPROVE", "REJECT"]),
+  note: z.string().trim().max(500).optional(),
+  transactionId: z.string().trim().max(100).optional(),
 });

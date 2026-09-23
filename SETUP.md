@@ -112,4 +112,5 @@ Deployment follows the same shape as the Gift Valy server runbook: VPS + Node 20
       `*/15 * * * * curl -fsS -m 60 -H "Authorization: Bearer $CRON_SECRET" https://<your-domain>/api/cron/steadfast-sync`
       — plus the trash-purge job and the nightly `pg_dump` backup.
 - [ ] "Last webhook received" and "Last sync" on the Courier page start filling after the first real parcel.
+- [ ] **Payments & Wallets → Wallets:** set each wallet's real opening balance and opening date (the day it was counted); deactivate any wallet the business doesn't use.
 - [ ] After the first real Steadfast payout, check its stored raw data (`courier_statements.rawPayload` / `rawDetailPayload`) to confirm whether `due_bills` include return charges, and that nothing was booked twice (return charges from the condition check vs. the statement's delivery-charge expense).

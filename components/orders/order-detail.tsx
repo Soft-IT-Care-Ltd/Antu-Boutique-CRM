@@ -21,6 +21,7 @@ import { fetchJson } from "@/lib/orders/client";
 import { DELIVERY_ZONE_LABELS, ORDER_STATUS_LABELS } from "@/lib/orders/constants";
 import { orderUploadUrl } from "@/lib/orders/types";
 import type { OrderDetail as OrderDetailType } from "@/lib/orders/types";
+import type { WalletOption } from "@/lib/wallets/constants";
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -37,6 +38,10 @@ export function OrderDetail({
   canEditPayment,
   canDeletePayment,
   canVerifyPayment,
+  canRequestRefund,
+  canDecideRefund,
+  wallets,
+  currentUserId,
   shipment,
   canSendToSteadfast,
   canOverrideCourier,
@@ -51,6 +56,10 @@ export function OrderDetail({
   canEditPayment: boolean;
   canDeletePayment: boolean;
   canVerifyPayment: boolean;
+  canRequestRefund: boolean;
+  canDecideRefund: boolean;
+  wallets: WalletOption[];
+  currentUserId: string;
   shipment: ShipmentDetailView | null;
   canSendToSteadfast: boolean;
   canOverrideCourier: boolean;
@@ -297,6 +306,10 @@ export function OrderDetail({
               canEdit={canEditPayment}
               canDelete={canDeletePayment}
               canVerify={canVerifyPayment}
+              canRequestRefund={canRequestRefund}
+              canDecideRefund={canDecideRefund}
+              wallets={wallets}
+              currentUserId={currentUserId}
             />
 
             {order.deliveryNote ? (

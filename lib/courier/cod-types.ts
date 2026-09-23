@@ -52,7 +52,7 @@ export type StatementRow = {
   deliveryCharge: string;
   codCharge: string;
   netAmount: string;
-  wallet: string | null;
+  walletName: string | null;
   identityHolds: boolean;
   lineCount: number;
   settledCount: number;

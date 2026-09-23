@@ -66,10 +66,6 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethodValue, string> = {
   COURIER_COD: "Courier COD",
 };
 
-// PRD §4.10 names these as the wallets in use; the full Wallet master with
-// running balances is Phase 2, so for now `payment.wallet` is free text and
-// this is only suggestions for the input (see components/orders/order-payment-dialog.tsx).
-export const PAYMENT_WALLET_SUGGESTIONS = ["bKash Personal", "bKash Merchant", "Nagad", "Bank Account", "Showroom Cash"];
 
 // Statuses the order PATCH route (and the /orders/[id]/edit page) will
 // still touch at all. Once an order has moved past CONFIRMED it belongs to

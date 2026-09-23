@@ -23,9 +23,11 @@ import {
   type StatementLineView,
   type StatementRow,
 } from "@/lib/courier/cod-types";
+import { WalletSelect } from "@/components/wallets/wallet-select";
 import { formatDhakaDate, formatDhakaDateTime, todayInDhaka } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
+import type { WalletOption } from "@/lib/wallets/constants";
 
 type View = "awaiting" | "statements" | "discrepancies";
 const PAGE_SIZE = 20;
@@ -44,7 +46,7 @@ const LINE_BADGE: Record<StatementLineView["status"], "default" | "secondary" | 
 
 // PRD §4.9 COD reconciliation + Gift Valy Round 2 §2.7 payouts, for ACCOUNTS:
 // every taka the courier pays out is justified against our orders.
-export function CodReconciliation({ canSyncPayouts }: { canSyncPayouts: boolean }) {
+export function CodReconciliation({ canSyncPayouts, payoutWallets }: { canSyncPayouts: boolean; payoutWallets: WalletOption[] }) {
   const [view, setView] = useState<View>("awaiting");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ListResponse | null>(null);
@@ -182,6 +184,7 @@ export function CodReconciliation({ canSyncPayouts }: { canSyncPayouts: boolean 
 
       {importOpen ? (
         <ImportStatementDialog
+          wallets={payoutWallets}
           onClose={() => setImportOpen(false)}
           onDone={(text) => {
             setImportOpen(false);
@@ -386,7 +389,7 @@ function StatementDialog({ statementId, onClose, onResolve, reloadKey }: { state
           </DialogTitle>
           {statement ? (
             <DialogDescription>
-              {statement.courierName} · {STATEMENT_SOURCE_LABELS[statement.source]} · {formatDhakaDate(statement.statementDate)} · into {statement.wallet ?? "—"}
+              {statement.courierName} · {STATEMENT_SOURCE_LABELS[statement.source]} · {formatDhakaDate(statement.statementDate)} · into {statement.walletName ?? "—"}
             </DialogDescription>
           ) : null}
         </DialogHeader>
@@ -495,12 +498,12 @@ function ResolveDialog({ line, onClose, onDone }: { line: StatementLineView; onC
 
 type CourierOption = { id: string; name: string };
 
-function ImportStatementDialog({ onClose, onDone }: { onClose: () => void; onDone: (summary: string) => void }) {
+function ImportStatementDialog({ wallets, onClose, onDone }: { wallets: WalletOption[]; onClose: () => void; onDone: (summary: string) => void }) {
   const [couriers, setCouriers] = useState<CourierOption[]>([]);
   const [courierId, setCourierId] = useState("");
   const [reference, setReference] = useState("");
   const [statementDate, setStatementDate] = useState(todayInDhaka());
-  const [wallet, setWallet] = useState("Bank Account");
+  const [walletId, setWalletId] = useState(wallets.find((w) => w.type === "BANK")?.id ?? wallets[0]?.id ?? "");
   const [netAmount, setNetAmount] = useState("");
   const [csv, setCsv] = useState("");
   const [saving, setSaving] = useState(false);
@@ -527,7 +530,7 @@ function ImportStatementDialog({ onClose, onDone }: { onClose: () => void; onDon
     try {
       const res = await fetchJson<{ outcome: { settled: number; discrepancies: number; unmatched: number; completed: number; reconciledNow: boolean } }>("/api/courier/statements", {
         method: "POST",
-        body: JSON.stringify({ courierId, reference, statementDate, wallet, csv, ...(netAmount ? { netAmount: Number(netAmount) } : {}) }),
+        body: JSON.stringify({ courierId, reference, statementDate, walletId: walletId || undefined, csv, ...(netAmount ? { netAmount: Number(netAmount) } : {}) }),
       });
       const o = res.outcome;
       onDone(
@@ -576,7 +579,7 @@ function ImportStatementDialog({ onClose, onDone }: { onClose: () => void; onDon
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="stmt-wallet">Paid into</Label>
-            <Input id="stmt-wallet" value={wallet} onChange={(e) => setWallet(e.target.value)} />
+            <WalletSelect id="stmt-wallet" wallets={wallets} value={walletId} onChange={setWalletId} />
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="stmt-net">Net amount received (optional — checks the statement adds up)</Label>

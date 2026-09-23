@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { can } from "@/lib/auth/permissions";
 import { canViewOrder } from "@/lib/orders/access";
 import { readUploadedFile } from "@/lib/uploads/storage";
 import type { SessionUser } from "@/lib/auth/types";
@@ -53,6 +54,14 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     const sessionUser: SessionUser = { id: session.user.id, role: session.user.role, teamId: session.user.teamId };
     if (!(await canViewOrder(sessionUser, order))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+  }
+
+  // P2.3 expense receipts: money data — only whoever can see expenses.
+  if (segments[0] === "expenses") {
+    const sessionUser: SessionUser = { id: session.user.id, role: session.user.role, teamId: session.user.teamId };
+    if (!(await can(sessionUser, "expense.view"))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }

@@ -80,7 +80,7 @@ export async function listAwaitingPayout(user: SessionUser, opts: { page: number
   };
 }
 
-function serializeStatement(s: Prisma.CourierStatementGetPayload<{ include: { courier: { select: { name: true } }; lines: { select: { status: true } } } }>): StatementRow {
+function serializeStatement(s: Prisma.CourierStatementGetPayload<{ include: typeof statementListInclude }>): StatementRow {
   const gross = toNumber(s.grossAmount);
   const deliveryCharge = toNumber(s.deliveryCharge);
   const codCharge = toNumber(s.codCharge);
@@ -96,7 +96,7 @@ function serializeStatement(s: Prisma.CourierStatementGetPayload<{ include: { co
     deliveryCharge: deliveryCharge.toFixed(2),
     codCharge: codCharge.toFixed(2),
     netAmount: net.toFixed(2),
-    wallet: s.wallet,
+    walletName: s.wallet?.name ?? null,
     identityHolds: statementIdentityHolds({ grossAmount: gross, deliveryCharge, codCharge, netAmount: net }),
     lineCount: s.lines.length,
     settledCount: s.lines.filter((l) => l.status === "MATCHED" || l.status === "ACCEPTED").length,
@@ -105,7 +105,7 @@ function serializeStatement(s: Prisma.CourierStatementGetPayload<{ include: { co
   };
 }
 
-const statementListInclude = { courier: { select: { name: true } }, lines: { select: { status: true } } } as const;
+const statementListInclude = { courier: { select: { name: true } }, wallet: { select: { name: true } }, lines: { select: { status: true } } } as const;
 
 export async function listStatements(opts: { page: number; pageSize: number }): Promise<{ items: StatementRow[]; total: number }> {
   const [total, rows] = await Promise.all([

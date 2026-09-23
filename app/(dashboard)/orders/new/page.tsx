@@ -5,15 +5,17 @@ import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import type { CourierCompanyOption } from "@/lib/orders/types";
+import { listWalletOptions } from "@/lib/wallets/service";
 
 export default async function NewOrderPage() {
   const user = await guardPage("/orders");
   if (!(await can(user, "order.create"))) redirect("/orders");
 
-  const [hasCostAccess, canStockOverride, couriers] = await Promise.all([
+  const [hasCostAccess, canStockOverride, couriers, wallets] = await Promise.all([
     can(user, "product.cost.view"),
     can(user, "order.stock_override"),
     prisma.courierCompany.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, include: { zones: { orderBy: { zone: "asc" } } } }),
+    listWalletOptions(prisma),
   ]);
 
   const courierOptions: CourierCompanyOption[] = couriers.map((c) => ({
@@ -28,7 +30,7 @@ export default async function NewOrderPage() {
         <h1 className="text-2xl font-semibold tracking-tight">New order</h1>
         <p className="text-sm text-muted-foreground">One person, their items, an optional photo, and the delivery details.</p>
       </div>
-      <OrderForm hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} />
+      <OrderForm hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} wallets={wallets} />
     </div>
   );
 }

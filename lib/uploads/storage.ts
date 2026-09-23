@@ -100,3 +100,22 @@ export async function deleteUploadedFile(relativePath: string): Promise<void> {
 export async function readUploadedFile(relativePath: string): Promise<Buffer> {
   return readFile(resolveUploadPath(relativePath));
 }
+
+/**
+ * P2.3 expense receipts: a PDF is stored as-is (after checking it really is
+ * one); images go through saveCompressedImage like every other upload.
+ */
+export async function saveReceipt(buffer: Buffer, mimeType: string, subdir: string): Promise<{ filePath: string; mimeType: string }> {
+  if (mimeType === "application/pdf") {
+    if (buffer.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("That file isn't a valid PDF");
+    const dir = resolveUploadPath(subdir);
+    await mkdir(dir, { recursive: true });
+    const filename = `${randomUUID()}.pdf`;
+    await writeFile(path.join(/* turbopackIgnore: true */ dir, filename), buffer);
+    return { filePath: path.posix.join(subdir, filename), mimeType };
+  }
+  const saved = await saveCompressedImage(buffer, mimeType, subdir);
+  // The thumbnail isn't used for receipts.
+  await deleteUploadedFile(saved.thumbPath);
+  return { filePath: saved.filePath, mimeType: saved.mimeType };
+}
