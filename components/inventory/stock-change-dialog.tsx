@@ -127,7 +127,15 @@ export function StockChangeDialog({ mode, row, onOpenChange, onDone }: Props) {
             </p>
           ) : null}
 
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {mode === "adjust" && row?.weightedAvgCost && qtyValid && Number(row.weightedAvgCost) > 0 ? (
+            <p className="rounded-md bg-muted px-3 py-2 text-sm">
+              {direction === "remove" ? "Posts an expense of " : "Credits "}
+              <span className="font-semibold">{formatBDT(fromPaisa(toPaisa(row.weightedAvgCost) * qtyNumber))}</span> ({qtyNumber} ×{" "}
+              {formatBDT(row.weightedAvgCost)} at cost) {direction === "remove" ? "under" : "back to"} “Stock shortage”.
+            </p>
+          ) : null}
+
+          {error ?<p className="text-sm text-destructive">{error}</p> : null}
         </div>
 
         <DialogFooter>

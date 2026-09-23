@@ -39,15 +39,15 @@ export async function POST(request: NextRequest) {
         movementId: movement.id,
         qty: movement.qty,
         unitCost: movement.unitCostSnapshot.toString(),
-        expenseId: expense.id,
-        expenseAmount: expense.amount.toString(),
+        expenseId: expense?.id ?? null,
+        expenseAmount: expense?.amount.toString() ?? null,
         reason: parsed.data.reason,
       },
       request,
     });
 
     return NextResponse.json(
-      { movement: { id: movement.id, qty: movement.qty, stockAfter: movement.stockAfter }, expenseId: expense.id },
+      { movement: { id: movement.id, qty: movement.qty, stockAfter: movement.stockAfter }, expenseId: expense?.id ?? null },
       { status: 201 },
     );
   } catch (err) {

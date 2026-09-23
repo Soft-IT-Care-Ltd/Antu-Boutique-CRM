@@ -243,57 +243,95 @@ Automated: lib/courier/__tests__/phase2-verify.integration.test.ts, lib/courier/
 
 ## Phase 3 — POS, returns, exchanges, outfit sets
 
+> Rewritten 24 Sep 2026 after Phase 2, using the lessons in `docs/reference/gift-valy/CORRECTIONS.md` (Orders 6n, Products 1–5, Round 2 items 2.2, 2.3, 2.8). Run in order: P3.0 → P3.1 → P3.2 → P3.3 → Verify.
+
+### P3.0 — iPhone / iPad safety net (small, do first)
+
+```
+Read docs/reference/gift-valy/CORRECTIONS.md ROUND 2 item 2.8. Gift Valy's login page went completely blank on every iPhone because a modern JS feature crashed older Safari before hydration. Antu's showroom POS will likely run on an iPad and sales staff use iPhones, so prevent this now:
+- add a browserslist target that covers iOS Safari 15+ and make sure the build honours it
+- scan source and built bundles for syntax older Safari can't run (regex lookbehind, structuredClone, Array.at, crypto.randomUUID without fallback, etc.) and fix or polyfill
+- add a global client error boundary that shows a visible "Something went wrong — Reload" message instead of a silent white page
+Commit separately.
+```
+
 ### P3.1 — POS / walk-in
 
 ```
-Read PRD §4.7.
+Read PRD §4.7, and CORRECTIONS.md ROUND 2 item 2.3 (type-ahead search).
 
 Build the POS screen for showroom sales:
-- fast search by product name or SKU (and a barcode-friendly input), cart, qty, discount, payment (Cash/bKash/Nagad/Card), complete sale
-- channel WALK_IN, no courier, no delivery address; customer optional (anonymous, or a phone captures them for repeat tracking)
-- stock deducts IMMEDIATELY on sale (POS_SALE_OUT), status goes straight to COMPLETED
-- print or skip invoice
-- cash drawer per day: opening balance, cash sales, cash out, closing balance, with an end-of-day reconciliation screen
-- keyboard-first and touch-friendly; must work on a tablet
-
-Walk-in sales post to the same payments, wallets and P&L tables as online orders, and every report gains a channel filter.
+- fast type-ahead search by product name, SKU or barcode, showing size, colour and available stock per variant; cart, qty, discount, payment (Cash/bKash/Nagad/Card), complete sale
+- channel WALK_IN, no courier, no delivery address; customer optional (anonymous, or a phone number links them for repeat tracking)
+- stock deducts IMMEDIATELY on sale through the ledger (POS_SALE_OUT), status goes straight to COMPLETED, unit_cost_snapshot frozen at sale
+- print or skip the invoice
+- cash drawer per day: opening balance, cash sales, cash out, closing balance, and an end-of-day count with the difference shown — ties into the showroom cash wallet from P2.3
+- keyboard-first on desktop, large touch targets on a tablet; test at iPad width
+- POS_OPERATOR sees no cost or profit anywhere, same as a sales executive
+- walk-in sales use the same payments, wallets and P&L tables as online orders, and never receive allocated ad cost (per the P2.3 decision)
+Every existing report and list gains a channel filter (Online / Walk-in).
 ```
 
-### P3.2 — Returns and exchanges
+### P3.2 — Returns and exchanges (online and at the counter)
 
 ```
-Read PRD §4.11.
+Read PRD §4.11, CORRECTIONS.md Orders item 6n, and the condition-check decision in PRD §4.9 (lib/returns/condition-check.ts). Every return and exchange must go through that one service — do not write a second one.
+
+Rules from Gift Valy 6n that apply here:
+- a return or exchange is PENDING until the item is physically back in our hands; no stock moves while pending
+- on receipt, Packing inspects every unit: OK → back to sellable stock, Damaged → "Damage / write-off" at the frozen cost
+- fully audit-logged: who received, what was marked damaged
+
+Return / refund: reason required, TL/ADMIN approval, condition check on receipt, refund as an approved negative payment (P2.3 rules), order → RETURNED/REFUNDED.
+
+Exchange (size/colour change) — two ways it happens, both must work:
+A. ONLINE (customer sends it back by courier): original order → EXCHANGE_REQUESTED; a NEW linked order carries exchanged_from_order_id and ships the replacement variant through the normal packing/courier flow (EXCHANGE_OUT). The returned item is restocked only after the condition check (EXCHANGE_IN).
+B. AT THE COUNTER (customer walks into the showroom with the item): no courier. Staff inspect on the spot, swap the variant, settle any price difference, and both stock movements happen immediately in one transaction. Very common for a boutique — make it a fast flow from the POS screen or the order page.
+
+For both:
+- the price difference is a normal payment line: customer pays extra, or an approved refund/credit
+- courier_charge_bearer = CUSTOMER or COMPANY (online only); company-borne cost posts once as an expense under the exchange/return cost category
+- exchange_reason required: wrong size / wrong colour / not as expected / defective / other
+- both orders show the link and the reason on screen
+- exchange report by reason, by product and variant, by SE, with company-borne cost totalled — a product exchanged again and again is a sizing or photo problem
+
+Add the new flows to the Phase 2 ledger test: stock must still equal the sum of ledger rows after an online exchange, a counter exchange and a return with one damaged unit.
+```
+
+### P3.3 — Outfit sets
+
+```
+Read PRD §4.2 (outfit sets), then CORRECTIONS.md "Products & Packages" items 1, 2, 4 and 5, and ROUND 2 item 2.2.
+
+IMPORTANT design change from the PRD: an outfit set is built from PRODUCTS, not fixed variants. A set like "Kurti + Dupatta + Plazo" must not need a separate set for every size and colour. At order entry (online and POS), when a set is added, the SE picks the size and colour for each component — like Gift Valy's "choice slots". The chosen variant is stored on the order item, shown on the packing queue and order detail, and its stock is what gets reserved and deducted. Update PRD §4.2 to match.
 
 Build:
+- set = list of component products with quantity (quantity drives cost, stock deduction and availability everywhere)
+- set price is set independently; set cost = sum of the CHOSEN variants' weighted average cost × qty, frozen at packing like any line
+- availability: per chosen size/colour combination = min over components of floor(available ÷ qty); the set list shows whether at least one full combination is available
+- packing queue, packing slip and pack dialog show the FULL explosion — every component with its chosen size and colour — never just the set name (Gift Valy 2.2 bug)
+- the invoice shows the set name with an indented list of what's included (names and qty only, no costs)
+- a set can be sold online and at the POS; searchable by name like any product
+- returns and exchanges of a set can be for one component only (customer keeps the kurti, exchanges the plazo size) — route that through the P3.2 flows at component level
+- outfit-set availability report naming the limiting component
 
-Return/refund: reason required, TL/ADMIN approval, PACKING condition check, restock (RETURN_IN) or write-off (DAMAGE_OUT), refund payment row, order → RETURNED/REFUNDED.
-
-Exchange (the new module):
-- creates a LINKED order: original → EXCHANGE_REQUESTED, new order carries exchanged_from_order_id, both screens show the link and the reason
-- returned variant restocks ONLY after a PACKING condition check: Good → EXCHANGE_IN, Damaged → DAMAGE_OUT
-- new variant ships through the normal packing/courier flow (EXCHANGE_OUT)
-- price difference settled as a normal payment line: customer pays extra, or is refunded/credited
-- courier_charge_bearer field: CUSTOMER or COMPANY. Company-borne amounts post to expenses so exchange cost lands in P&L.
-- exchange_reason required: wrong size / wrong colour / not as expected / defective / other
-- exchange report by reason, by product/variant, by SE, with company-borne cost totalled
-```
-
-### P3.3 — Outfit sets (BOM)
-
-```
-Read PRD §4.2 (outfit sets).
-
-Build outfit sets: a sellable item composed of multiple product variants with quantities. Cost = sum of component weighted_avg_cost. Available-to-sell = min over components of floor(component available / component qty). Selling a set deducts every component through the ledger. Sets appear in the order and POS product search, and expand into their components on the packing slip. Add the outfit-set availability report naming the limiting component.
+Optional — keep only if Antu uses branded bags, boxes or tissue you want to track:
+- packaging materials as "component only" products (stocked, costed, never sellable, hidden from order search), attachable to products and sets so packing deducts them and their cost counts (Gift Valy Products 1–2)
 ```
 
 ### Verify Phase 3
 
 ```
-Reviewer pass:
-1. Run a walk-in sale and confirm stock, payment, wallet and daily cash all move correctly, with no courier record created.
-2. Run a size exchange end to end: is the original linked, the returned item condition-checked, the price difference settled, and the company-borne courier charge visible in expenses?
-3. Does an outfit set's available-to-sell correctly drop when one component runs low?
-4. Do all reports respect the channel filter?
+Reviewer pass on Phase 3. Verify by reading code and testing:
+1. A walk-in sale: stock, payment, showroom cash wallet and the day's cash drawer all move correctly, no courier or shipment record is created, and no ad cost is allocated.
+2. An online size exchange end to end: original linked, replacement shipped, returned item not restocked until the condition check, price difference settled, company-borne courier cost posted once.
+3. A counter exchange: both stock movements in one transaction, no courier record, price difference settled on the spot.
+4. An outfit set sold with chosen sizes/colours: the right variants are reserved and deducted, packing shows the full explosion, the invoice lists the components, and availability drops when one component's chosen variant runs low.
+5. Exchanging one component of a set works without touching the other components.
+6. Stock still equals the sum of ledger rows after all of the above.
+7. POS_OPERATOR and SALES_EXECUTIVE see no cost, profit or margin on any POS, exchange or set screen or API response.
+8. Every report respects the channel filter.
+9. The app loads on an iPhone-width and iPad-width viewport with no blank screen, and the error boundary shows if a client error is forced.
 Report findings, then fix them.
 ```
 

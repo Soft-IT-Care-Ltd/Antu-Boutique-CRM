@@ -1,19 +1,55 @@
-import type { Prisma, StockReferenceType } from "@prisma/client";
+import type { Expense, Prisma, StockMovement, StockReferenceType } from "@prisma/client";
 
 import { fromPaisa, toPaisa } from "./costing";
-import { WRITE_OFF_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY_ID } from "./constants";
+import { SHORTAGE_EXPENSE_CATEGORY, SHORTAGE_EXPENSE_CATEGORY_ID, WRITE_OFF_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY_ID } from "./constants";
 import { lockVariant, recordStockMovement, StockMovementError } from "./ledger";
 
 // PRD §4.3: manual adjustment (reason required, Admin/Manager only — the
-// route gates on inventory.adjust) and damage write-off (DAMAGE_OUT + an
-// expense line at cost). Both value the movement at the variant's current
-// weighted average cost, read under a row lock.
+// route gates on inventory.adjust) and damage write-off (DAMAGE_OUT). Both
+// value the movement at the variant's current weighted average cost, read
+// under a row lock, and post its cost as an expense in the same
+// transaction (PRD §4.12): a write-off under "Damage / write-off", an
+// adjustment under "Stock shortage" — a shortfall as a cost, stock found as
+// a credit, so that heading shows the net unexplained loss.
 
 export { StockMovementError };
 
 export type StockChangeRequest = { variantId: string; qty: number; reason: string };
 
-/** Signed manual correction (+ found / − missing). Can never take on-hand stock below zero. */
+const STOCK_EXPENSE_CATEGORIES = {
+  DAMAGE: { id: WRITE_OFF_EXPENSE_CATEGORY_ID, name: WRITE_OFF_EXPENSE_CATEGORY, kind: "DAMAGE_WRITE_OFF" },
+  SHORTAGE: { id: SHORTAGE_EXPENSE_CATEGORY_ID, name: SHORTAGE_EXPENSE_CATEGORY, kind: "STOCK_SHORTAGE" },
+} as const;
+
+/**
+ * Books a stock movement's cost as a non-cash expense (no wallet): the
+ * units that left the shelf cost `−qty × unitCost` — positive for stock out,
+ * a credit for stock found. Nothing is posted when that is zero (a variant
+ * with no cost yet); the DB refuses a zero expense.
+ */
+async function postStockExpense(tx: Prisma.TransactionClient, movement: StockMovement, kind: keyof typeof STOCK_EXPENSE_CATEGORIES, note: string, actorId: string | null): Promise<Expense | null> {
+  const paisa = -movement.qty * toPaisa(movement.unitCostSnapshot);
+  if (paisa === 0) return null;
+  const c = STOCK_EXPENSE_CATEGORIES[kind];
+  const category = await tx.expenseCategory.upsert({
+    where: { id: c.id },
+    update: {},
+    create: { id: c.id, name: c.name, sortOrder: 10, kind: c.kind, isSystem: true },
+  });
+  return tx.expense.create({
+    data: {
+      expenseDate: movement.createdAt,
+      categoryId: category.id,
+      nature: "VARIABLE",
+      amount: fromPaisa(paisa),
+      note,
+      stockMovementId: movement.id,
+      createdById: actorId,
+    },
+  });
+}
+
+/** Signed manual correction (+ found / − missing), with its "Stock shortage" expense. Can never take on-hand stock below zero. */
 export async function adjustStock(tx: Prisma.TransactionClient, input: StockChangeRequest, actorId: string) {
   const reason = input.reason.trim();
   if (!reason) throw new StockMovementError("A reason is required for a stock adjustment");
@@ -24,7 +60,7 @@ export async function adjustStock(tx: Prisma.TransactionClient, input: StockChan
     throw new StockMovementError(`Only ${locked.stockQty} on hand — can't remove ${Math.abs(input.qty)}`);
   }
 
-  return recordStockMovement(tx, {
+  const movement = await recordStockMovement(tx, {
     variantId: input.variantId,
     type: "ADJUSTMENT",
     qty: input.qty,
@@ -33,6 +69,11 @@ export async function adjustStock(tx: Prisma.TransactionClient, input: StockChan
     actorId,
     note: reason,
   });
+
+  const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
+  const what = input.qty < 0 ? `Stock shortage: ${-input.qty}` : `Stock found: ${input.qty}`;
+  const expense = await postStockExpense(tx, movement, "SHORTAGE", `${what} × ${variant.sku} — ${reason}`, actorId);
+  return { movement, expense };
 }
 
 export type WriteOffOptions = {
@@ -71,23 +112,7 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
   });
 
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
-  const category = await tx.expenseCategory.upsert({
-    where: { id: WRITE_OFF_EXPENSE_CATEGORY_ID },
-    update: {},
-    create: { id: WRITE_OFF_EXPENSE_CATEGORY_ID, name: WRITE_OFF_EXPENSE_CATEGORY, sortOrder: 10, kind: "DAMAGE_WRITE_OFF", isSystem: true },
-  });
-
-  const expense = await tx.expense.create({
-    data: {
-      expenseDate: movement.createdAt,
-      categoryId: category.id,
-      nature: "VARIABLE",
-      amount: fromPaisa(toPaisa(unitCost) * input.qty),
-      note: `Write-off: ${input.qty} × ${variant.sku} — ${reason}`,
-      stockMovementId: movement.id,
-      createdById: actorId,
-    },
-  });
+  const expense = await postStockExpense(tx, movement, "DAMAGE", `Write-off: ${input.qty} × ${variant.sku} — ${reason}`, actorId);
 
   return { movement, expense };
 }

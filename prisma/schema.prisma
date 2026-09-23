@@ -899,8 +899,9 @@ model Expense {
   adSpendId String?       @unique
   adSpend   DailyAdSpend? @relation(fields: [adSpendId], references: [id], onDelete: Restrict)
 
-  // Set when the expense was posted by a stock event (DAMAGE_OUT write-off
-  // at cost) rather than typed in by hand.
+  // Set when the expense was posted by a stock event rather than typed in:
+  // a DAMAGE_OUT write-off, or a manual ADJUSTMENT (stock shortage, or a
+  // negative credit when stock is found). Only these may be ≤ 0 (DB CHECK).
   stockMovementId String?        @unique
   stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
 
@@ -956,6 +957,10 @@ enum ExpenseKind {
   // Stock written off at cost (DAMAGE_OUT) — its own heading so the owner
   // sees monthly damage losses, never folded into Misc.
   DAMAGE_WRITE_OFF
+  // Manual stock-count adjustments at cost: a shortfall is a cost, stock
+  // found later is a credit (negative), so the heading shows the net
+  // unexplained loss — kept apart from damage, a different problem.
+  STOCK_SHORTAGE
   MISC
 }
 

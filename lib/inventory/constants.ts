@@ -46,6 +46,14 @@ export const ALLOCATION_METHOD_LABELS = {
 export const WRITE_OFF_EXPENSE_CATEGORY_ID = "expcat_stock_writeoff";
 export const WRITE_OFF_EXPENSE_CATEGORY = "Damage / write-off";
 
+/**
+ * The system expense category every manual stock adjustment posts to at
+ * cost — a shortfall as a cost, stock found as a credit — so it shows the
+ * net unexplained loss, apart from damage (migration 20260924140100).
+ */
+export const SHORTAGE_EXPENSE_CATEGORY_ID = "expcat_stock_shortage";
+export const SHORTAGE_EXPENSE_CATEGORY = "Stock shortage";
+
 export const STOCK_STATUS_FILTERS = ["all", "in", "low", "out"] as const;
 export type StockStatusFilter = (typeof STOCK_STATUS_FILTERS)[number];
 

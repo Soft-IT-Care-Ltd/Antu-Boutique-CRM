@@ -73,6 +73,7 @@ export async function listExpenses(query: ExpenseListQuery): Promise<{ items: Ex
         category: { select: { name: true, kind: true } },
         wallet: { select: { name: true } },
         createdBy: { select: { name: true } },
+        stockMovement: { select: { type: true } },
         statementDeliveryCharge: { select: { reference: true } },
         statementCodCharge: { select: { reference: true } },
       },

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/prisma";
 import { adjustStock, writeOffDamagedStock } from "@/lib/inventory/adjustments";
-import { WRITE_OFF_EXPENSE_CATEGORY } from "@/lib/inventory/constants";
+import { SHORTAGE_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY } from "@/lib/inventory/constants";
 import { findStockLedgerDivergences, recordStockMovement, StockMovementError } from "@/lib/inventory/ledger";
 import { createPurchase, PurchaseError } from "@/lib/inventory/purchases";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
@@ -149,9 +149,21 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
         expect(returnIn.qty).toBe(3);
         expect(returnIn.unitCostSnapshot.toString()).toBe("113.33");
 
-        // 5. Manual adjustment −2 (reason kept as the ledger note).
+        // 5. Manual adjustment −2 (reason kept as the ledger note) → a "Stock shortage" expense of 2 × WAC.
         const adj = await adjustStock(tx, { variantId: variant.id, qty: -2, reason: "Stock count found 2 short" }, admin.id);
-        expect(adj.note).toBe("Stock count found 2 short");
+        expect(adj.movement.note).toBe("Stock count found 2 short");
+        v = await expectStockMatchesLedger(tx, variant.id);
+        expect(v.stockQty).toBe(13);
+        expect(adj.expense!.amount.toString()).toBe("226.66");
+        expect(await tx.expenseCategory.findUniqueOrThrow({ where: { id: adj.expense!.categoryId } })).toMatchObject({ name: SHORTAGE_EXPENSE_CATEGORY, kind: "STOCK_SHORTAGE", isSystem: true });
+
+        // …one of them turns up: +1 reverses into the same category as a credit, leaving the net loss.
+        const found = await adjustStock(tx, { variantId: variant.id, qty: 1, reason: "Found behind the rack" }, admin.id);
+        expect(found.expense!.amount.toString()).toBe("-113.33");
+        expect(found.expense!.categoryId).toBe(adj.expense!.categoryId);
+        const net = await tx.expense.aggregate({ where: { stockMovementId: { in: [adj.movement.id, found.movement.id] } }, _sum: { amount: true } });
+        expect(net._sum.amount!.toString()).toBe("113.33");
+        await adjustStock(tx, { variantId: variant.id, qty: -1, reason: "Recount — really gone" }, admin.id);
         v = await expectStockMatchesLedger(tx, variant.id);
         expect(v.stockQty).toBe(13);
 
@@ -160,9 +172,9 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
         v = await expectStockMatchesLedger(tx, variant.id);
         expect(v.stockQty).toBe(12);
         expect(movement).toMatchObject({ type: "DAMAGE_OUT", qty: -1, referenceType: "DAMAGE" });
-        expect(expense.amount.toString()).toBe("113.33");
-        expect(expense.stockMovementId).toBe(movement.id);
-        const category = await tx.expenseCategory.findUniqueOrThrow({ where: { id: expense.categoryId } });
+        expect(expense!.amount.toString()).toBe("113.33");
+        expect(expense!.stockMovementId).toBe(movement.id);
+        const category = await tx.expenseCategory.findUniqueOrThrow({ where: { id: expense!.categoryId } });
         expect(category).toMatchObject({ name: WRITE_OFF_EXPENSE_CATEGORY, kind: "DAMAGE_WRITE_OFF", isSystem: true });
 
         // stockAfter reads as a running balance of the ledger.
@@ -172,7 +184,7 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
           running += row.qty;
           expect(row.stockAfter).toBe(running);
         }
-        expect(ledger.map((r) => r.type)).toEqual(["PURCHASE_IN", "PURCHASE_IN", "SALE_OUT", "RETURN_IN", "ADJUSTMENT", "DAMAGE_OUT"]);
+        expect(ledger.map((r) => r.type)).toEqual(["PURCHASE_IN", "PURCHASE_IN", "SALE_OUT", "RETURN_IN", "ADJUSTMENT", "ADJUSTMENT", "ADJUSTMENT", "DAMAGE_OUT"]);
       });
     },
     TIMEOUT,
