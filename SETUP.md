@@ -54,6 +54,7 @@ Copy `.env.example` to `.env` and fill in:
 DATABASE_URL="postgresql://...pooler..."
 DIRECT_URL="postgresql://...direct..."
 SHADOW_DATABASE_URL="postgresql://...direct.../antu_shadow"   # throwaway DB — Prisma WIPES it; never the real one
+TEST_DATABASE_URL="postgresql://...direct.../antu_test"       # integration tests only — never the real one
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="..."
 COURIER_ENCRYPTION_KEY="..."
@@ -65,6 +66,8 @@ MAX_UPLOAD_MB="5"
 `.env` is in `.gitignore`. Never commit it.
 
 `SHADOW_DATABASE_URL` points at a separate, throwaway database on the same Neon server (`CREATE DATABASE antu_shadow`). Prisma empties it every time a migration is generated, so it must **never** be the same database as `DATABASE_URL` / `DIRECT_URL` (CLAUDE.md rule 11).
+
+`TEST_DATABASE_URL` points at a second throwaway database on the same server (`CREATE DATABASE antu_test`). `npm test` runs every `*.integration.test.ts` file against it, one file at a time, and never touches the dev database: it refuses to start unless the database name ends in `_test` and differs from `DATABASE_URL` / `DIRECT_URL` / `SHADOW_DATABASE_URL`. Before the tests run it applies pending migrations (`migrate deploy`) and re-runs the seed whenever the schema, migrations or seed changed. If it reports that an applied migration no longer matches its file (a migration edited after the tests applied it), rebuild the test database — **with the owner's OK** (CLAUDE.md rule 11): `DROP DATABASE antu_test; CREATE DATABASE antu_test;`, then run `npm test`.
 
 Leave `STEADFAST_LIVE_API` **unset** on every development machine. Until it is `enabled`, the app refuses to book real Steadfast parcels.
 

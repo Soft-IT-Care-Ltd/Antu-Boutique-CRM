@@ -1,6 +1,7 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
+// Shared base for both projects in vitest.workspace.ts.
 export default defineConfig({
   resolve: {
     alias: {
