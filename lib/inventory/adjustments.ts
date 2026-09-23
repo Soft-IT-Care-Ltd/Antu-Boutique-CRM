@@ -1,7 +1,7 @@
 import type { Prisma, StockReferenceType } from "@prisma/client";
 
 import { fromPaisa, toPaisa } from "./costing";
-import { WRITE_OFF_EXPENSE_CATEGORY } from "./constants";
+import { WRITE_OFF_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY_ID } from "./constants";
 import { lockVariant, recordStockMovement, StockMovementError } from "./ledger";
 
 // PRD §4.3: manual adjustment (reason required, Admin/Manager only — the
@@ -72,9 +72,9 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
 
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
   const category = await tx.expenseCategory.upsert({
-    where: { name: WRITE_OFF_EXPENSE_CATEGORY },
+    where: { id: WRITE_OFF_EXPENSE_CATEGORY_ID },
     update: {},
-    create: { name: WRITE_OFF_EXPENSE_CATEGORY, sortOrder: 10, kind: "MISC", isSystem: true },
+    create: { id: WRITE_OFF_EXPENSE_CATEGORY_ID, name: WRITE_OFF_EXPENSE_CATEGORY, sortOrder: 10, kind: "DAMAGE_WRITE_OFF", isSystem: true },
   });
 
   const expense = await tx.expense.create({

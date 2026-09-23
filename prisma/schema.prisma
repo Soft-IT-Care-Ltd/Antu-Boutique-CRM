@@ -953,6 +953,9 @@ enum ExpenseKind {
   PACKAGING
   TRANSPORT
   EXCHANGE_RETURN
+  // Stock written off at cost (DAMAGE_OUT) — its own heading so the owner
+  // sees monthly damage losses, never folded into Misc.
+  DAMAGE_WRITE_OFF
   MISC
 }
 

@@ -163,7 +163,7 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
         expect(expense.amount.toString()).toBe("113.33");
         expect(expense.stockMovementId).toBe(movement.id);
         const category = await tx.expenseCategory.findUniqueOrThrow({ where: { id: expense.categoryId } });
-        expect(category.name).toBe(WRITE_OFF_EXPENSE_CATEGORY);
+        expect(category).toMatchObject({ name: WRITE_OFF_EXPENSE_CATEGORY, kind: "DAMAGE_WRITE_OFF", isSystem: true });
 
         // stockAfter reads as a running balance of the ledger.
         const ledger = await tx.stockMovement.findMany({ where: { variantId: variant.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });

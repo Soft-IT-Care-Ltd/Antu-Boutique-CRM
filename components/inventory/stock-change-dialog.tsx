@@ -123,7 +123,7 @@ export function StockChangeDialog({ mode, row, onOpenChange, onDone }: Props) {
             <p className="rounded-md bg-muted px-3 py-2 text-sm">
               Posts an expense of{" "}
               <span className="font-semibold">{formatBDT(fromPaisa(toPaisa(row.weightedAvgCost) * qtyNumber))}</span> ({qtyNumber} ×{" "}
-              {formatBDT(row.weightedAvgCost)} at cost) under “Stock damage / write-off”.
+              {formatBDT(row.weightedAvgCost)} at cost) under “Damage / write-off”.
             </p>
           ) : null}
 

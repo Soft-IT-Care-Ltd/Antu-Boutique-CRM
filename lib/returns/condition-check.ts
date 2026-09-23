@@ -207,16 +207,30 @@ export async function completeConditionCheck(
  * consignment when it reported one (webhook delivery_charge on the
  * cancelled parcel), else the configured return charge for the order's
  * courier + zone. Posted at most once per inspection (unique FK).
+ *
+ * P&L rule (PRD §4.12): each courier charge reaches P&L exactly once. When
+ * the courier's payout for this parcel was already reconciled, its
+ * delivery-charge expense already carries this parcel's charge (it only
+ * leaves out return charges posted BEFORE it), so nothing is posted here.
  */
 async function postCourierReturnCharge(
   tx: Prisma.TransactionClient,
   inspection: {
     id: string;
+    shipmentId: string | null;
     order: { orderNo: string; courierId: string | null; courierZone: { zone: string } | null };
     shipment: { courierId: string; zone: string | null; courierCostActual: Prisma.Decimal | null } | null;
   },
   actorId: string | null,
 ): Promise<string | null> {
+  if (inspection.shipmentId) {
+    const expensedByStatement = await tx.courierStatementLine.findFirst({
+      where: { shipmentId: inspection.shipmentId, status: { in: ["MATCHED", "ACCEPTED"] }, statement: { reconciledAt: { not: null } } },
+      select: { id: true },
+    });
+    if (expensedByStatement) return null;
+  }
+
   let amount: Prisma.Decimal | null = inspection.shipment?.courierCostActual ?? null;
   if (amount === null) {
     const courierId = inspection.shipment?.courierId ?? inspection.order.courierId;

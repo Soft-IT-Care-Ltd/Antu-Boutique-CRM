@@ -38,8 +38,13 @@ export const ALLOCATION_METHOD_LABELS = {
   BY_QTY: "By quantity",
 } as const;
 
-/** The expense category a DAMAGE_OUT write-off posts to (seeded by the P2.1 migration). */
-export const WRITE_OFF_EXPENSE_CATEGORY = "Stock damage / write-off";
+/**
+ * The system expense category a DAMAGE_OUT write-off posts to — its own
+ * DAMAGE_WRITE_OFF heading, never Misc, so monthly damage losses show on
+ * their own (seeded by the P2.1 migration, renamed in 20260924090100).
+ */
+export const WRITE_OFF_EXPENSE_CATEGORY_ID = "expcat_stock_writeoff";
+export const WRITE_OFF_EXPENSE_CATEGORY = "Damage / write-off";
 
 export const STOCK_STATUS_FILTERS = ["all", "in", "low", "out"] as const;
 export type StockStatusFilter = (typeof STOCK_STATUS_FILTERS)[number];
