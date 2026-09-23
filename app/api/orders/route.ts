@@ -18,6 +18,7 @@ import { ORDER_LIST_INCLUDE, serializeOrderListItem } from "@/lib/orders/seriali
 import { reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
 import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
+import { transactionIdSchema } from "@/lib/orders/payment-validation";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
@@ -106,7 +107,7 @@ const advancePaymentSchema = z.object({
   method: z.enum(PAYMENT_METHOD_VALUES),
   amount: z.coerce.number().positive(),
   walletId: z.string().trim().min(1).max(50).optional(),
-  transactionId: z.string().trim().max(100).optional(),
+  transactionId: transactionIdSchema.optional(),
 });
 
 const createOrderSchema = z

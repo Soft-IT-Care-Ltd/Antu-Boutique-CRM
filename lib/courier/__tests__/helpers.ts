@@ -36,13 +36,27 @@ export async function setupIntegration(tx: Prisma.TransactionClient, opts: { ena
   return tx.courierIntegration.upsert({ where: { provider: "STEADFAST" }, create: { provider: "STEADFAST", courierId: courier.id, ...data }, update: data });
 }
 
-export type PackedOrderOpts = { phone?: string; altPhone?: string | null; lines?: number; qty?: number; deliveryNote?: string | null; internalNote?: string | null; zone?: "INSIDE_CITY" | "OUTSIDE_CITY" };
+export type PackedOrderOpts = {
+  phone?: string;
+  altPhone?: string | null;
+  lines?: number;
+  qty?: number;
+  deliveryNote?: string | null;
+  internalNote?: string | null;
+  zone?: "INSIDE_CITY" | "OUTSIDE_CITY";
+  /** Sell these variants (one line each) instead of the best-stocked ones. */
+  variantIds?: string[];
+  /** Runs on the CONFIRMED order just before it is packed (e.g. to take an advance). */
+  beforePack?: (tx: Prisma.TransactionClient, order: { id: string; total: Prisma.Decimal }) => Promise<void>;
+};
 
 /** A real PACKED order: reserved at CONFIRMED, then packed through packOrder (SALE_OUT + cost snapshot). */
 export async function makePackedOrder(tx: Prisma.TransactionClient, opts: PackedOrderOpts = {}) {
   const packer = await tx.user.findUniqueOrThrow({ where: { phone: "01711000005" } });
   const se = await tx.user.findUniqueOrThrow({ where: { phone: "01711000004" } });
-  const variants = await tx.productVariant.findMany({ where: { isActive: true, stockQty: { gte: 6 } }, orderBy: { stockQty: "desc" }, take: opts.lines ?? 1 });
+  const variants = opts.variantIds
+    ? await tx.productVariant.findMany({ where: { id: { in: opts.variantIds } } })
+    : await tx.productVariant.findMany({ where: { isActive: true, stockQty: { gte: 6 } }, orderBy: { stockQty: "desc" }, take: opts.lines ?? 1 });
   const qty = opts.qty ?? 1;
   const customer = await tx.customer.create({
     data: {
@@ -80,6 +94,7 @@ export async function makePackedOrder(tx: Prisma.TransactionClient, opts: Packed
     include: { items: true },
   });
   for (const v of variants) await tx.productVariant.update({ where: { id: v.id }, data: { reservedQty: { increment: qty } } });
+  await opts.beforePack?.(tx, order);
   await packOrder(tx, { id: order.id, status: "CONFIRMED", items: order.items.map((i) => ({ id: i.id, variantId: i.variantId, qty: i.qty })) }, packer.id);
   return { order, customer };
 }

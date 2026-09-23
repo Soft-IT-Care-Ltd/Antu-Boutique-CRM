@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requirePermission } from "@/lib/auth/require-permission";
-import { badRequest, dayString, financeErrorResponse, idString, money } from "@/lib/finance/http";
+import { badRequest, financeErrorResponse, idString, money, moneyDayString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
 import { createManualEntry } from "@/lib/wallets/service";
@@ -12,7 +12,7 @@ const bodySchema = z.object({
   walletId: idString,
   direction: z.enum(["IN", "OUT"]),
   amount: money,
-  entryDate: dayString,
+  entryDate: moneyDayString,
   note: z.string().trim().min(3, "Say what this money was").max(300),
 });
 

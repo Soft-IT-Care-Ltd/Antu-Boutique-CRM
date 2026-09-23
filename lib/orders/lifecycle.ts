@@ -22,8 +22,15 @@ type OrderWithItemsForMove = {
 };
 
 export class IllegalTransitionError extends Error {
+  constructor(from: OrderStatusValue, to: OrderStatusValue, message = `Cannot move an order from ${from} to ${to}`) {
+    super(message);
+  }
+}
+
+/** The order was no longer at the status the caller read — someone else moved it first. */
+export class StaleOrderStatusError extends IllegalTransitionError {
   constructor(from: OrderStatusValue, to: OrderStatusValue) {
-    super(`Cannot move an order from ${from} to ${to}`);
+    super(from, to, `This order is no longer ${from} — someone else just changed it. Reload and try again.`);
   }
 }
 
@@ -33,6 +40,11 @@ export class IllegalTransitionError extends Error {
  * §4.6: release the reservation if the order was never packed, restore
  * stock if it was), writes the order_status_history row, and returns the
  * updated order. Must run inside the caller's transaction.
+ *
+ * The move is claimed atomically (UPDATE … WHERE status = from): if a
+ * concurrent move got there first — two packers, pack vs cancel, a replayed
+ * webhook — this throws StaleOrderStatusError and the caller's whole
+ * transaction rolls back, including any stock it already moved.
  */
 export async function moveOrderStatus(
   tx: Prisma.TransactionClient,
@@ -47,8 +59,14 @@ export async function moveOrderStatus(
     throw new IllegalTransitionError(fromStatus, toStatus);
   }
 
+  const claimed = await tx.order.updateMany({ where: { id: order.id, status: fromStatus }, data: { status: toStatus } });
+  if (claimed.count !== 1) throw new StaleOrderStatusError(fromStatus, toStatus);
+
   if (toStatus === "CANCELLED") {
-    for (const item of order.items) {
+    // Read the lines under the claim, not the caller's copy: what was
+    // packed (unitCostSnapshot set) decides restock vs release.
+    const items = await tx.orderItem.findMany({ where: { orderId: order.id }, select: { variantId: true, qty: true, unitCostSnapshot: true } });
+    for (const item of items) {
       // unitCostSnapshot is only ever set at PACKED (CLAUDE.md rule 3) — its
       // presence is the signal that stock was deducted, not just reserved.
       if (item.unitCostSnapshot !== null) {
@@ -65,7 +83,6 @@ export async function moveOrderStatus(
     }
   }
 
-  await tx.order.update({ where: { id: order.id }, data: { status: toStatus } });
   await tx.orderStatusHistory.create({
     data: { orderId: order.id, fromStatus, toStatus, changedById, note: note || null },
   });

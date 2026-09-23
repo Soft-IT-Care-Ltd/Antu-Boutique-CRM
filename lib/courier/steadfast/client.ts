@@ -38,6 +38,9 @@ export class SteadfastLiveApiDisabledError extends SteadfastApiError {
   }
 }
 
+/** The only paths that may reach the real API with STEADFAST_LIVE_API unset: read-only, no parcel, no status. */
+const ALWAYS_ALLOWED_PATHS = new Set(["/get_balance"]);
+
 function assertLiveApiAllowed(path: string) {
   if (process.env.STEADFAST_LIVE_API !== "enabled") throw new SteadfastLiveApiDisabledError(path);
 }
@@ -45,6 +48,9 @@ function assertLiveApiAllowed(path: string) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function steadfastFetch<T>(creds: SteadfastCreds, path: string, init: { method: "GET" | "POST"; body?: unknown }): Promise<T> {
+  // Belt and braces: every exported call checks the switch too, but this is
+  // the one line every request passes, so a call added later can't skip it.
+  if (!ALWAYS_ALLOWED_PATHS.has(path)) assertLiveApiAllowed(path);
   const headers: Record<string, string> = {
     "Api-Key": creds.apiKey,
     "Secret-Key": creds.secretKey,

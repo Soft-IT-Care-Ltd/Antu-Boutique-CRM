@@ -319,7 +319,7 @@ async function settleLine(
         // No wallet: this money reaches the bank as the statement's net
         // payout (courier_statements.walletId), never parcel by parcel.
         // Globally unique (CLAUDE.md rule 4) and stable, so a replay can't double-pay.
-        transactionId: `COD-${statement.reference}-${line.consignmentId ?? `L${line.lineNo}`}`,
+        transactionId: `COD-${statement.reference}-${line.consignmentId ?? `L${line.lineNo}`}`.toUpperCase(),
         paidAt: statement.statementDate,
         receivedById: actorId,
         // The courier statement IS the evidence.

@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { parseStatementCsv } from "@/lib/courier/payouts/csv";
 import { ingestCourierStatement } from "@/lib/courier/reconcile";
 import { courierErrorResponse, zodError } from "@/lib/courier/route-errors";
+import { moneyDayString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
 
@@ -27,7 +28,7 @@ const bodySchema = z
   .object({
     courierId: z.string().cuid(),
     reference: z.string().trim().min(2).max(60),
-    statementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Statement date must be YYYY-MM-DD"),
+    statementDate: moneyDayString,
     walletId: z.string().trim().min(1).max(50).optional(),
     note: z.string().trim().max(500).optional(),
     grossAmount: money.optional().nullable(),

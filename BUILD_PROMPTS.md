@@ -223,13 +223,20 @@ Expenses, wallets and anything profit-related are ADMIN/MANAGER/ACCOUNTS only pe
 ### Verify Phase 2
 
 ```
-Reviewer pass on stock and money:
-1. Prove sum(stock_movements) per variant equals stock_qty after a purchase, a sale, a cancel and a return.
+Reviewer pass on stock and money. Verify by reading code and testing:
+1. Prove sum(stock_movements) per variant equals stock_qty after a purchase, a sale, a cancel, a courier return and a partial delivery.
 2. Can any code path change stock without writing a ledger row? Show me.
 3. Are courier credentials encrypted at rest and never returned in an API response?
-4. Is transaction_id uniqueness enforced at the database level, not just in application code?
-5. Does the Steadfast webhook verify authenticity, and is the cron endpoint protected by CRON_SECRET?
+4. Is transaction_id uniqueness enforced at the database level?
+5. Does the Steadfast webhook reject a wrong or missing token, and is the cron endpoint protected by CRON_SECRET?
+6. With STEADFAST_LIVE_API unset, can any code path make a real booking or status call?
+7. Full money round trip: an order with an advance and COD → packed → sent (mocked) → delivered → payout synced → COMPLETED. Check that the due is 0, the wallet moved by exactly the net payout, the delivery charge and COD fee posted as expenses once, and nothing is counted twice under the P&L rule (PRD §4.12).
+8. Replay the same payout: no duplicate payments or expenses. A mismatched payout moves no money.
+9. Every wallet's balance equals its statement's closing figure, and no stored balance column exists that could drift.
+10. Log in as SALES_EXECUTIVE, TEAM_LEADER and PACKING: every courier, wallet, expense, payout and report route returns 403 or 404, and no money or cost field appears anywhere.
 Report findings, then fix them.
+
+Automated: lib/courier/__tests__/phase2-verify.integration.test.ts, lib/courier/__tests__/live-api-switch.test.ts, lib/auth/__tests__/money-routes.integration.test.ts.
 ```
 
 ---

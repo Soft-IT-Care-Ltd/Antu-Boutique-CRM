@@ -8,7 +8,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { toNumber } from "@/lib/money";
-import { applyValidatedOrderEdit, validateOrderEdit, type OrderEditInput } from "@/lib/orders/apply-edit";
+import { applyValidatedOrderEdit, OrderEditConflictError, validateOrderEdit, type OrderEditInput } from "@/lib/orders/apply-edit";
 import { editTouchesGatedFields, isWithinEditWindow } from "@/lib/orders/edit-window";
 import { generateOrderInvoice } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
@@ -125,7 +125,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     );
   }
 
-  const updated = await applyValidatedOrderEdit(id, input, validation);
+  let updated;
+  try {
+    updated = await applyValidatedOrderEdit(id, input, validation);
+  } catch (error) {
+    if (error instanceof OrderEditConflictError) return NextResponse.json({ error: error.message }, { status: 409 });
+    throw error;
+  }
 
   if (gated) {
     try {

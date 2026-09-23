@@ -4,12 +4,12 @@ import { z } from "zod";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { EXPENSE_NATURE_VALUES } from "@/lib/expenses/constants";
 import { deleteExpense, updateExpense } from "@/lib/expenses/service";
-import { badRequest, dayString, financeErrorResponse, idString, money } from "@/lib/finance/http";
+import { badRequest, financeErrorResponse, idString, money, moneyDayString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
 
 const patchSchema = z.object({
-  expenseDate: dayString.optional(),
+  expenseDate: moneyDayString.optional(),
   categoryId: idString.optional(),
   nature: z.enum(EXPENSE_NATURE_VALUES).optional(),
   amount: money.optional(),

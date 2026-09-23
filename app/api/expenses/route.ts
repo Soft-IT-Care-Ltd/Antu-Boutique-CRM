@@ -5,7 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { EXPENSE_KIND_VALUES, EXPENSE_NATURE_VALUES } from "@/lib/expenses/constants";
 import { listExpenses } from "@/lib/expenses/queries";
 import { createExpense } from "@/lib/expenses/service";
-import { badRequest, dayString, financeErrorResponse, idString, money } from "@/lib/finance/http";
+import { badRequest, dayString, financeErrorResponse, idString, money, moneyDayString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
 
@@ -23,7 +23,7 @@ const querySchema = z.object({
 });
 
 const createSchema = z.object({
-  expenseDate: dayString,
+  expenseDate: moneyDayString,
   categoryId: idString,
   nature: z.enum(EXPENSE_NATURE_VALUES),
   amount: money,

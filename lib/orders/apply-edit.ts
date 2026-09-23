@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/auth/permissions";
 import type { SessionUser } from "@/lib/auth/types";
 import { toNumber } from "@/lib/money";
+import { DIRECTLY_EDITABLE_STATUSES, type OrderStatusValue } from "@/lib/orders/constants";
 import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { releaseVariantStock, reserveVariantStock } from "@/lib/orders/stock";
-import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE } from "@/lib/orders/totals";
+import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE, recomputeOrderDueAmount } from "@/lib/orders/totals";
 
 // Shared by the direct in-window PATCH (app/api/orders/[id]/route.ts) and
 // the TL/Admin edit-request approval (app/api/order-edit-requests/[id]/
@@ -14,6 +15,16 @@ import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE } from "@/
 // order, and both need to re-validate against *current* stock/price-floor
 // state right before writing (an edit request can sit PENDING long enough
 // for either to have moved).
+//
+// Only LEAD/CONFIRMED orders are ever edited. Once packed, the lines carry
+// frozen cost snapshots and their stock has left the shelf through the
+// ledger — rewriting them would release reservations that no longer exist
+// and lose the snapshots (CLAUDE.md rules 2, 3, 10). An edit request filed
+// while CONFIRMED and approved after packing is therefore refused.
+
+export class OrderEditConflictError extends Error {}
+
+const notEditableMessage = (status: string) => `This order is ${status} now — it can only be edited while it is a lead or confirmed.`;
 
 export type OrderEditItemInput = {
   variantId: string;
@@ -71,6 +82,9 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
     include: { items: true, payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } } },
   });
   if (!existing) return { ok: false, error: "Order not found", status: 404 };
+  if (!DIRECTLY_EDITABLE_STATUSES.includes(existing.status as OrderStatusValue)) {
+    return { ok: false, error: notEditableMessage(existing.status), status: 409 };
+  }
 
   if (input.courierZoneId) {
     const zone = await prisma.courierZone.findUnique({ where: { id: input.courierZoneId } });
@@ -161,6 +175,12 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
 /** Writes a validated edit. Caller must have just produced `validation` from validateOrderEdit — never pass a stale one across an await boundary that could let state drift. */
 export async function applyValidatedOrderEdit(orderId: string, input: OrderEditInput, validation: Extract<OrderEditValidation, { ok: true }>) {
   return prisma.$transaction(async (tx) => {
+    // Lock the order and re-check its status: packing (or a cancel) that
+    // committed after validation must win, and one that starts now waits.
+    const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT "status"::text AS "status" FROM "orders" WHERE "id" = ${orderId} FOR UPDATE`;
+    if (!locked) throw new OrderEditConflictError("Order not found");
+    if (!DIRECTLY_EDITABLE_STATUSES.includes(locked.status as OrderStatusValue)) throw new OrderEditConflictError(notEditableMessage(locked.status));
+
     if (validation.validatedItems) {
       const existingItems = await tx.orderItem.findMany({ where: { orderId } });
       for (const item of existingItems) {
@@ -186,7 +206,7 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
       }
     }
 
-    return tx.order.update({
+    await tx.order.update({
       where: { id: orderId },
       data: {
         courierId: input.courierId === undefined ? undefined : input.courierId || null,
@@ -198,8 +218,10 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
         subtotal: validation.subtotal,
         discountTotal: validation.discountTotal,
         total: validation.total,
-        dueAmount: validation.dueAmount,
       },
     });
+    // CLAUDE.md rule 1 — from the payments as they stand inside this transaction.
+    await recomputeOrderDueAmount(tx, orderId);
+    return tx.order.findUniqueOrThrow({ where: { id: orderId } });
   });
 }

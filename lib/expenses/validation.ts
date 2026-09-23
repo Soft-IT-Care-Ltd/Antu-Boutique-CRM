@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import { AD_PLATFORM_VALUES } from "@/lib/expenses/constants";
-import { dayString, idString, money } from "@/lib/finance/http";
+import { idString, money, moneyDayString } from "@/lib/finance/http";
 
 export const adSpendSchema = z.object({
-  spendDate: dayString,
+  spendDate: moneyDayString,
   platform: z.enum(AD_PLATFORM_VALUES).default("FACEBOOK"),
   amount: money,
   walletId: idString,

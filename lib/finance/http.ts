@@ -13,6 +13,12 @@ import { WalletError } from "@/lib/wallets/service";
 // Shared by the P2.3 wallet / payment / expense / report routes.
 
 export const dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-MM-DD");
+/**
+ * The day money moved: today (Dhaka) at the latest. A wallet's balance
+ * counts every row it has, so a future-dated one would show in the balance
+ * before it happened and the balance would stop matching the statement.
+ */
+export const moneyDayString = dayString.refine((d) => d <= todayInDhaka(), "That date is in the future — record money on the day it moved");
 export const money = z.coerce.number({ error: "Enter an amount" }).positive("Enter an amount greater than zero").max(100_000_000, "Amount is too large");
 export const idString = z.string().trim().min(1).max(50);
 

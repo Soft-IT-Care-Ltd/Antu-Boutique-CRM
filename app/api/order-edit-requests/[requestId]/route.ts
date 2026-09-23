@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { applyValidatedOrderEdit, parseStoredOrderEditInput, validateOrderEdit } from "@/lib/orders/apply-edit";
+import { applyValidatedOrderEdit, OrderEditConflictError, parseStoredOrderEditInput, validateOrderEdit } from "@/lib/orders/apply-edit";
 import { generateOrderInvoice } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 
@@ -71,7 +71,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     );
   }
 
-  const updatedOrder = await applyValidatedOrderEdit(editRequest.orderId, input, validation);
+  let updatedOrder;
+  try {
+    updatedOrder = await applyValidatedOrderEdit(editRequest.orderId, input, validation);
+  } catch (error) {
+    if (error instanceof OrderEditConflictError) {
+      return NextResponse.json({ error: `This request can no longer be applied as-is: ${error.message}` }, { status: 409 });
+    }
+    throw error;
+  }
 
   try {
     await generateOrderInvoice(editRequest.orderId, guard.user.id);
