@@ -176,3 +176,24 @@ export async function statusByInvoice(creds: SteadfastCreds, invoice: string): P
   const res = await steadfastFetch<{ delivery_status?: string }>(creds, path, { method: "GET" });
   return { deliveryStatus: res?.delivery_status ?? null, raw: res };
 }
+
+// ---------- payouts (P2.2b) ----------
+//
+// GET /payments and GET /payments/{id}. The V1 doc names them but not their
+// shapes, so both return the RAW body; lib/courier/payouts/parse.ts reads it
+// defensively. Gift Valy's production capture (Round 2 §2.1): /payments is
+// `{ payments: [...] }`, 10 per page, OLDEST first, no paging metadata, an
+// empty list past the end; payment_id is a string ("SFC-30820783") and the
+// detail endpoint takes its numeric tail.
+
+export async function getPayments(creds: SteadfastCreds, page = 1): Promise<unknown> {
+  const path = page > 1 ? `/payments?page=${page}` : "/payments";
+  assertLiveApiAllowed(path);
+  return steadfastFetch<unknown>(creds, path, { method: "GET" });
+}
+
+export async function getPaymentDetail(creds: SteadfastCreds, paymentId: string): Promise<unknown> {
+  const path = `/payments/${encodeURIComponent(paymentId)}`;
+  assertLiveApiAllowed(path);
+  return steadfastFetch<unknown>(creds, path, { method: "GET" });
+}

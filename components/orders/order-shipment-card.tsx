@@ -48,6 +48,19 @@ export function OrderShipmentCard({ shipment }: { shipment: ShipmentDetailView }
               {shipment.onHold ? <Badge variant="destructive">On hold</Badge> : null}
             </span>
           </div>
+          {shipment.orderStatus === "IN_TRANSIT" ? (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Rider</span>
+              <span>
+                —{" "}
+                {shipment.trackingUrl ? (
+                  <a href={shipment.trackingUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                    view tracking page
+                  </a>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
           <div className="flex justify-between gap-2">
             <span className="text-muted-foreground">Booked</span>
             <span>

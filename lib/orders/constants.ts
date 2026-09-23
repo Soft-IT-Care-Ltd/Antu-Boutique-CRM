@@ -49,8 +49,12 @@ export const DELIVERY_ZONE_LABELS: Record<DeliveryZoneValue, string> = {
   OUTSIDE_CITY: "Outside Dhaka",
 };
 
+// Methods a person can pick when recording a payment by hand. COURIER_COD is
+// deliberately absent: it only ever comes from a reconciled courier statement
+// (lib/courier/reconcile.ts), so the Zod schemas built on this list reject it.
 export const PAYMENT_METHOD_VALUES = ["BKASH", "NAGAD", "ROCKET", "BANK", "CASH", "CARD"] as const;
-export type PaymentMethodValue = (typeof PAYMENT_METHOD_VALUES)[number];
+export const ALL_PAYMENT_METHOD_VALUES = [...PAYMENT_METHOD_VALUES, "COURIER_COD"] as const;
+export type PaymentMethodValue = (typeof ALL_PAYMENT_METHOD_VALUES)[number];
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethodValue, string> = {
   BKASH: "bKash",
@@ -59,6 +63,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethodValue, string> = {
   BANK: "Bank",
   CASH: "Cash",
   CARD: "Card",
+  COURIER_COD: "Courier COD",
 };
 
 // PRD §4.10 names these as the wallets in use; the full Wallet master with

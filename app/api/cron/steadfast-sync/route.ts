@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { timingSafeEqual } from "@/lib/courier/crypto";
 import { CourierConfigError, getSteadfastIntegration } from "@/lib/courier/integration";
+import { PAYOUTS_SYNC_MIN_GAP_MS, runSteadfastPayoutsSync, type PayoutsSyncSummary } from "@/lib/courier/payouts/sync";
 import { runSteadfastPoll } from "@/lib/courier/poll";
 import { prisma } from "@/lib/prisma";
 
@@ -26,7 +27,19 @@ export async function GET(request: NextRequest) {
   if (!integration?.isEnabled) return NextResponse.json({ ok: true, skipped: "Steadfast integration is not enabled" });
 
   try {
-    return NextResponse.json(await runSteadfastPoll(prisma));
+    const statuses = await runSteadfastPoll(prisma);
+    // P2.2b — the payouts sync rides this 15-minute cron on its own hourly
+    // clock; a payouts failure must not fail the status poll that succeeded.
+    let payouts: PayoutsSyncSummary | { skipped: string } = { skipped: "ran recently" };
+    const due = !integration.lastPaymentsSyncAt || Date.now() - integration.lastPaymentsSyncAt.getTime() >= PAYOUTS_SYNC_MIN_GAP_MS;
+    if (due) {
+      try {
+        payouts = await runSteadfastPayoutsSync(prisma);
+      } catch (error) {
+        payouts = { skipped: error instanceof Error ? error.message : "payouts sync failed" };
+      }
+    }
+    return NextResponse.json({ ...statuses, payouts });
   } catch (error) {
     if (error instanceof CourierConfigError) return NextResponse.json({ ok: false, skipped: error.message });
     console.error("Steadfast cron poll failed:", error);

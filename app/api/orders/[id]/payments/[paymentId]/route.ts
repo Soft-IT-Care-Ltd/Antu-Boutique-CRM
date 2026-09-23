@@ -26,6 +26,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
 
+  // P2.2b: a payment created by reconciling a courier statement is part of
+  // that statement's audit trail — it can't be edited or deleted by hand.
+  const statementLine = await prisma.courierStatementLine.findUnique({ where: { paymentId }, select: { statement: { select: { reference: true } } } });
+  if (statementLine) {
+    return NextResponse.json(
+      { error: `This payment settled courier statement ${statementLine.statement.reference} — change it from the COD reconciliation screen, not here.` },
+      { status: 409 },
+      );
+  }
+
   const parsed = updatePaymentSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
@@ -80,6 +90,16 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const { order, payment } = await loadOrderForPaymentMutation(id, paymentId, guard.user);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+
+  // P2.2b: a payment created by reconciling a courier statement is part of
+  // that statement's audit trail — it can't be edited or deleted by hand.
+  const statementLine = await prisma.courierStatementLine.findUnique({ where: { paymentId }, select: { statement: { select: { reference: true } } } });
+  if (statementLine) {
+    return NextResponse.json(
+      { error: `This payment settled courier statement ${statementLine.statement.reference} — change it from the COD reconciliation screen, not here.` },
+      { status: 409 },
+      );
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.payment.delete({ where: { id: paymentId } });

@@ -270,6 +270,17 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
                     {r.onHold ? <Badge variant="destructive">On hold</Badge> : null}
                     {r.accountsReviewRequired ? <Badge variant="destructive">Accounts review</Badge> : null}
                   </div>
+                  {r.orderStatus === "IN_TRANSIT" ? (
+                    // Rider details aren't in Steadfast's API; scraping is out of scope (Gift Valy Round 2 §2.4 fallback).
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Rider: —{" "}
+                      {r.trackingUrl ? (
+                        <a href={r.trackingUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                          view tracking page
+                        </a>
+                      ) : null}
+                    </p>
+                  ) : null}
                   {r.needsAttention && r.attentionReason ? (
                     <p className="mt-1 flex max-w-64 items-start gap-1 text-xs text-amber-600">
                       <AlertTriangle className="mt-0.5 size-3 shrink-0" /> {r.attentionReason}

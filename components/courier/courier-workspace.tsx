@@ -1,5 +1,6 @@
 "use client";
 
+import { CodReconciliation } from "@/components/courier/cod-reconciliation";
 import { ReturnsCheck } from "@/components/courier/returns-check";
 import { ShipmentList } from "@/components/courier/shipment-list";
 import { SteadfastSettings } from "@/components/courier/steadfast-settings";
@@ -32,6 +33,7 @@ export function CourierWorkspace(props: CourierWorkspaceProps) {
             Returns check{props.openReturns > 0 ? <span className="ml-1 rounded-full bg-amber-500 px-1.5 text-[10px] text-white">{props.openReturns}</span> : null}
           </TabsTrigger>
         ) : null}
+        {props.canReconcile ? <TabsTrigger value="cod">COD &amp; payouts</TabsTrigger> : null}
         {props.canSeeIntegration ? <TabsTrigger value="steadfast">Steadfast</TabsTrigger> : null}
       </TabsList>
       {props.canViewShipments ? (
@@ -42,6 +44,11 @@ export function CourierWorkspace(props: CourierWorkspaceProps) {
       {props.canViewReturns ? (
         <TabsContent value="returns" className="pt-4">
           <ReturnsCheck canCheck={props.canCheckReturns} canMarkKept={props.canCheckReturns || props.canReconcile} />
+        </TabsContent>
+      ) : null}
+      {props.canReconcile ? (
+        <TabsContent value="cod" className="pt-4">
+          <CodReconciliation canSyncPayouts={props.canReconcile || props.canSync} />
         </TabsContent>
       ) : null}
       {props.canSeeIntegration ? (

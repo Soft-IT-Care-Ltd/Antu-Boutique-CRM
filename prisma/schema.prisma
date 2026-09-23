@@ -6,9 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  directUrl         = env("DIRECT_URL")
   // Throwaway `antu_shadow` database. Prisma WIPES the shadow database
   // before replaying migrations into it — it must never be DATABASE_URL or
   // DIRECT_URL (see CLAUDE.md, non-negotiable rule 11).
@@ -79,6 +79,9 @@ enum PaymentMethod {
   BANK
   CASH
   CARD
+  // P2.2b — COD the courier collected at the door and paid out to us,
+  // settled from a reconciled courier statement.
+  COURIER_COD
 }
 
 // PRD §4.6 edit window: PENDING until a TL/Admin acts on it, then terminal.
@@ -192,6 +195,8 @@ model User {
   accountsReviewedShipments Shipment[]               @relation("ShipmentAccountsReviewedBy")
   inspectedReturns          ReturnInspection[]       @relation("ReturnInspectedBy")
   keptItemsMarked           ReturnInspection[]       @relation("ReturnKeptItemsMarkedBy")
+  createdStatements         CourierStatement[]       @relation("CourierStatementCreatedBy")
+  resolvedStatementLines    CourierStatementLine[]   @relation("CourierStatementLineResolvedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -398,6 +403,7 @@ model CourierCompany {
   isActive    Boolean             @default(true)
   zones       CourierZone[]
   costRates   CourierCostRate[]
+  statements  CourierStatement[]
   integration CourierIntegration?
   shipments   Shipment[]
   orders      Order[]
@@ -482,6 +488,7 @@ model Order {
   invoices          Invoice[]
   shipment          Shipment?
   returnInspections ReturnInspection[]
+  statementLines    CourierStatementLine[]
 
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
@@ -595,6 +602,9 @@ model Payment {
   receivedBy    User?         @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
   verified      Boolean       @default(false)
   note          String?
+
+  // P2.2b — set when this payment settled a courier statement line.
+  courierStatementLine CourierStatementLine?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -854,6 +864,8 @@ model Expense {
   // replayed check can never post the charge twice.
   returnChargeInspectionId String?           @unique
   returnChargeInspection   ReturnInspection? @relation("ReturnChargeExpense", fields: [returnChargeInspectionId], references: [id], onDelete: Restrict)
+  statementDeliveryCharge  CourierStatement? @relation("StatementDeliveryChargeExpense")
+  statementCodCharge       CourierStatement? @relation("StatementCodChargeExpense")
 
   createdById String?
   createdBy   User?   @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
@@ -949,6 +961,10 @@ model CourierIntegration {
   lastBalanceAt         DateTime?
   lastSyncAt            DateTime?
   lastWebhookAt         DateTime?
+  // P2.2b payouts sync: when it last ran, and the /payments page the newest
+  // payouts were last found on (the list is oldest-first with no paging metadata).
+  lastPaymentsSyncAt    DateTime?
+  paymentsLastPage      Int             @default(1)
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
 
@@ -1012,6 +1028,7 @@ model Shipment {
 
   statusLogs        ShipmentStatusLog[]
   trackingEvents    ShipmentTrackingEvent[]
+  statementLines    CourierStatementLine[]
   returnInspections ReturnInspection[]
 
   createdAt DateTime @default(now())
@@ -1104,4 +1121,132 @@ model ReturnInspectionLine {
 
   @@unique([inspectionId, orderItemId])
   @@map("return_inspection_lines")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.9 — COD reconciliation and courier payouts (P2.2b)
+// ---------------------------------------------------------------------------
+
+enum CourierStatementSource {
+  STEADFAST_API
+  CSV_IMPORT
+  MANUAL
+}
+
+// Steadfast's payout lifecycle is processing → paid. Only a PAID statement
+// moves money; a processing one is shown but never settles anything.
+enum CourierStatementStatus {
+  PROCESSING
+  PAID
+}
+
+enum CourierStatementLineStatus {
+  // Statement not paid yet — nothing judged.
+  PENDING
+  // Their figures agree with ours (±৳2): the order's COD was settled.
+  MATCHED
+  // Their figures differ from ours: no money moved; waiting for Accounts.
+  MISMATCH
+  // A consignment we can't match to any of our shipments.
+  UNMATCHED
+  // Accounts accepted the courier's figure (reason recorded): settled.
+  ACCEPTED
+  // Accounts disputed it with the courier: nothing moves.
+  DISPUTED
+}
+
+// One courier statement / payout — a Steadfast payout pulled from its API, or
+// a statement Accounts imported (CSV) or typed in. Every taka that reaches the
+// bank is justified line by line against our orders:
+//   gross COD − delivery charges − COD charges = net paid out
+model CourierStatement {
+  id            String                 @id @default(cuid())
+  courierId     String
+  courier       CourierCompany         @relation(fields: [courierId], references: [id])
+  source        CourierStatementSource
+  // The courier's own reference (Steadfast "SFC-30820783", a CSV's statement
+  // number). Unique per courier: re-syncing or re-importing never duplicates.
+  reference     String
+  status        CourierStatementStatus @default(PAID)
+  statementDate DateTime
+
+  grossAmount    Decimal @default(0) @db.Decimal(12, 2)
+  deliveryCharge Decimal @default(0) @db.Decimal(12, 2)
+  codCharge      Decimal @default(0) @db.Decimal(12, 2)
+  netAmount      Decimal @default(0) @db.Decimal(12, 2)
+  // Where the net lands (free text until the P2.3 wallets master exists).
+  wallet         String?
+  note           String?
+
+  rawPayload       Json?
+  rawDetailPayload Json?
+
+  // Set once every line is MATCHED/ACCEPTED: the charges are posted as
+  // expenses exactly once (unique FKs) and the statement is reconciled.
+  reconciledAt            DateTime?
+  deliveryChargeExpenseId String?   @unique
+  deliveryChargeExpense   Expense?  @relation("StatementDeliveryChargeExpense", fields: [deliveryChargeExpenseId], references: [id], onDelete: Restrict)
+  codChargeExpenseId      String?   @unique
+  codChargeExpense        Expense?  @relation("StatementCodChargeExpense", fields: [codChargeExpenseId], references: [id], onDelete: Restrict)
+
+  createdById String?
+  createdBy   User?   @relation("CourierStatementCreatedBy", fields: [createdById], references: [id])
+
+  lines CourierStatementLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([courierId, reference])
+  @@index([statementDate])
+  @@map("courier_statements")
+}
+
+model CourierStatementLine {
+  id          String           @id @default(cuid())
+  statementId String
+  statement   CourierStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  // Row order within the statement (stable dedupe key when a line has no consignment id).
+  lineNo      Int
+
+  // As the courier reported it.
+  consignmentId  String?
+  invoice        String?
+  codAmount      Decimal  @db.Decimal(12, 2)
+  deliveryCharge Decimal? @db.Decimal(12, 2)
+  codCharge      Decimal? @db.Decimal(12, 2)
+
+  // What we matched it to.
+  shipmentId String?
+  shipment   Shipment? @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  orderId    String?
+  order      Order?    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  status         CourierStatementLineStatus @default(PENDING)
+  // Frozen when judged: our COD, our computed net receivable, and their net
+  // for this parcel when it can be derived.
+  ourCod         Decimal?                   @db.Decimal(12, 2)
+  expectedNet    Decimal?                   @db.Decimal(12, 2)
+  paidNet        Decimal?                   @db.Decimal(12, 2)
+  mismatchReason String?
+
+  // The order payment this line created (unique: never settled twice).
+  paymentId String?  @unique
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  resolvedById String?
+  resolvedBy   User?     @relation("CourierStatementLineResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  resolveNote  String?
+
+  rawPayload Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([statementId, lineNo])
+  @@index([shipmentId])
+  @@index([orderId])
+  @@index([status])
+  @@map("courier_statement_lines")
 }

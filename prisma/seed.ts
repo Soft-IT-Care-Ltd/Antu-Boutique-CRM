@@ -1002,6 +1002,64 @@ async function seedCourierDemo() {
   }
 }
 
+// P2.2b — courier statements. Only states that move no money are seeded (a
+// processing payout; a paid one whose single parcel isn't ours), because
+// settling is lib/courier/reconcile.ts's job and that module is server-only.
+async function seedCourierStatementsDemo() {
+  if ((await prisma.courierStatement.count()) > 0) return;
+  const steadfast = await prisma.courierCompany.findUniqueOrThrow({ where: { provider: "STEADFAST" } });
+  const delivered = await prisma.shipment.findFirst({ where: { courierId: steadfast.id, order: { status: "DELIVERED" } }, include: { order: true } });
+  if (!delivered) return;
+  const cod = Number(delivered.codCollected ?? delivered.codAmount);
+  const charge = Number(delivered.courierCostActual ?? 60);
+  const fee = Math.round((cod - charge) * 0.01);
+  const today = new Date();
+
+  await prisma.courierStatement.create({
+    data: {
+      courierId: steadfast.id,
+      source: "STEADFAST_API",
+      reference: "SFC-DEMO-0001",
+      status: "PROCESSING",
+      statementDate: today,
+      grossAmount: cod,
+      deliveryCharge: charge,
+      codCharge: fee,
+      netAmount: cod - charge - fee,
+      wallet: "Bank Account",
+      rawPayload: { payment_id: "SFC-DEMO-0001", status_label: "processing", demo: true },
+      lines: { create: [{ lineNo: 1, consignmentId: delivered.consignmentId, invoice: delivered.order.orderNo, codAmount: cod }] },
+    },
+  });
+  await prisma.courierStatement.create({
+    data: {
+      courierId: steadfast.id,
+      source: "STEADFAST_API",
+      reference: "SFC-DEMO-0002",
+      status: "PAID",
+      statementDate: new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000),
+      grossAmount: 1850,
+      deliveryCharge: 110,
+      codCharge: 17,
+      netAmount: 1723,
+      wallet: "Bank Account",
+      rawPayload: { payment_id: "SFC-DEMO-0002", status_label: "paid", demo: true },
+      lines: {
+        create: [
+          {
+            lineNo: 1,
+            consignmentId: "DEMO-FOREIGN-1",
+            invoice: "PANEL-7781",
+            codAmount: 1850,
+            status: "UNMATCHED",
+            mismatchReason: "No shipment of ours has this consignment id or order no.",
+          },
+        ],
+      },
+    },
+  });
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -1027,6 +1085,7 @@ async function main() {
   await seedInventory();
   await seedCourierCosts();
   await seedCourierDemo();
+  await seedCourierStatementsDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");
