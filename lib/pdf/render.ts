@@ -79,15 +79,40 @@ export function formatPdfDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Dhaka" });
 }
 
-/** Renders a complete HTML document (fonts already inlined) to an A4 PDF buffer. */
-export async function renderHtmlToPdf(html: string): Promise<Uint8Array> {
+/**
+ * Renders a complete HTML document (fonts already inlined) to a PDF buffer —
+ * A4 unless a page size is given (P3.1 price tags: one label per page, at
+ * the label's exact size, so a label printer prints it 1:1).
+ */
+export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number; heightMm: number }): Promise<Uint8Array> {
   const browser = await getPdfBrowser();
   const page = await browser.newPage();
   try {
     // Fonts are inlined as base64 data: URIs and nothing else is fetched,
     // so there's no network activity to wait out — "load" is enough.
     await page.setContent(html, { waitUntil: "load" });
-    return await page.pdf({ format: "A4", printBackground: true, margin: { top: "0", bottom: "0", left: "0", right: "0" } });
+    const size = pageSize ? { width: `${pageSize.widthMm}mm`, height: `${pageSize.heightMm}mm` } : { format: "A4" as const };
+    return await page.pdf({ ...size, printBackground: true, margin: { top: "0", bottom: "0", left: "0", right: "0" } });
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * P3.1 thermal receipts: a PDF `widthMm` wide and exactly as tall as its
+ * content — receipt paper is a continuous roll, so the printer cuts where
+ * the receipt ends instead of feeding a blank A4-length page.
+ */
+export async function renderHtmlToPdfFitHeight(html: string, widthMm: number): Promise<Uint8Array> {
+  const browser = await getPdfBrowser();
+  const page = await browser.newPage();
+  try {
+    // Lay the page out at the paper's width before measuring its height.
+    await page.setViewport({ width: Math.ceil((widthMm * 96) / 25.4), height: 800 });
+    await page.setContent(html, { waitUntil: "load" });
+    const heightPx = await page.evaluate(() => Math.ceil(document.documentElement.getBoundingClientRect().height));
+    const heightMm = Math.ceil((heightPx * 25.4) / 96) + 2;
+    return await page.pdf({ width: `${widthMm}mm`, height: `${heightMm}mm`, printBackground: true, margin: { top: "0", bottom: "0", left: "0", right: "0" } });
   } finally {
     await page.close();
   }

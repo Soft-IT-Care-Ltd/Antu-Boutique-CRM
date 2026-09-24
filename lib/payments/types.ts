@@ -1,4 +1,4 @@
-import type { OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
+import type { OrderChannelValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
 
 export const PAYMENT_LIST_VIEWS = ["unverified", "verified", "refunds", "all"] as const;
 export type PaymentListView = (typeof PAYMENT_LIST_VIEWS)[number];
@@ -19,6 +19,7 @@ export type PaymentListQuery = {
   refundStatus?: RefundStatusValue;
   method?: PaymentMethodValue;
   walletId?: string;
+  channel?: OrderChannelValue;
   from?: Date;
   to?: Date;
   q?: string;
@@ -51,9 +52,11 @@ export type PaymentListItem = {
     id: string;
     orderNo: string;
     status: OrderStatusValue;
+    channel: OrderChannelValue;
     total: string;
     dueAmount: string;
-    customerName: string;
-    customerPhone: string;
+    /** Null for an anonymous walk-in sale. */
+    customerName: string | null;
+    customerPhone: string | null;
   };
 };

@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Banknote,
   BarChart3,
   Boxes,
   CalendarCheck,
@@ -11,6 +12,7 @@ import {
   Shirt,
   ShoppingBag,
   Store,
+  Tags,
   Trophy,
   Truck,
   UserRound,
@@ -55,12 +57,15 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Orders", href: "/orders", icon: ShoppingBag, permission: ["order.view_own", "order.view_team", "order.view_all"] },
       { label: "POS", href: "/pos", icon: Store, permission: "pos.sell" },
+      // Accounts reviews past days' counts (wallet.view) without selling.
+      { label: "Cash drawer", href: "/pos/drawer", icon: Banknote, permission: ["pos.drawer", "wallet.view"] },
     ],
   },
   {
     label: "Catalog & Stock",
     items: [
       { label: "Catalog", href: "/catalog", icon: Shirt, permission: "product.view" },
+      { label: "Price tags", href: "/catalog/price-tags", icon: Tags, permission: "product.tags.print" },
       { label: "Inventory", href: "/inventory", icon: Boxes, permission: "inventory.view" },
     ],
   },

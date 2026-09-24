@@ -23,6 +23,11 @@ import { filterNavGroups, navGroups } from "@/lib/nav-config";
 export function AppSidebar({ permissions }: { permissions: PermissionKey[] }) {
   const pathname = usePathname();
   const groups = filterNavGroups(navGroups, new Set(permissions));
+  // The most specific entry wins: /pos/drawer lights up "Cash drawer", not "POS" too.
+  const activeHref = groups
+    .flatMap((g) => g.items.map((i) => i.href))
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
 
   return (
     <Sidebar collapsible="icon">
@@ -48,7 +53,7 @@ export function AppSidebar({ permissions }: { permissions: PermissionKey[] }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const isActive = item.href === activeHref;
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton

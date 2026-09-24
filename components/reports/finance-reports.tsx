@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,23 +12,23 @@ import { EXPENSE_KIND_LABELS, EXPENSE_NATURE_LABELS, type ExpenseKindValue, type
 import { formatDhakaDate } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
-import { PAYMENT_METHOD_LABELS, type PaymentMethodValue } from "@/lib/orders/constants";
+import { ORDER_CHANNEL_LABELS, PAYMENT_METHOD_LABELS, type OrderChannelValue, type PaymentMethodValue } from "@/lib/orders/constants";
 
 // P2.3 collection report and expense report — a date range (Dhaka days,
 // inclusive) and a few breakdowns. Same data as /api/reports/*.
 
-function useReport<T>(endpoint: string, from: string, to: string) {
+function useReport<T>(endpoint: string, from: string, to: string, extra = "") {
   const [report, setReport] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!from || !to) return;
-    fetchJson<{ report: T }>(`${endpoint}?from=${from}&to=${to}`)
+    fetchJson<{ report: T }>(`${endpoint}?from=${from}&to=${to}${extra}`)
       .then((r) => {
         setReport(r.report);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the report."));
-  }, [endpoint, from, to]);
+  }, [endpoint, from, to, extra]);
   return { report, error };
 }
 
@@ -97,16 +98,21 @@ type CollectionReport = {
   byWallet: { walletId: string | null; label: string; collected: string; refunds: string; net: string }[];
   byDay: { day: string; collected: string; refunds: string; net: string }[];
   byStaff: { name: string; count: number; collected: string }[];
+  byChannel: { channel: OrderChannelValue; count: number; collected: string; refunds: string; net: string }[];
 };
 
 export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
-  const { report, error } = useReport<CollectionReport>("/api/reports/collection", from, to);
+  const [channel, setChannel] = useState<ChannelFilterValue>("all");
+  const { report, error } = useReport<CollectionReport>("/api/reports/collection", from, to, channel === "all" ? "" : `&channel=${channel}`);
 
   return (
     <div className="flex flex-col gap-4">
-      <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      <div className="flex flex-wrap items-end gap-2">
+        <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+        <ChannelSelect value={channel} onChange={setChannel} />
+      </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {!report ? (
         <Loading />
@@ -122,6 +128,28 @@ export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: 
             <Empty text="No payments in this range." />
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
+              <Section title="By channel">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Channel</TableHead>
+                      <TableHead className="text-right">Payments</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Net</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.byChannel.map((c) => (
+                      <TableRow key={c.channel}>
+                        <TableCell>{ORDER_CHANNEL_LABELS[c.channel]}</TableCell>
+                        <TableCell className="text-right tabular-nums">{c.count}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(c.collected)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatBDT(c.net)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Section>
               <Section title="By method">
                 <Table>
                   <TableHeader>

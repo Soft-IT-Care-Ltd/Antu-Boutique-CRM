@@ -8,6 +8,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import type { CourierShipmentTab } from "@/lib/courier/constants";
 import type { CourierReturnRow, ReadyToShipRow, ShipmentDetailView, ShipmentRow } from "@/lib/courier/types";
 import { prisma } from "@/lib/prisma";
+import { onlineOrderCustomer } from "@/lib/orders/customer";
 
 // Read side of the Courier page and the order-detail shipment card. Every
 // query is scoped through scopedWhere() on the order (CLAUDE.md rule 6), and
@@ -67,9 +68,9 @@ export async function listReadyToShip(user: SessionUser, opts: Page & { q?: stri
     items: orders.map((o) => ({
       orderId: o.id,
       orderNo: o.orderNo,
-      customerName: o.customer.name,
-      phone: o.customer.phone,
-      address: [o.customer.addressDetail, o.customer.thana, o.customer.district].filter(Boolean).join(", "),
+      customerName: onlineOrderCustomer(o).name,
+      phone: onlineOrderCustomer(o).phone,
+      address: [onlineOrderCustomer(o).addressDetail, onlineOrderCustomer(o).thana, onlineOrderCustomer(o).district].filter(Boolean).join(", "),
       courierName: o.courier?.name ?? null,
       items: o.items.map((i) => `${i.variant.product.name} (${i.variant.size.name} / ${i.variant.color.name}) ×${i.qty}`),
       bookingInProgress: Boolean(o.shipment),
@@ -92,8 +93,8 @@ function serializeShipmentRow(s: ShipmentWithOrder, showMoney: boolean): Shipmen
     orderId: s.order.id,
     orderNo: s.order.orderNo,
     orderStatus: s.order.status,
-    customerName: s.order.customer.name,
-    phone: s.order.customer.phone,
+    customerName: onlineOrderCustomer(s.order).name,
+    phone: onlineOrderCustomer(s.order).phone,
     courierName: s.courier.name,
     consignmentId: s.consignmentId,
     trackingCode: s.trackingCode,
@@ -204,8 +205,8 @@ export async function listCourierReturns(user: SessionUser, opts: { status: "ope
       orderId: r.order.id,
       orderNo: r.order.orderNo,
       orderStatus: r.order.status,
-      customerName: r.order.customer.name,
-      phone: r.order.customer.phone,
+      customerName: onlineOrderCustomer(r.order).name,
+      phone: onlineOrderCustomer(r.order).phone,
       consignmentId: r.order.shipment?.consignmentId ?? null,
       trackingUrl: r.order.shipment?.trackingUrl ?? null,
       createdAt: r.createdAt.toISOString(),

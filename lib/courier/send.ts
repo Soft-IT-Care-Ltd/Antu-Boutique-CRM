@@ -13,6 +13,7 @@ import { buildSteadfastPayload, describeItems, type SteadfastSendableOrder } fro
 import { DELIVERY_CHARGE_KEY, discoverTrackingUrl, findNumericField, normalizeSteadfastPhone } from "@/lib/courier/steadfast/status";
 import { withTx, type Db } from "@/lib/db/tx";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
+import { onlineOrderCustomer } from "@/lib/orders/customer";
 
 // ============ Send to Steadfast (STEADFAST_INTEGRATION.md §2) ============
 //
@@ -84,7 +85,7 @@ function toSendable(order: SendOrder): SteadfastSendableOrder {
     orderNo: order.orderNo,
     dueAmount: order.dueAmount,
     deliveryNote: order.deliveryNote,
-    customer: order.customer,
+    customer: onlineOrderCustomer(order),
     items: order.items.map((i) => ({
       qty: i.qty - i.returnedQty,
       productName: i.variant.product.name,
@@ -131,16 +132,17 @@ export async function previewSteadfastSend(db: Db, orderIds: string[], user: Ses
     const order = orders.get(orderId);
     if (!order) return [];
     const sendable = toSendable(order);
+    const customer = onlineOrderCustomer(order);
     const zone = order.courierZone?.zone ?? null;
     const weight = weightFor(order);
     return [
       {
         orderId: order.id,
         orderNo: order.orderNo,
-        customerName: order.customer.name,
-        phone: order.customer.phone,
-        normalizedPhone: normalizeSteadfastPhone(order.customer.phone),
-        address: [order.customer.addressDetail, order.customer.thana, order.customer.district].filter(Boolean).join(", "),
+        customerName: customer.name,
+        phone: customer.phone,
+        normalizedPhone: normalizeSteadfastPhone(customer.phone),
+        address: [customer.addressDetail, customer.thana, customer.district].filter(Boolean).join(", "),
         deliveryNote: order.deliveryNote,
         itemDescription: describeItems(sendable.items),
         codAmount: Math.max(0, Number(order.dueAmount.toString())).toFixed(2),

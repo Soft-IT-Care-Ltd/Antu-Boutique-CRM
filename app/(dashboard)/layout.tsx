@@ -22,7 +22,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <SidebarProvider>
       <AppSidebar permissions={[...permissions]} />
-      <SidebarInset>
+      {/* min-w-0: a flex child otherwise grows to its widest content, so one
+          wide table pushed the whole page past the screen edge on a tablet. */}
+      <SidebarInset className="min-w-0">
         <Topbar userName={userName} userRole={userRole} isPreview={isPreview} />
         <div className="flex flex-1 flex-col">{children}</div>
       </SidebarInset>

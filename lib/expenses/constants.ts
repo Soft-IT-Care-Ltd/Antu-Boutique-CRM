@@ -1,6 +1,6 @@
 // PRD §4.12 — expenses. Shared by server and client code.
 
-export const EXPENSE_KIND_VALUES = ["AD_COST", "PURCHASE", "COURIER", "SALARY", "RENT", "UTILITY", "PACKAGING", "TRANSPORT", "EXCHANGE_RETURN", "DAMAGE_WRITE_OFF", "STOCK_SHORTAGE", "MISC"] as const;
+export const EXPENSE_KIND_VALUES = ["AD_COST", "PURCHASE", "COURIER", "SALARY", "RENT", "UTILITY", "PACKAGING", "TRANSPORT", "EXCHANGE_RETURN", "DAMAGE_WRITE_OFF", "STOCK_SHORTAGE", "CASH_OVER_SHORT", "MISC"] as const;
 export type ExpenseKindValue = (typeof EXPENSE_KIND_VALUES)[number];
 
 export const EXPENSE_KIND_LABELS: Record<ExpenseKindValue, string> = {
@@ -15,6 +15,7 @@ export const EXPENSE_KIND_LABELS: Record<ExpenseKindValue, string> = {
   EXCHANGE_RETURN: "Exchange / return cost",
   DAMAGE_WRITE_OFF: "Damage / write-off",
   STOCK_SHORTAGE: "Stock shortage",
+  CASH_OVER_SHORT: "Cash over/short",
   MISC: "Misc",
 };
 

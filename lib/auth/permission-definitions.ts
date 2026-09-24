@@ -62,6 +62,7 @@ export const PERMISSIONS = [
   { key: "product.delete", group: "Catalog", label: "Delete products & variants" },
   { key: "product.cost.view", group: "Catalog", label: "View cost, profit, margin & purchase price" },
   { key: "catalog.manage", group: "Catalog", label: "Manage categories, sizes & colours" },
+  { key: "product.tags.print", group: "Catalog", label: "Print price tags" },
 
   // Inventory
   { key: "inventory.view", group: "Inventory", label: "View stock on hand" },
@@ -101,6 +102,7 @@ export const PERMISSIONS = [
 
   // POS
   { key: "pos.sell", group: "POS", label: "Take POS sales" },
+  { key: "pos.drawer", group: "POS", label: "Open and close the cash drawer, record cash in/out" },
 
   // Returns & exchanges
   { key: "return.view", group: "Returns", label: "View returns" },
@@ -228,8 +230,13 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "attendance.mark",
   ],
 
+  // pos.drawer lets the operator record cash leaving the drawer (a deposit,
+  // a petty expense) — only from the drawer's own wallet, only for today
+  // (lib/pos/drawer.ts) — without the general wallet.entry/expense.create.
   POS_OPERATOR: [
     "pos.sell",
+    "pos.drawer",
+    "product.tags.print",
     "customer.view_own",
     "customer.create",
     "order.view_own",

@@ -38,6 +38,7 @@ export function expenseSource(e: ExpenseWithSource): string | null {
   if (e.returnChargeInspectionId) return "Courier return check";
   if (e.statementDeliveryCharge) return `Courier statement ${e.statementDeliveryCharge.reference}`;
   if (e.statementCodCharge) return `Courier statement ${e.statementCodCharge.reference}`;
+  if (e.cashDrawerId) return "the cash drawer count";
   return null;
 }
 

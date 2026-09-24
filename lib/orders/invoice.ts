@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { formatBDT } from "@/lib/money";
 import { escapeHtml, formatPdfDate as formatInvoiceDate, getFontFaceCss, renderHtmlToPdf } from "@/lib/pdf/render";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
+import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
+import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { keptLine } from "@/lib/orders/totals";
 import { resolveUploadPath } from "@/lib/uploads/storage";
 import type { OrderDetail } from "@/lib/orders/types";
@@ -23,9 +25,23 @@ import type { OrderDetail } from "@/lib/orders/types";
 async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
   // Same rule as due_amount: a refund only counts once approved.
   const paid = order.payments.filter((p) => p.kind === "PAYMENT" || p.refundStatus === "APPROVED").reduce((sum, p) => sum + Number(p.amount), 0);
-  const address = [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
-    .filter(Boolean)
-    .join(", ");
+  // P3.1 — a showroom sale: no delivery address, maybe no customer at all.
+  const isWalkIn = order.channel === "WALK_IN";
+  const address = order.customer
+    ? [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division].filter(Boolean).join(", ")
+    : "";
+  const billedTo = order.customer
+    ? `<p><strong>${escapeHtml(order.customer.name)}</strong></p>
+      <p>${escapeHtml(order.customer.phone)}</p>
+      ${isWalkIn ? "" : `<p>${escapeHtml(address || "—")}</p>`}`
+    : `<p><strong>${WALK_IN_CUSTOMER_LABEL}</strong></p>`;
+  // How a counter sale was paid (split tender), so the receipt shows it.
+  const paymentLines = isWalkIn
+    ? order.payments
+        .filter((p) => p.kind === "PAYMENT")
+        .map((p) => `<div class="muted"><span>${escapeHtml(PAYMENT_METHOD_LABELS[p.method])}${p.transactionId ? ` · ${escapeHtml(p.transactionId)}` : ""}</span><span>${formatBDT(p.amount)}</span></div>`)
+        .join("")
+    : "";
 
   // After a partial delivery (P2.2) the invoice bills what the customer
   // kept: kept quantity, pro-rated discount, with the returned units noted.
@@ -90,14 +106,12 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
   <div class="grid">
     <div class="box">
       <h2>Billed to</h2>
-      <p><strong>${escapeHtml(order.customer.name)}</strong></p>
-      <p>${escapeHtml(order.customer.phone)}</p>
-      <p>${escapeHtml(address || "—")}</p>
+      ${billedTo}
     </div>
     <div class="box">
       <h2>Order details</h2>
       <p>Order date: ${formatInvoiceDate(order.createdAt)}</p>
-      <p>Channel: ${order.channel === "ONLINE" ? "Online" : "Walk-in"}</p>
+      <p>Channel: ${order.channel === "ONLINE" ? "Online" : "Walk-in (showroom)"}</p>
     </div>
   </div>
 
@@ -121,9 +135,10 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
   <div class="totals">
     <div><span>Subtotal</span><span>${formatBDT(order.subtotal)}</span></div>
     <div><span>Discount</span><span>- ${formatBDT(order.discountTotal)}</span></div>
-    <div><span>Delivery charge</span><span>${formatBDT(order.deliveryCharge)}</span></div>
+    ${isWalkIn ? "" : `<div><span>Delivery charge</span><span>${formatBDT(order.deliveryCharge)}</span></div>`}
     <div class="grand"><span>Total</span><span>${formatBDT(order.total)}</span></div>
     <div><span>Paid</span><span>${formatBDT(paid)}</span></div>
+    ${paymentLines}
     <div class="due"><span>Due</span><span>${formatBDT(order.dueAmount)}</span></div>
   </div>
 

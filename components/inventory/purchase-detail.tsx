@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, Tags } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import type { PurchaseDetail as PurchaseDetailData } from "@/lib/inventory/types
 import { formatBDT } from "@/lib/money";
 
 /** Lines are read-only (they already moved stock and WAC); only the supplier-payment side can be edited. */
-export function PurchaseDetail({ initial }: { initial: PurchaseDetailData }) {
+export function PurchaseDetail({ initial, canPrintTags = false }: { initial: PurchaseDetailData; canPrintTags?: boolean }) {
   const [purchase, setPurchase] = useState(initial);
   const [amountPaid, setAmountPaid] = useState(initial.amountPaid);
   const [invoiceNo, setInvoiceNo] = useState(initial.invoiceNo ?? "");
@@ -109,9 +109,17 @@ export function PurchaseDetail({ initial }: { initial: PurchaseDetailData }) {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Items</CardTitle>
-          <CardDescription>Landed cost = unit cost + this line&apos;s share of transport/other. That is what feeds the weighted average.</CardDescription>
+        <CardHeader className="flex-row flex-wrap items-start justify-between gap-2 space-y-0">
+          <div>
+            <CardTitle>Items</CardTitle>
+            <CardDescription>Landed cost = unit cost + this line&apos;s share of transport/other. That is what feeds the weighted average.</CardDescription>
+          </div>
+          {canPrintTags ? (
+            <Button render={<Link href={`/catalog/price-tags?purchaseId=${initial.id}`} />} nativeButton={false} variant="outline" size="sm">
+              <Tags />
+              Print tags for everything received
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent>
           <Table>

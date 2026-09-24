@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { SKU_PATTERN, SKU_PATTERN_MESSAGE } from "@/lib/barcode/scan";
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
@@ -35,7 +36,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 // rule 2 and the P1.1 build prompt.
 const editSchema = z.object({
   variantId: z.string().cuid(),
-  sku: z.string().trim().min(1).max(60).optional(),
+  // P3.1 — a SKU is what its price tag's barcode carries and what the POS
+  // scan box reads back, so it's held to the barcode-safe form (lib/barcode/scan.ts).
+  sku: z.string().trim().toUpperCase().regex(SKU_PATTERN, SKU_PATTERN_MESSAGE).optional(),
   priceOverride: z.union([z.coerce.number().nonnegative(), z.null()]).optional(),
   lowStockThreshold: z.union([z.coerce.number().int().min(0), z.null()]).optional(),
   // P2.2 — optional parcel weight per unit (grams), for courier cost estimates.

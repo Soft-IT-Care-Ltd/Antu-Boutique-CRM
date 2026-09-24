@@ -39,6 +39,8 @@ export function paymentListWhere(user: SessionUser, query: Omit<PaymentListQuery
   }
   if (query.method) and.push({ method: query.method });
   if (query.walletId) and.push({ walletId: query.walletId });
+  // P3.1 — Online vs Walk-in. AND-ed alongside the scope, so it only narrows.
+  if (query.channel) and.push({ order: { channel: query.channel } });
   if (query.from) and.push({ paidAt: { gte: query.from } });
   if (query.to) and.push({ paidAt: { lt: query.to } });
   if (query.q) {
@@ -70,7 +72,7 @@ export async function listPayments(user: SessionUser, query: PaymentListQuery): 
         receivedBy: { select: { name: true } },
         verifiedBy: { select: { name: true } },
         decidedBy: { select: { name: true } },
-        order: { select: { id: true, orderNo: true, status: true, total: true, dueAmount: true, customer: { select: { name: true, phone: true } } } },
+        order: { select: { id: true, orderNo: true, status: true, channel: true, total: true, dueAmount: true, customer: { select: { name: true, phone: true } } } },
       },
     }),
   ]);
@@ -102,10 +104,11 @@ export async function listPayments(user: SessionUser, query: PaymentListQuery): 
         id: p.order.id,
         orderNo: p.order.orderNo,
         status: p.order.status,
+        channel: p.order.channel,
         total: p.order.total.toString(),
         dueAmount: p.order.dueAmount.toString(),
-        customerName: p.order.customer.name,
-        customerPhone: p.order.customer.phone,
+        customerName: p.order.customer?.name ?? null,
+        customerPhone: p.order.customer?.phone ?? null,
       },
     })),
   };

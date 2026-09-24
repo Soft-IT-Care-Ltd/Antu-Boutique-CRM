@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Pencil, Tags, Trash2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -34,6 +35,7 @@ export function ProductDetail({
   canGenerateVariants,
   canDelete,
   hasCostView,
+  canPrintTags = false,
 }: {
   product: ProductDetailType;
   categories: Category[];
@@ -43,6 +45,7 @@ export function ProductDetail({
   canGenerateVariants: boolean;
   canDelete: boolean;
   hasCostView: boolean;
+  canPrintTags?: boolean;
 }) {
   const router = useRouter();
   const [product, setProduct] = useState(initialProduct);
@@ -100,6 +103,12 @@ export function ProductDetail({
             </p>
           </div>
           <div className="flex shrink-0 gap-1.5">
+            {canPrintTags ? (
+              <Button render={<Link href={`/catalog/price-tags?productId=${product.id}`} />} nativeButton={false} variant="outline" size="sm">
+                <Tags />
+                Print tags
+              </Button>
+            ) : null}
             {canEdit ? (
               <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                 <Pencil />

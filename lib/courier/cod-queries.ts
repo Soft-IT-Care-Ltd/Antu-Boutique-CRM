@@ -8,6 +8,7 @@ import { computeNetReceivable, round2, statementIdentityHolds } from "@/lib/cour
 import type { AwaitingPayoutRow, CodSummary, StatementDetailView, StatementLineView, StatementRow } from "@/lib/courier/cod-types";
 import { toNumber } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
+import { onlineOrderCustomer } from "@/lib/orders/customer";
 
 // Read side of COD reconciliation (PRD §4.9). Gated by courier.reconcile in
 // the routes (ACCOUNTS / MANAGER / ADMIN). The courier's charges and our net
@@ -65,7 +66,7 @@ export async function listAwaitingPayout(user: SessionUser, opts: { page: number
         orderId: s.order.id,
         orderNo: s.order.orderNo,
         orderStatus: s.order.status,
-        customerName: s.order.customer.name,
+        customerName: onlineOrderCustomer(s.order).name,
         courierName: s.courier.name,
         consignmentId: s.consignmentId,
         codCollected: cod.toFixed(2),

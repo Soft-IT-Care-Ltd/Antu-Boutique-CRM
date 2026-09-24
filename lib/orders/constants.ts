@@ -1,6 +1,11 @@
 export const ORDER_CHANNEL_VALUES = ["ONLINE", "WALK_IN"] as const;
 export type OrderChannelValue = (typeof ORDER_CHANNEL_VALUES)[number];
 
+export const ORDER_CHANNEL_LABELS: Record<OrderChannelValue, string> = {
+  ONLINE: "Online",
+  WALK_IN: "Walk-in",
+};
+
 // P1.3 only ever writes LEAD/CONFIRMED — see prisma/schema.prisma's comment
 // on OrderStatus. The full funnel is listed here so the status-history
 // timeline and any future status badge can render every value without a

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Pencil, Send } from "lucide-react";
+import { FileText, Pencil, Printer, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import type { ShipmentDetailView } from "@/lib/courier/types";
 import { formatBDT } from "@/lib/money";
 import { fetchJson } from "@/lib/orders/client";
 import { DELIVERY_ZONE_LABELS, ORDER_STATUS_LABELS } from "@/lib/orders/constants";
+import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { orderUploadUrl } from "@/lib/orders/types";
 import type { OrderDetail as OrderDetailType } from "@/lib/orders/types";
 import type { WalletOption } from "@/lib/wallets/constants";
@@ -70,6 +71,8 @@ export function OrderDetail({
   const [images, setImages] = useState(initialOrder.images);
 
   const pendingEditRequest = order.editRequests.find((r) => r.status === "PENDING") ?? null;
+  // P3.1 — a showroom sale has no courier, no delivery and maybe no customer.
+  const isWalkIn = order.channel === "WALK_IN";
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,6 +88,12 @@ export function OrderDetail({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isWalkIn ? (
+            <Button render={<a href={`/api/pos/sales/${order.id}/receipt`} target="_blank" rel="noreferrer" />} nativeButton={false} variant="outline">
+              <Printer />
+              Receipt (80 mm)
+            </Button>
+          ) : null}
           {canSendToSteadfast && order.status === "PACKED" && !shipment ? (
             <Button onClick={() => setSendOpen(true)}>
               <Send />
@@ -106,36 +115,43 @@ export function OrderDetail({
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card className={isWalkIn ? "lg:col-span-3" : "lg:col-span-2"}>
           <CardHeader>
             <CardTitle>Customer</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-1 text-sm sm:grid-cols-2">
-            <div>
-              <div className="text-muted-foreground">Name</div>
-              <div className="font-medium">{order.customer.name}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">Phone</div>
-              <div className="font-mono">{order.customer.phone}</div>
-            </div>
-            {order.customer.altPhone ? (
+          {order.customer ? (
+            <CardContent className="grid gap-1 text-sm sm:grid-cols-2">
               <div>
-                <div className="text-muted-foreground">Alternate contact</div>
-                <div className="font-mono">{order.customer.altPhone}</div>
+                <div className="text-muted-foreground">Name</div>
+                <div className="font-medium">{order.customer.name}</div>
               </div>
-            ) : null}
-            <div>
-              <div className="text-muted-foreground">Delivery address</div>
               <div>
-                {[order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
-                  .filter(Boolean)
-                  .join(", ") || "—"}
+                <div className="text-muted-foreground">Phone</div>
+                <div className="font-mono">{order.customer.phone}</div>
               </div>
-            </div>
-          </CardContent>
+              {order.customer.altPhone ? (
+                <div>
+                  <div className="text-muted-foreground">Alternate contact</div>
+                  <div className="font-mono">{order.customer.altPhone}</div>
+                </div>
+              ) : null}
+              {!isWalkIn ? (
+                <div>
+                  <div className="text-muted-foreground">Delivery address</div>
+                  <div>
+                    {[order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </div>
+                </div>
+              ) : null}
+            </CardContent>
+          ) : (
+            <CardContent className="text-sm text-muted-foreground">{WALK_IN_CUSTOMER_LABEL} — no name or phone taken at the counter.</CardContent>
+          )}
         </Card>
 
+        {isWalkIn ? null : (
         <Card>
           <CardHeader>
             <CardTitle>Delivery</CardTitle>
@@ -163,6 +179,7 @@ export function OrderDetail({
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
 
       {shipment ? <OrderShipmentCard shipment={shipment} /> : null}

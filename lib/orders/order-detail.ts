@@ -75,16 +75,18 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
     orderNo: order.orderNo,
     status: order.status as OrderStatusValue,
     channel: order.channel,
-    customer: {
-      id: order.customer.id,
-      name: order.customer.name,
-      phone: order.customer.phone,
-      altPhone: order.customer.altPhone,
-      division: order.customer.division,
-      district: order.customer.district,
-      thana: order.customer.thana,
-      addressDetail: order.customer.addressDetail,
-    },
+    customer: order.customer
+      ? {
+          id: order.customer.id,
+          name: order.customer.name,
+          phone: order.customer.phone,
+          altPhone: order.customer.altPhone,
+          division: order.customer.division,
+          district: order.customer.district,
+          thana: order.customer.thana,
+          addressDetail: order.customer.addressDetail,
+        }
+      : null,
     courier: order.courier,
     courierZoneId: order.courierZone?.id ?? null,
     deliveryZone: (order.courierZone?.zone as DeliveryZoneValue | undefined) ?? null,

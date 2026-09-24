@@ -7,7 +7,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import type { Db } from "@/lib/db/tx";
 import type { ExpenseKindValue, ExpenseNatureValue } from "@/lib/expenses/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
-import type { PaymentMethodValue } from "@/lib/orders/constants";
+import type { OrderChannelValue, PaymentMethodValue } from "@/lib/orders/constants";
 
 // P2.3 collection report and expense report, for a Dhaka date range
 // [from, to). Money is summed in paisa and returned as "123.45" strings.
@@ -33,16 +33,30 @@ export type CollectionReport = {
   byWallet: { walletId: string | null; label: string; collected: string; refunds: string; net: string }[];
   byDay: { day: string; collected: string; refunds: string; net: string }[];
   byStaff: { name: string; count: number; collected: string }[];
+  /** P3.1 — Online vs Walk-in (PRD §4.15 R14). */
+  byChannel: { channel: OrderChannelValue; count: number; collected: string; refunds: string; net: string }[];
 };
 
-export async function getCollectionReport(db: Db, user: SessionUser, from: Date, to: Date): Promise<CollectionReport> {
+export async function getCollectionReport(db: Db, user: SessionUser, from: Date, to: Date, channel?: OrderChannelValue): Promise<CollectionReport> {
+  const orderWhere: Prisma.OrderWhereInput = channel ? { deletedAt: null, channel } : { deletedAt: null };
   const rows = await db.payment.findMany({
     where: {
       paidAt: { gte: from, lt: to },
-      order: scopedWhere({ deletedAt: null }, user) as Prisma.OrderWhereInput,
+      // The channel narrows inside the scope; it can never widen it (CLAUDE.md rule 6).
+      order: scopedWhere(orderWhere, user) as Prisma.OrderWhereInput,
       OR: [{ kind: "PAYMENT" }, { kind: "REFUND", refundStatus: "APPROVED" }],
     },
-    select: { kind: true, amount: true, method: true, verified: true, paidAt: true, walletId: true, wallet: { select: { name: true } }, receivedBy: { select: { name: true } } },
+    select: {
+      kind: true,
+      amount: true,
+      method: true,
+      verified: true,
+      paidAt: true,
+      walletId: true,
+      wallet: { select: { name: true } },
+      receivedBy: { select: { name: true } },
+      order: { select: { channel: true } },
+    },
   });
 
   let collected = 0;
@@ -57,9 +71,17 @@ export async function getCollectionReport(db: Db, user: SessionUser, from: Date,
   const dayIn = new Map<string, number>();
   const dayOut = new Map<string, number>();
   const staff = new Map<string, { count: number; paisa: number }>();
+  const byChannel = new Map<OrderChannelValue, { count: number; in: number; out: number }>();
 
   for (const r of rows) {
     const paisa = toPaisa(r.amount);
+    const ch = byChannel.get(r.order.channel) ?? { count: 0, in: 0, out: 0 };
+    if (r.kind === "REFUND") ch.out -= paisa;
+    else {
+      ch.count += 1;
+      ch.in += paisa;
+    }
+    byChannel.set(r.order.channel, ch);
     const m = method.get(r.method) ?? { count: 0, collected: 0, refunds: 0 };
     const walletKey = r.walletId ?? (r.method === "COURIER_COD" ? "__courier" : "__none");
     walletLabel.set(walletKey, { walletId: r.walletId, label: r.wallet?.name ?? (r.method === "COURIER_COD" ? "Via courier payout" : "No wallet recorded") });
@@ -113,6 +135,7 @@ export async function getCollectionReport(db: Db, user: SessionUser, from: Date,
       return { day, collected: fromPaisa(inP), refunds: fromPaisa(outP), net: fromPaisa(inP - outP) };
     }),
     byStaff: [...staff.entries()].map(([name, v]) => ({ name, count: v.count, collected: fromPaisa(v.paisa) })).sort((a, b) => Number(b.collected) - Number(a.collected)),
+    byChannel: [...byChannel.entries()].map(([ch, v]) => ({ channel: ch, count: v.count, collected: fromPaisa(v.in), refunds: fromPaisa(v.out), net: fromPaisa(v.in - v.out) })),
   };
 }
 

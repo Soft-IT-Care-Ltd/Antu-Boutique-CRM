@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { hoursSince, isOverdue } from "@/lib/packing/sla";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import type { PackingOrderDetail, PackingQueueItem } from "@/lib/packing/types";
+import { onlineOrderCustomer } from "@/lib/orders/customer";
 
 // PRD §4.8 "must not see customer money data": this include is the money
 // boundary, not just serializePacking*'s output shape — subtotal, total,
@@ -47,7 +48,7 @@ function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueue
   return {
     id: order.id,
     orderNo: order.orderNo,
-    customer: { name: order.customer.name, phone: order.customer.phone },
+    customer: { name: onlineOrderCustomer(order).name, phone: onlineOrderCustomer(order).phone },
     internalNote: order.internalNote,
     items: order.items.map((item) => ({
       id: item.id,
@@ -76,17 +77,18 @@ export function serializePackingQueueItem(order: PackingOrderRow, slaHours: numb
 
 export function serializePackingOrderDetail(order: PackingOrderRow, slaHours: number): PackingOrderDetail {
   const packedEntry = order.statusHistory[0] ?? null;
+  const customer = onlineOrderCustomer(order);
   return {
     ...serializeCommon(order, slaHours),
     status: order.status as OrderStatusValue,
     customer: {
-      name: order.customer.name,
-      phone: order.customer.phone,
-      altPhone: order.customer.altPhone,
-      division: order.customer.division,
-      district: order.customer.district,
-      thana: order.customer.thana,
-      addressDetail: order.customer.addressDetail,
+      name: customer.name,
+      phone: customer.phone,
+      altPhone: customer.altPhone,
+      division: customer.division,
+      district: customer.district,
+      thana: customer.thana,
+      addressDetail: customer.addressDetail,
     },
     packedAt: packedEntry?.createdAt.toISOString() ?? null,
     packedBy: packedEntry?.changedBy ?? null,

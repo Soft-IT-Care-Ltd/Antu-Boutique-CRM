@@ -10,7 +10,8 @@ export type OrderListItem = {
   orderNo: string;
   status: OrderStatusValue;
   channel: "ONLINE" | "WALK_IN";
-  customer: { id: string; name: string; phone: string };
+  /** Null only for an anonymous walk-in (POS) sale. */
+  customer: { id: string; name: string; phone: string } | null;
   total: string;
   dueAmount: string;
   createdBy: { id: string; name: string } | null;
@@ -113,7 +114,8 @@ export type OrderDetail = {
   orderNo: string;
   status: OrderStatusValue;
   channel: "ONLINE" | "WALK_IN";
-  customer: OrderCustomer;
+  /** Null only for an anonymous walk-in (POS) sale — every ONLINE order has one (DB CHECK). */
+  customer: OrderCustomer | null;
   courier: { id: string; name: string } | null;
   courierZoneId: string | null;
   deliveryZone: DeliveryZoneValue | null;

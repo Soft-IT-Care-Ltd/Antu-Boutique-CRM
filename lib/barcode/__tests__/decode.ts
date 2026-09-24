@@ -1,0 +1,36 @@
+import { CODE128, CODE128_PATTERNS } from "@/lib/barcode/code128";
+
+// A decoder written against the Code 128 spec, independent of the encoder's
+// code-set choices: it reads bar/space widths back into symbols, checks the
+// checksum and replays code-set switches. If a tag's widths decode to the
+// SKU here, a scanner reading the same widths types the same SKU.
+export function decodeCode128Widths(widths: number[]): string {
+  const symbolFor = new Map(CODE128_PATTERNS.map((p, value) => [p, value]));
+  const values: number[] = [];
+  let i = 0;
+  while (i < widths.length) {
+    const take = widths.length - i === 7 ? 7 : 6;
+    const pattern = widths.slice(i, i + take).join("");
+    const value = symbolFor.get(pattern);
+    if (value === undefined) throw new Error(`Unknown pattern ${pattern} at ${i}`);
+    values.push(value);
+    i += take;
+  }
+  if (values[values.length - 1] !== CODE128.STOP) throw new Error("No STOP symbol");
+  const data = values.slice(0, -2);
+  const check = values[values.length - 2];
+  const sum = data.reduce((acc, v, k) => acc + (k === 0 ? v : k * v), 0);
+  if (sum % 103 !== check) throw new Error(`Bad check symbol: ${check}, expected ${sum % 103}`);
+  if (data[0] !== CODE128.START_B && data[0] !== CODE128.START_C) throw new Error("No start symbol");
+
+  let set: "B" | "C" = data[0] === CODE128.START_C ? "C" : "B";
+  let out = "";
+  for (const v of data.slice(1)) {
+    if (set === "B" && v === CODE128.CODE_C) set = "C";
+    else if (set === "C" && v === CODE128.CODE_B) set = "B";
+    else if (set === "B") out += String.fromCharCode(v + 32);
+    else out += String(v).padStart(2, "0");
+  }
+  return out;
+}
+

@@ -14,11 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { WalletSelect } from "@/components/wallets/wallet-select";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ALL_PAYMENT_METHOD_VALUES, PAYMENT_METHOD_LABELS, type PaymentMethodValue } from "@/lib/orders/constants";
+import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { REFUND_STATUS_LABELS, REFUND_STATUS_VALUES, type PaymentListItem, type PaymentListView, type RefundStatusValue } from "@/lib/payments/types";
 import type { WalletOption } from "@/lib/wallets/constants";
 
@@ -45,6 +47,7 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
   const [debouncedQ, setDebouncedQ] = useState("");
   const [method, setMethod] = useState<PaymentMethodValue | "all">("all");
   const [walletId, setWalletId] = useState("");
+  const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [refundStatus, setRefundStatus] = useState<RefundStatusValue | "all">(view === "refunds" ? "PENDING" : "all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -66,6 +69,7 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
     if (debouncedQ) params.set("q", debouncedQ);
     if (method !== "all") params.set("method", method);
     if (walletId) params.set("walletId", walletId);
+    if (channel !== "all") params.set("channel", channel);
     if (view === "refunds" && refundStatus !== "all") params.set("refundStatus", refundStatus);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
@@ -75,7 +79,7 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load payments."));
-  }, [view, page, debouncedQ, method, walletId, refundStatus, from, to]);
+  }, [view, page, debouncedQ, method, walletId, channel, refundStatus, from, to]);
 
   useEffect(() => {
     load();
@@ -152,6 +156,7 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
             </SelectContent>
           </Select>
           <WalletSelect wallets={wallets} value={walletId} onChange={(v) => filter(setWalletId, v)} allowAll className="w-full lg:w-48" />
+          <ChannelSelect value={channel} onChange={(v) => filter(setChannel, v)} className="w-full lg:w-36" />
           {view === "refunds" ? (
             <Select value={refundStatus} onValueChange={(v) => filter(setRefundStatus, v as RefundStatusValue | "all")}>
               <SelectTrigger className="w-full lg:w-44">
@@ -243,7 +248,8 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
                     {p.order.orderNo}
                   </Link>
                   <div className="text-xs text-muted-foreground">
-                    {p.order.customerName} · {p.order.customerPhone}
+                    {p.order.customerName ? `${p.order.customerName} · ${p.order.customerPhone}` : WALK_IN_CUSTOMER_LABEL}
+                    {p.order.channel === "WALK_IN" ? " · Walk-in" : ""}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm">

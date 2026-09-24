@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, Search, ShoppingBag } from "lucide-react";
 
+import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,8 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatBDT } from "@/lib/money";
+import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { ApiError, fetchJson } from "@/lib/orders/client";
-import { ORDER_CHANNEL_VALUES, ORDER_STATUS_LABELS, ORDER_STATUS_VALUES } from "@/lib/orders/constants";
+import { ORDER_STATUS_LABELS, ORDER_STATUS_VALUES } from "@/lib/orders/constants";
 import type { OrderListItem } from "@/lib/orders/types";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 
@@ -43,7 +45,7 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [status, setStatus] = useState("all");
-  const [channel, setChannel] = useState("all");
+  const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [createdById, setCreatedById] = useState("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -117,21 +119,7 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
               ))}
             </SelectContent>
           </Select>
-          <Select value={channel} onValueChange={(v) => updateFilter(setChannel, v as string)}>
-            <SelectTrigger className="w-36">
-              <SelectValue placeholder="Channel">
-                {(value: string) => (value === "all" ? "All channels" : value === "ONLINE" ? "Online" : "Walk-in")}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All channels</SelectItem>
-              {ORDER_CHANNEL_VALUES.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c === "ONLINE" ? "Online" : "Walk-in"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ChannelSelect value={channel} onChange={(v) => updateFilter(setChannel, v)} />
           {canFilterBySe ? (
             <Select value={createdById} onValueChange={(v) => updateFilter(setCreatedById, v as string)}>
               <SelectTrigger className="w-44">
@@ -192,8 +180,11 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
               <TableRow key={order.id} className="cursor-pointer" onClick={() => router.push(`/orders/${order.id}`)}>
                 <TableCell className="font-mono font-medium">{order.orderNo}</TableCell>
                 <TableCell>
-                  <div>{order.customer.name}</div>
-                  <div className="font-mono text-xs text-muted-foreground">{order.customer.phone}</div>
+                  <div className="flex items-center gap-1.5">
+                    {order.customer?.name ?? <span className="text-muted-foreground">{WALK_IN_CUSTOMER_LABEL}</span>}
+                    {order.channel === "WALK_IN" ? <Badge variant="outline">Walk-in</Badge> : null}
+                  </div>
+                  {order.customer ? <div className="font-mono text-xs text-muted-foreground">{order.customer.phone}</div> : null}
                 </TableCell>
                 <TableCell>
                   <Badge variant={STATUS_BADGE_VARIANT[order.status] ?? "outline"}>{ORDER_STATUS_LABELS[order.status]}</Badge>

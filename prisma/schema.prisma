@@ -201,6 +201,8 @@ model User {
   decidedRefunds            Payment[]                @relation("RefundDecidedBy")
   walletEntries             WalletEntry[]            @relation("WalletEntryCreatedBy")
   adSpends                  DailyAdSpend[]           @relation("AdSpendCreatedBy")
+  openedCashDrawers         CashDrawer[]             @relation("CashDrawerOpenedBy")
+  closedCashDrawers         CashDrawer[]             @relation("CashDrawerClosedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -455,8 +457,11 @@ model Order {
   channel OrderChannel @default(ONLINE)
   status  OrderStatus  @default(CONFIRMED)
 
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
+  // P3.1 — null only for an anonymous walk-in (POS) sale. Every ONLINE
+  // order has one person (PRD §4.6); a walk-in who gives a phone number is
+  // linked to their customer record for repeat tracking (PRD §4.7).
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
 
   courierId            String?
   courier              CourierCompany? @relation(fields: [courierId], references: [id])
@@ -614,6 +619,10 @@ model Payment {
   verifiedBy    User?         @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
   verifiedAt    DateTime?
   note          String?
+  // P3.1 — cash handed over at the counter, when more than `amount` (the
+  // difference was given back as change). Printed on the receipt. CASH only
+  // and never below the amount (DB CHECK).
+  cashTendered  Decimal?      @db.Decimal(12, 2)
 
   // P2.3 — refunds need a reason and a second person's approval. Only an
   // APPROVED refund counts toward due_amount and the wallet balance.
@@ -905,6 +914,12 @@ model Expense {
   stockMovementId String?        @unique
   stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
 
+  // P3.1 — set when the expense is a cash drawer's day-end over/short:
+  // a shortage as a cost, an overage as a credit (negative). Unique, so a
+  // drawer can never post its difference twice.
+  cashDrawerId String?     @unique
+  cashDrawer   CashDrawer? @relation(fields: [cashDrawerId], references: [id], onDelete: Restrict)
+
   // P2.2 — set when the expense is the courier return charge for a returned
   // parcel, posted once when its condition check completes. Unique, so a
   // replayed check can never post the charge twice.
@@ -961,6 +976,9 @@ enum ExpenseKind {
   // found later is a credit (negative), so the heading shows the net
   // unexplained loss — kept apart from damage, a different problem.
   STOCK_SHORTAGE
+  // P3.1 — the showroom cash drawer's day-end difference: counted cash
+  // below what the drawer should hold is a cost, above it a credit.
+  CASH_OVER_SHORT
   MISC
 }
 
@@ -1009,6 +1027,7 @@ model Wallet {
   entries           WalletEntry[]
   courierStatements CourierStatement[]
   adSpends          DailyAdSpend[]
+  cashDrawers       CashDrawer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1434,4 +1453,62 @@ model CourierStatementLine {
   @@index([orderId])
   @@index([status])
   @@map("courier_statement_lines")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.7 — POS: the showroom cash drawer (P3.1)
+// ---------------------------------------------------------------------------
+
+enum CashDrawerStatus {
+  OPEN
+  CLOSED
+}
+
+// One row per business day for the showroom cash wallet. The drawer IS that
+// wallet's physical cash: what should be in it is the opening count plus the
+// wallet's money in and out that day (lib/pos/drawer.ts). Closing it counts
+// the cash, verifies the day's cash payments (the count is the proof) and
+// posts any difference once as a "Cash over/short" expense from the wallet,
+// so the wallet's balance follows the counted cash. A partial unique index
+// (migration) allows only one OPEN drawer per wallet at a time.
+model CashDrawer {
+  id          String           @id @default(cuid())
+  walletId    String
+  wallet      Wallet           @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  // Midnight (Dhaka) of the business day, as UTC.
+  businessDay DateTime
+  status      CashDrawerStatus @default(OPEN)
+
+  openedAt             DateTime @default(now())
+  openedById           String?
+  openedBy             User?    @relation("CashDrawerOpenedBy", fields: [openedById], references: [id])
+  openingCount         Decimal  @db.Decimal(12, 2)
+  // { "1000": 2, "500": 3, ... } — note/coin counts, if counted that way.
+  openingDenominations Json?
+  // Required when the opening count differs from the last counted close.
+  openingNote          String?
+  // What the wallet's books said when the drawer opened — the gap between
+  // this and the count is shown, never posted (opening cash may be a top-up).
+  bookBalanceAtOpen    Decimal  @db.Decimal(12, 2)
+
+  closedAt             DateTime?
+  closedById           String?
+  closedBy             User?     @relation("CashDrawerClosedBy", fields: [closedById], references: [id])
+  closingCount         Decimal?  @db.Decimal(12, 2)
+  closingDenominations Json?
+  // Frozen at close: opening + the day's cash in − cash out.
+  expectedClose        Decimal?  @db.Decimal(12, 2)
+  // closingCount − expectedClose. Negative = short, positive = over.
+  difference           Decimal?  @db.Decimal(12, 2)
+  // Required when there is a difference.
+  closeNote            String?
+
+  overShortExpense Expense?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([walletId, businessDay])
+  @@index([status])
+  @@map("cash_drawers")
 }

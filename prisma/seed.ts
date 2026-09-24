@@ -1205,6 +1205,171 @@ async function recomputeDue(orderId: string) {
   await prisma.order.update({ where: { id: orderId }, data: { dueAmount: Number(order.total) - Number(paid._sum.amount ?? 0) } });
 }
 
+// ---------------------------------------------------------------------------
+// P3.1 — POS: showroom sales and the cash drawer
+// ---------------------------------------------------------------------------
+
+const POS_CASH_WALLET_ID = "wallet_showroom_cash";
+
+/**
+ * Mirror of lib/wallets/ledger.ts's derived balance (server-only, so not
+ * importable here): opening + verified payments − approved refunds −
+ * expenses ± entries + paid courier payouts, dated on/after openingDate and
+ * before `before`.
+ */
+async function walletBookBalance(walletId: string, before: Date): Promise<number> {
+  const [row] = await prisma.$queryRaw<{ balance: string }[]>`
+    WITH w AS (SELECT "openingBalance", "openingDate" FROM "wallets" WHERE "id" = ${walletId}),
+    f AS (
+      SELECT p."amount", p."paidAt" AS "at" FROM "payments" p
+       WHERE p."walletId" = ${walletId} AND ((p."kind" = 'PAYMENT' AND p."verified") OR (p."kind" = 'REFUND' AND p."refundStatus" = 'APPROVED'))
+      UNION ALL SELECT -e."amount", e."expenseDate" FROM "expenses" e WHERE e."walletId" = ${walletId} AND e."deletedAt" IS NULL
+      UNION ALL SELECT CASE WHEN we."type" IN ('MANUAL_IN', 'TRANSFER_IN') THEN we."amount" ELSE -we."amount" END, we."entryDate" FROM "wallet_entries" we WHERE we."walletId" = ${walletId} AND we."voidedAt" IS NULL
+      UNION ALL SELECT s."netAmount", s."statementDate" FROM "courier_statements" s WHERE s."walletId" = ${walletId} AND s."status" = 'PAID'
+    )
+    SELECT ((SELECT "openingBalance" FROM w) + COALESCE((SELECT SUM(f."amount") FROM f, w WHERE f."at" >= w."openingDate" AND f."at" < ${before}), 0))::text AS "balance"`;
+  return Number(row.balance);
+}
+
+type PosDemoSale = {
+  at: Date;
+  lines: { variantId: string; qty: number; lineDiscount?: number }[];
+  customer?: { phone: string; name: string };
+  tenders: { method: "CASH" | "BKASH" | "NAGAD" | "CARD"; amount?: number; tendered?: number; walletId: string; trx?: string }[];
+  verified: boolean;
+};
+
+/**
+ * Written the way lib/pos/sale.ts writes a sale (server-only, so mirrored):
+ * WALK_IN, straight to COMPLETED, cost frozen, POS_SALE_OUT through the real
+ * ledger function, payments paying the total exactly.
+ */
+async function seedPosSale(posUserId: string, teamId: string | null, sale: PosDemoSale) {
+  await prisma.$transaction(async (tx) => {
+    const variants = await tx.productVariant.findMany({ where: { id: { in: sale.lines.map((l) => l.variantId) } }, include: { product: { select: { basePrice: true } } } });
+    const byId = new Map(variants.map((v) => [v.id, v]));
+    const priced = sale.lines.map((l) => {
+      const v = byId.get(l.variantId)!;
+      const price = Number((v.priceOverride ?? v.product.basePrice).toString());
+      return { ...l, v, price, discount: l.lineDiscount ?? 0 };
+    });
+    const subtotal = priced.reduce((a, l) => a + l.qty * l.price, 0);
+    const discount = priced.reduce((a, l) => a + l.discount, 0);
+    const total = subtotal - discount;
+
+    let customerId: string | null = null;
+    if (sale.customer) {
+      const c = await tx.customer.upsert({ where: { phone: sale.customer.phone }, update: {}, create: { name: sale.customer.name, phone: sale.customer.phone, createdById: posUserId, teamId } });
+      customerId = c.id;
+    }
+    const order = await tx.order.create({
+      data: {
+        orderNo: await nextOrderNo(tx, sale.at),
+        channel: "WALK_IN",
+        status: "COMPLETED",
+        customerId,
+        subtotal,
+        discountTotal: discount,
+        total,
+        dueAmount: 0,
+        createdById: posUserId,
+        teamId,
+        createdAt: sale.at,
+      },
+    });
+    for (const l of priced) {
+      await tx.orderItem.create({ data: { orderId: order.id, variantId: l.v.id, qty: l.qty, unitPrice: l.price, lineDiscount: l.discount, unitCostSnapshot: l.v.weightedAvgCost } });
+      await recordStockMovement(tx, { variantId: l.v.id, type: "POS_SALE_OUT", qty: -l.qty, unitCost: l.v.weightedAvgCost, referenceType: "ORDER", referenceId: order.id, actorId: posUserId });
+    }
+    let left = total;
+    for (const [i, t] of sale.tenders.entries()) {
+      const amount = i === sale.tenders.length - 1 ? left : t.amount!;
+      left -= amount;
+      const change = t.method === "CASH" && t.tendered ? t.tendered - amount : 0;
+      await tx.payment.create({
+        data: {
+          orderId: order.id,
+          amount,
+          method: t.method,
+          walletId: t.walletId,
+          transactionId: t.trx ?? null,
+          paidAt: sale.at,
+          receivedById: posUserId,
+          verified: sale.verified,
+          verifiedById: sale.verified ? posUserId : null,
+          verifiedAt: sale.verified ? sale.at : null,
+          cashTendered: t.method === "CASH" && t.tendered && t.tendered >= amount ? t.tendered : null,
+          note: change > 0 ? `Tendered ৳ ${t.tendered}, change ৳ ${change}` : null,
+        },
+      });
+    }
+    await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "COMPLETED", changedById: posUserId, note: "Showroom sale (POS) — paid in full at the counter", createdAt: sale.at } });
+  });
+}
+
+/**
+ * P3.1 demo: yesterday's drawer counted and closed ৳20 short (posted to Cash
+ * over/short, its cash verified by the count), today's drawer open with a
+ * couple of sales in it, and price-tag-ready SKUs. Skipped once any drawer exists.
+ */
+async function seedPosDemo() {
+  if ((await prisma.cashDrawer.count()) > 0) return;
+  const pos = await prisma.user.findUniqueOrThrow({ where: { phone: "01711000007" } });
+  const dhakaDayStr = (n: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date(Date.now() - n * 86_400_000));
+  const dayStart = (n: number) => new Date(`${dhakaDayStr(n)}T00:00:00+06:00`);
+  const at = (n: number, hh: number, mm: number) => new Date(`${dhakaDayStr(n)}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00+06:00`);
+
+  const sellable = await prisma.productVariant.findMany({ where: { isActive: true, product: { deletedAt: null, isActive: true } }, orderBy: { sku: "asc" } });
+  const pick = sellable.filter((v) => v.stockQty - v.reservedQty >= 3);
+  if (pick.length < 3) return;
+  const [a, b, c] = pick;
+  const bkash = await prisma.wallet.findFirst({ where: { type: "BKASH", isActive: true }, orderBy: { sortOrder: "asc" } });
+  const bank = await prisma.wallet.findFirst({ where: { type: "BANK", isActive: true }, orderBy: { sortOrder: "asc" } });
+  if (!bkash || !bank) return;
+
+  // Yesterday: open at what the books said, three sales, a petty expense, closed ৳20 short.
+  const yOpen = at(1, 10, 5);
+  const yOpening = await walletBookBalance(POS_CASH_WALLET_ID, dayStart(1));
+  const yesterday = await prisma.cashDrawer.create({
+    data: { walletId: POS_CASH_WALLET_ID, businessDay: dayStart(1), openedAt: yOpen, openedById: pos.id, openingCount: yOpening, bookBalanceAtOpen: yOpening },
+  });
+  await seedPosSale(pos.id, pos.teamId, { at: at(1, 11, 20), lines: [{ variantId: a.id, qty: 1 }], tenders: [{ method: "CASH", walletId: POS_CASH_WALLET_ID, tendered: 5000 }], verified: true });
+  await seedPosSale(pos.id, pos.teamId, {
+    at: at(1, 14, 45),
+    lines: [{ variantId: b.id, qty: 1, lineDiscount: 100 }],
+    customer: { phone: "01899100201", name: "Nusrat Jahan (showroom)" },
+    tenders: [{ method: "BKASH", walletId: bkash.id, trx: "SEED-POS-BK-1101" }],
+    verified: false,
+  });
+  await seedPosSale(pos.id, pos.teamId, { at: at(1, 17, 30), lines: [{ variantId: c.id, qty: 1 }], tenders: [{ method: "CARD", walletId: bank.id }], verified: false });
+  await prisma.expense.create({ data: { expenseDate: dayStart(1), categoryId: "expcat_misc", nature: "VARIABLE", amount: 120, walletId: POS_CASH_WALLET_ID, note: "Tea & biscuits for customers", createdById: pos.id } });
+
+  const yCash = await prisma.payment.aggregate({ where: { walletId: POS_CASH_WALLET_ID, kind: "PAYMENT", paidAt: { gte: dayStart(1), lt: dayStart(0) } }, _sum: { amount: true } });
+  const yExpected = yOpening + Number(yCash._sum.amount ?? 0) - 120;
+  const yCounted = yExpected - 20;
+  const yClose = at(1, 20, 40);
+  await prisma.expense.create({
+    data: { expenseDate: dayStart(1), categoryId: "expcat_cash_over_short", nature: "VARIABLE", amount: 20, walletId: POS_CASH_WALLET_ID, note: `Cash short ৳ 20 at the ${dhakaDayStr(1)} drawer count — gave ৳20 too much change`, cashDrawerId: yesterday.id, createdById: pos.id },
+  });
+  await prisma.cashDrawer.update({
+    where: { id: yesterday.id },
+    data: { status: "CLOSED", closedAt: yClose, closedById: pos.id, closingCount: yCounted, expectedClose: yExpected, difference: yCounted - yExpected, closeNote: "Gave ৳20 too much change on the afternoon rush" },
+  });
+
+  // Today: opened at yesterday's count, two sales so far — one anonymous cash with change.
+  await prisma.cashDrawer.create({
+    data: { walletId: POS_CASH_WALLET_ID, businessDay: dayStart(0), openedAt: new Date(Math.max(dayStart(0).getTime() + 4 * 3_600_000, Date.now() - 3_600_000)), openedById: pos.id, openingCount: yCounted, bookBalanceAtOpen: yCounted },
+  });
+  await seedPosSale(pos.id, pos.teamId, { at: new Date(Date.now() - 40 * 60_000), lines: [{ variantId: a.id, qty: 1 }], tenders: [{ method: "CASH", walletId: POS_CASH_WALLET_ID, tendered: 5000 }], verified: false });
+  await seedPosSale(pos.id, pos.teamId, {
+    at: new Date(Date.now() - 15 * 60_000),
+    lines: [{ variantId: b.id, qty: 1 }],
+    customer: { phone: "01899100201", name: "Nusrat Jahan (showroom)" },
+    tenders: [{ method: "CASH", amount: 500, walletId: POS_CASH_WALLET_ID }, { method: "NAGAD", walletId: (await prisma.wallet.findFirst({ where: { type: "NAGAD", isActive: true } }))?.id ?? bkash.id, trx: "SEED-POS-NG-2201" }],
+    verified: false,
+  });
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -1235,6 +1400,7 @@ async function main() {
   await seedCourierDemo();
   await seedCourierStatementsDemo();
   await seedFinanceDemo();
+  await seedPosDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

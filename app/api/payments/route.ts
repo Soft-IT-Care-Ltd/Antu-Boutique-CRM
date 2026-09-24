@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { badRequest, dayString, idString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
-import { ALL_PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
+import { ALL_PAYMENT_METHOD_VALUES, ORDER_CHANNEL_VALUES } from "@/lib/orders/constants";
 import { listPayments, paymentQueueCounts } from "@/lib/payments/queries";
 import { PAYMENT_LIST_VIEWS, REFUND_STATUS_VALUES } from "@/lib/payments/types";
 
@@ -15,6 +15,7 @@ const querySchema = z.object({
   refundStatus: z.enum(REFUND_STATUS_VALUES).optional(),
   method: z.enum(ALL_PAYMENT_METHOD_VALUES).optional(),
   walletId: idString.optional(),
+  channel: z.enum(ORDER_CHANNEL_VALUES).optional(),
   from: dayString.optional(),
   to: dayString.optional(),
   q: z.string().trim().max(100).optional(),

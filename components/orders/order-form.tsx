@@ -99,7 +99,7 @@ export function OrderForm({
   const isEdit = Boolean(order);
 
   const [customer, setCustomer] = useState<CustomerFormState>(() =>
-    order
+    order?.customer
       ? {
           customerId: order.customer.id,
           name: order.customer.name,
