@@ -160,6 +160,12 @@ describe("outfit sets (PRD §4.2, P3.3)", () => {
         expect(report.availableSets).toBe(1);
         expect(report.limitingProduct).toBe(plazo.name);
         expect(report.components.find((c) => c.productName === plazo.name)).toMatchObject({ bestSets: 1, bestAvailable: 3 });
+
+        // A piece taken off sale takes the set with it, though its stock is still on the shelf.
+        await tx.product.update({ where: { id: dupatta.id }, data: { isActive: false } });
+        const offSale = (await getSetAvailabilityReport(tx)).find((r) => r.id === set.id)!;
+        expect(offSale.availableSets).toBe(0);
+        expect(offSale.limitingProduct).toBe(dupatta.name);
       });
     },
     TIMEOUT,

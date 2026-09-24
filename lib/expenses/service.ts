@@ -11,7 +11,8 @@ import { assertActiveWallet } from "@/lib/wallets/service";
 // every change here is audit-logged; rule 8: soft delete only.
 //
 // Expenses the system posted itself — a stock write-off, a courier return
-// charge, a courier statement's charges, a day's ad spend — are changed at
+// charge, a courier statement's charges, a day's ad spend, a drawer count,
+// packaging used, a company-borne exchange courier charge — are changed at
 // their source, never on the expense screen, so they can't drift from it.
 
 export class ExpenseError extends Error {
@@ -27,6 +28,9 @@ const SOURCE_INCLUDE = {
   stockMovement: { select: { type: true } },
   statementDeliveryCharge: { select: { reference: true } },
   statementCodCharge: { select: { reference: true } },
+  packagingOrder: { select: { orderNo: true } },
+  exchangeCourierCase: { select: { replacementOrder: { select: { orderNo: true } } } },
+  category: { select: { isSystem: true } },
 } satisfies Prisma.ExpenseInclude;
 
 type ExpenseWithSource = Prisma.ExpenseGetPayload<{ include: typeof SOURCE_INCLUDE }>;
@@ -39,6 +43,10 @@ export function expenseSource(e: ExpenseWithSource): string | null {
   if (e.statementDeliveryCharge) return `Courier statement ${e.statementDeliveryCharge.reference}`;
   if (e.statementCodCharge) return `Courier statement ${e.statementCodCharge.reference}`;
   if (e.cashDrawerId) return "the cash drawer count";
+  if (e.packagingOrder) return `packaging used on ${e.packagingOrder.orderNo}`;
+  if (e.exchangeCourierCase) return `the exchange courier charge${e.exchangeCourierCase.replacementOrder ? ` on ${e.exchangeCourierCase.replacementOrder.orderNo}` : ""}`;
+  // A system category can't be picked by hand, so anything in one was posted.
+  if (e.category.isSystem) return "the system";
   return null;
 }
 

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { CounterExchangeDialog } from "@/components/returns/counter-exchange-dialog";
 import { ExchangeReportView } from "@/components/returns/exchange-report";
+import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { ReturnCaseCard, type CaseActions } from "@/components/returns/return-case-card";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { ReturnCaseTypeValue } from "@/lib/returns/constants";
@@ -36,6 +37,7 @@ export function ReturnsWorkspace({
 }) {
   const [view, setView] = useState<Tab | "report">(permissions.canApproveReturn || permissions.canApproveExchange ? "requested" : "approved");
   const [type, setType] = useState<ReturnCaseTypeValue | "ALL">("ALL");
+  const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -56,6 +58,7 @@ export function ReturnsWorkspace({
     if (view === "report") return;
     const params = new URLSearchParams({ tab: view, page: String(page), pageSize: String(PAGE_SIZE) });
     if (type !== "ALL") params.set("type", type);
+    if (channel !== "all") params.set("channel", channel);
     if (query) params.set("q", query);
     let live = true;
     fetchJson<ListResponse>(`/api/returns?${params}`)
@@ -68,7 +71,7 @@ export function ReturnsWorkspace({
     return () => {
       live = false;
     };
-  }, [view, type, query, page, reloadKey]);
+  }, [view, type, channel, query, page, reloadKey]);
 
   const actions: CaseActions = {
     canApprove: (c) => (c.type === "EXCHANGE" ? permissions.canApproveExchange : permissions.canApproveReturn),
@@ -132,6 +135,13 @@ export function ReturnsWorkspace({
                 </SelectContent>
               </Select>
             ) : null}
+            <ChannelSelect
+              value={channel}
+              onChange={(v) => {
+                setChannel(v);
+                setPage(1);
+              }}
+            />
           </div>
 
           {error ? <p className="text-sm text-destructive">{error}</p> : null}

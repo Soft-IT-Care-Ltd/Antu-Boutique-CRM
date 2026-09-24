@@ -6,6 +6,7 @@ import { writeAuditLogWith } from "@/lib/audit/log";
 import { withTx, type Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
+import type { OrderChannelValue } from "@/lib/orders/constants";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
 import { deriveStoreCredit, type DerivedCredit } from "@/lib/store-credit/balance";
 import { MAX_STORE_CREDIT_EXPIRY_DAYS, STORE_CREDIT_EXPIRY_SETTING_KEY } from "@/lib/store-credit/constants";
@@ -309,7 +310,13 @@ export async function getStoreCreditSummary(db: Db, customerId: string): Promise
   };
 }
 
-/** The whole shop's credit position for the collection report (PRD §4.12). */
+/**
+ * The credit position for the collection report (PRD §4.12). What is owed
+ * (outstanding, customers, expired) is the whole shop's: a balance belongs
+ * to a customer, not a channel. With a channel, what moved in the period
+ * (issued, used, given back) is only what moved through that channel's
+ * orders, and Admin adjustments (no order) are left out.
+ */
 export type StoreCreditPosition = {
   /** Owed to customers at the end of the period — a liability. */
   outstanding: string;
@@ -319,12 +326,14 @@ export type StoreCreditPosition = {
   restored: string;
   adjusted: string;
   expired: string;
+  /** The channel the movements were narrowed to, or null for all. */
+  channel: OrderChannelValue | null;
 };
 
-export async function getStoreCreditPosition(db: Db, from: Date, to: Date): Promise<StoreCreditPosition> {
+export async function getStoreCreditPosition(db: Db, from: Date, to: Date, channel?: OrderChannelValue): Promise<StoreCreditPosition> {
   const rows = await db.storeCreditEntry.findMany({
     where: { createdAt: { lt: to } },
-    select: { id: true, customerId: true, type: true, amount: true, createdAt: true, expiresAt: true },
+    select: { id: true, customerId: true, type: true, amount: true, createdAt: true, expiresAt: true, order: { select: { channel: true } } },
   });
   const byCustomer = new Map<string, { id: string; amountPaisa: number; createdAt: Date; expiresAt: Date | null }[]>();
   const moved = { ISSUED: 0, USED: 0, RESTORED: 0, ADJUSTED: 0 };
@@ -332,7 +341,7 @@ export async function getStoreCreditPosition(db: Db, from: Date, to: Date): Prom
     const list = byCustomer.get(r.customerId) ?? [];
     list.push({ id: r.id, amountPaisa: toPaisa(r.amount), createdAt: r.createdAt, expiresAt: r.expiresAt });
     byCustomer.set(r.customerId, list);
-    if (r.createdAt >= from) moved[r.type] += toPaisa(r.amount);
+    if (r.createdAt >= from && (!channel || r.order?.channel === channel)) moved[r.type] += toPaisa(r.amount);
   }
   // The balance just before `to` — the period's last moment.
   const end = new Date(to.getTime() - 1);
@@ -353,6 +362,7 @@ export async function getStoreCreditPosition(db: Db, from: Date, to: Date): Prom
     restored: fromPaisa(moved.RESTORED),
     adjusted: fromPaisa(moved.ADJUSTED),
     expired: fromPaisa(expired),
+    channel: channel ?? null,
   };
 }
 

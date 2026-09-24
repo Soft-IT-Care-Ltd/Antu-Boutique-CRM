@@ -14,7 +14,11 @@ import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 // "That day's confirmed orders" = orders whose FIRST move into CONFIRMED
 // (order_status_history) falls on that Dhaka calendar day, not deleted and
 // not since CANCELLED. POS sales never pass through CONFIRMED, so showroom
-// sales carry no ad cost. Nothing is stored per order: the split is derived
+// sales carry no ad cost; the channel is checked too, so nothing walk-in
+// ever can. An exchange replacement (exchanged_from_order_id set) enters at
+// CONFIRMED but is the same sale going out again, not a new one an ad
+// brought in, so it takes no share either (Verify Phase 3). Nothing is
+// stored per order: the split is derived
 // from daily_ad_spend each time, so editing a day's spend or the setting
 // re-spreads it consistently. Profit-related — callers gate on expense.view.
 
@@ -34,6 +38,7 @@ async function ordersConfirmedBetween(db: Db, start: Date, end: Date): Promise<C
              WHERE h."toStatus" = 'CONFIRMED'
              GROUP BY h."orderId") c ON c."orderId" = o."id"
      WHERE o."deletedAt" IS NULL AND o."status" <> 'CANCELLED'
+       AND o."channel" = 'ONLINE' AND o."exchangedFromOrderId" IS NULL
        AND c."confirmedAt" >= ${start} AND c."confirmedAt" < ${end}
      ORDER BY c."confirmedAt", o."id"`;
 }

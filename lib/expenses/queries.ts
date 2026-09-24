@@ -70,12 +70,14 @@ export async function listExpenses(query: ExpenseListQuery): Promise<{ items: Ex
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
       include: {
-        category: { select: { name: true, kind: true } },
+        category: { select: { name: true, kind: true, isSystem: true } },
         wallet: { select: { name: true } },
         createdBy: { select: { name: true } },
         stockMovement: { select: { type: true } },
         statementDeliveryCharge: { select: { reference: true } },
         statementCodCharge: { select: { reference: true } },
+        packagingOrder: { select: { orderNo: true } },
+        exchangeCourierCase: { select: { replacementOrder: { select: { orderNo: true } } } },
       },
     }),
   ]);

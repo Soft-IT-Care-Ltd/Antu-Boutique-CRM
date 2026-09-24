@@ -39,8 +39,9 @@ export type CollectionReport = {
   /**
    * P3.2 — store credit is a liability, not money collected: it moves no
    * cash, so none of the figures above include it. `outstanding` is what the
-   * shop owed customers at the end of the period (whole shop — credit isn't
-   * tied to one channel or executive).
+   * shop owed customers at the end of the period (whole shop — a balance
+   * isn't tied to one channel or executive); what moved in the period
+   * follows the channel filter.
    */
   storeCredit: StoreCreditPosition;
 };
@@ -117,7 +118,7 @@ export async function getCollectionReport(db: Db, user: SessionUser, from: Date,
   }
 
   const days = [...new Set([...dayIn.keys(), ...dayOut.keys()])].sort();
-  const storeCredit = await getStoreCreditPosition(db, from, to);
+  const storeCredit = await getStoreCreditPosition(db, from, to, channel);
   return {
     from: from.toISOString(),
     to: to.toISOString(),

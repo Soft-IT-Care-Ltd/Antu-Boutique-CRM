@@ -74,13 +74,16 @@ export function toPackagingLine(p: PackagingRow): PackagingLine {
 }
 
 function toComponentView(c: ComponentRow): SetComponentView {
+  // A component whose product has been switched off or deleted can't be
+  // sold (lib/sets/order-lines.ts refuses it), so the set has none of it.
+  const forSale = c.product.isActive && !c.product.deletedAt;
   const variants = c.product.variants.map((v) => ({
     id: v.id,
     sku: v.sku,
     sizeName: v.size.name,
     colorName: v.color.name,
     colorHex: v.color.hexCode,
-    available: v.stockQty - v.reservedQty,
+    available: forSale ? v.stockQty - v.reservedQty : 0,
     price: (v.priceOverride ?? c.product.basePrice).toFixed(2),
     weightedAvgCost: v.weightedAvgCost.toFixed(2),
   }));

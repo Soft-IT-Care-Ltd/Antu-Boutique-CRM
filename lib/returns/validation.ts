@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ORDER_CHANNEL_VALUES } from "@/lib/orders/constants";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
 import { POS_TENDER_METHODS } from "@/lib/pos/constants";
 import { RETURN_SETTLEMENT_VALUES } from "@/lib/store-credit/constants";
@@ -66,6 +67,8 @@ export const counterExchangeSchema = z
 export const caseListSchema = z.object({
   tab: z.enum(["requested", "approved", "done", "closed"]).default("requested"),
   type: z.enum(RETURN_CASE_TYPE_VALUES).optional(),
+  /** The original sale's channel (P3.1: every order-based list filters Online / Walk-in). */
+  channel: z.enum(ORDER_CHANNEL_VALUES).optional(),
   q: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

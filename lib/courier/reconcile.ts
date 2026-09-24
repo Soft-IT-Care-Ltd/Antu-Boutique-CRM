@@ -5,6 +5,7 @@ import { completeStatementAmounts, computeNetReceivable, round2, withinTolerance
 import { toNumber } from "@/lib/money";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { postExchangeCourierCost } from "@/lib/returns/exchange-courier-cost";
 
 // ============ COD reconciliation (PRD §4.9, Gift Valy Round 2 §2.1 / §2.7) ============
 //
@@ -369,13 +370,26 @@ async function autoCompleteOrder(tx: Prisma.TransactionClient, orderId: string, 
 export async function finalizeStatement(tx: Prisma.TransactionClient, statementId: string, actorId: string | null): Promise<boolean> {
   const statement = await tx.courierStatement.findUniqueOrThrow({
     where: { id: statementId },
-    include: { lines: { select: { status: true, shipmentId: true } } },
+    include: { lines: { select: { status: true, shipmentId: true, deliveryCharge: true, shipment: { select: { orderId: true } } } } },
   });
   if (statement.status !== "PAID" || statement.reconciledAt) return false;
   const allJustified = statement.lines.length > 0 && statement.lines.every((l) => (SETTLED as readonly string[]).includes(l.status));
   if (!allJustified) return false;
 
   const shipmentIds = statement.lines.map((l) => l.shipmentId).filter((id): id is string => id !== null);
+  // P3.2 — a company-borne exchange parcel paid out before its final status
+  // reached us: its charge is final now. It posts under "Exchange / return
+  // cost" at the charge on this line (once — a no-op for anything else or
+  // anything already posted), and is left out of the delivery charge below.
+  const orderIds = statement.lines.flatMap((l) => (l.shipment ? [l.shipment.orderId] : []));
+  const unposted = await tx.returnCase.findMany({
+    where: { replacementOrderId: { in: orderIds }, mode: "ONLINE", courierChargeBearer: "COMPANY", courierCostExpense: { is: null } },
+    select: { replacementOrderId: true },
+  });
+  for (const { replacementOrderId } of unposted) {
+    const line = statement.lines.find((l) => l.shipment?.orderId === replacementOrderId)!;
+    await postExchangeCourierCost(tx, replacementOrderId!, actorId, { statementCharge: line.deliveryCharge });
+  }
   const alreadyPostedReturnCharges = await tx.expense.aggregate({
     where: { returnChargeInspection: { shipmentId: { in: shipmentIds } }, deletedAt: null },
     _sum: { amount: true },

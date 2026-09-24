@@ -99,7 +99,7 @@ type CollectionReport = {
   byDay: { day: string; collected: string; refunds: string; net: string }[];
   byStaff: { name: string; count: number; collected: string }[];
   byChannel: { channel: OrderChannelValue; count: number; collected: string; refunds: string; net: string }[];
-  storeCredit: { outstanding: string; customersWithCredit: number; issued: string; used: string; restored: string; adjusted: string; expired: string };
+  storeCredit: { outstanding: string; customersWithCredit: number; issued: string; used: string; restored: string; adjusted: string; expired: string; channel: OrderChannelValue | null };
 };
 
 /**
@@ -113,7 +113,7 @@ function StoreCreditPanel({ credit, to }: { credit: CollectionReport["storeCredi
     { label: "Used", value: credit.used, hint: "spent on orders — revenue there" },
     { label: "Given back", value: credit.restored, hint: "spent on orders later cancelled" },
     { label: "Adjusted (Admin)", value: credit.adjusted, hint: "net, + added / − taken away" },
-    { label: "Expired", value: credit.expired, hint: "lapsed unspent" },
+    { label: "Expired", value: credit.expired, hint: credit.channel ? "lapsed unspent — whole shop" : "lapsed unspent" },
   ].filter((m) => Number(m.value) !== 0);
   return (
     <Section title="Store credit (a liability, not income)">
@@ -125,6 +125,9 @@ function StoreCreditPanel({ credit, to }: { credit: CollectionReport["storeCredi
             Owed to {credit.customersWithCredit} customer{credit.customersWithCredit === 1 ? "" : "s"}, whole shop. It moves no cash, so it isn&apos;t in the collection above.
           </p>
         </div>
+        {credit.channel && moved.length > 0 ? (
+          <p className="text-xs text-muted-foreground">Issued, used and given back: {ORDER_CHANNEL_LABELS[credit.channel]} orders only.</p>
+        ) : null}
         {moved.length > 0 ? (
           <Table>
             <TableBody>

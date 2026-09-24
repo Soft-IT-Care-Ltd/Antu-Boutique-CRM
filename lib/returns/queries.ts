@@ -123,9 +123,10 @@ function caseSearch(q: string | undefined): Prisma.ReturnCaseWhereInput {
 export async function listReturnCases(
   db: Db,
   user: SessionUser,
-  opts: { tab: CaseTab; type?: ReturnCaseTypeValue; q?: string; page: number; pageSize: number },
+  opts: { tab: CaseTab; type?: ReturnCaseTypeValue; channel?: OrderChannelValue; q?: string; page: number; pageSize: number },
 ): Promise<{ items: ReturnCaseView[]; total: number; counts: Record<CaseTab, number> }> {
-  const base: Prisma.ReturnCaseWhereInput = { order: orderScope(user), ...(opts.type ? { type: opts.type } : {}) };
+  // The channel narrows inside the scope; it can never widen it (CLAUDE.md rule 6).
+  const base: Prisma.ReturnCaseWhereInput = { order: orderScope(user, opts.channel ? { channel: opts.channel } : {}), ...(opts.type ? { type: opts.type } : {}) };
   const where: Prisma.ReturnCaseWhereInput = { AND: [base, { status: { in: TAB_STATUS[opts.tab] } }, caseSearch(opts.q)] };
   const [total, rows, ...counts] = await Promise.all([
     db.returnCase.count({ where }),

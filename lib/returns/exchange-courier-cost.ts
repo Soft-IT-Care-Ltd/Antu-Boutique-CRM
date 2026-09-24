@@ -9,7 +9,9 @@ import { EXCHANGE_COURIER_EXPENSE_CATEGORY_ID } from "@/lib/returns/constants";
 // once, under "Exchange / return cost", when the replacement parcel's charge
 // is final (the shipment finalizes: delivered, partly delivered or
 // returned). Amount: the courier's own charge for the parcel, else our
-// estimate.
+// estimate. If the courier pays the parcel out before its final status
+// reaches us, the statement's reconciliation posts it instead, at the charge
+// the statement line shows (lib/courier/reconcile.ts finalizeStatement).
 //
 // The P&L rule: every courier charge reaches P&L exactly once. A reconciled
 // Steadfast statement already expenses this parcel's delivery charge under
@@ -19,7 +21,12 @@ import { EXCHANGE_COURIER_EXPENSE_CATEGORY_ID } from "@/lib/returns/constants";
 //     here first (lib/courier/reconcile.ts finalizeStatement).
 // Same shape as the courier return charge (lib/returns/condition-check.ts).
 
-export async function postExchangeCourierCost(tx: Prisma.TransactionClient, replacementOrderId: string, actorId: string | null): Promise<string | null> {
+export async function postExchangeCourierCost(
+  tx: Prisma.TransactionClient,
+  replacementOrderId: string,
+  actorId: string | null,
+  opts: { statementCharge?: Prisma.Decimal | null } = {},
+): Promise<string | null> {
   const returnCase = await tx.returnCase.findUnique({
     where: { replacementOrderId },
     select: {
@@ -41,7 +48,7 @@ export async function postExchangeCourierCost(tx: Prisma.TransactionClient, repl
   });
   if (expensedByStatement) return null;
 
-  const amount = shipment.courierCostActual ?? shipment.courierCostEstimate;
+  const amount = opts.statementCharge ?? shipment.courierCostActual ?? shipment.courierCostEstimate;
   if (amount === null || toNumber(amount) <= 0) return null;
 
   await tx.expense.create({
@@ -60,7 +67,7 @@ export async function postExchangeCourierCost(tx: Prisma.TransactionClient, repl
     action: "exchange.courier_cost.post",
     entityType: "order",
     entityId: replacementOrderId,
-    after: { caseId: returnCase.id, amount: amount.toString(), actual: shipment.courierCostActual !== null },
+    after: { caseId: returnCase.id, amount: amount.toString(), actual: opts.statementCharge != null || shipment.courierCostActual !== null, via: opts.statementCharge != null ? "courier_statement" : "shipment_final" },
   });
   return amount.toString();
 }

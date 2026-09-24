@@ -9,6 +9,10 @@ vi.mock("@/auth", () => ({ auth: vi.fn(async () => session.current) }));
 
 import { GET as reportGET } from "@/app/api/returns/report/route";
 import { GET as listGET, POST as requestPOST } from "@/app/api/returns/route";
+import { finalizeStatement } from "@/lib/courier/reconcile";
+import { getDayAllocation } from "@/lib/expenses/ad-allocation";
+import { deleteExpense, ExpenseError, updateExpense } from "@/lib/expenses/service";
+import { todayInDhaka } from "@/lib/inventory/constants";
 import { toNumber } from "@/lib/money";
 import { decideRefund } from "@/lib/payments/refunds";
 import { cancelReturnCase, createCounterExchange, decideReturnCase, requestReturnCase, ReturnCaseError } from "@/lib/returns/cases";
@@ -174,6 +178,61 @@ describe("online exchange (PRD §4.11 A)", () => {
         expect(expenses).toHaveLength(1);
         expect(expenses[0].categoryId).toBe(EXCHANGE_COURIER_EXPENSE_CATEGORY_ID);
         expect((await tx.expenseCategory.findUniqueOrThrow({ where: { id: EXCHANGE_COURIER_EXPENSE_CATEGORY_ID } })).kind).toBe("EXCHANGE_RETURN");
+
+        // Verify Phase 3: it shows on the expense screen as system-posted, and
+        // can't be edited or deleted there (it would drift from the case).
+        const admin = await userFor(tx, PHONES.ADMIN);
+        await expect(updateExpense(tx, expenses[0].id, { amount: 1 }, admin.id)).rejects.toThrow(/posted by the exchange courier charge/);
+        await expect(deleteExpense(tx, expenses[0].id, admin.id)).rejects.toThrow(ExpenseError);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a company-borne parcel paid out before its final status arrives still posts under Exchange / return cost, once",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { replacement, caseId } = await runOnlineExchange(tx);
+        const courier = await tx.courierCompany.findFirstOrThrow();
+        // Booked, not yet final — then the payout arrives.
+        const shipment = await tx.shipment.create({ data: { orderId: replacement.id, courierId: courier.id, courierCostEstimate: 70 } });
+        const statement = await tx.courierStatement.create({
+          data: {
+            courierId: courier.id,
+            source: "MANUAL",
+            reference: `VERIFY-P3-${Date.now()}`,
+            status: "PAID",
+            statementDate: new Date(),
+            grossAmount: 0,
+            deliveryCharge: 60,
+            codCharge: 0,
+            netAmount: -60,
+            lines: { create: [{ lineNo: 1, codAmount: 0, deliveryCharge: 60, codCharge: 0, shipmentId: shipment.id, orderId: replacement.id, status: "MATCHED" }] },
+          },
+        });
+        expect(await finalizeStatement(tx, statement.id, null)).toBe(true);
+
+        const posted = await tx.expense.findMany({ where: { exchangeCourierCaseId: caseId } });
+        expect(posted.map((e) => [e.categoryId, toNumber(e.amount)])).toEqual([[EXCHANGE_COURIER_EXPENSE_CATEGORY_ID, 60]]);
+        // …and not a second time under Courier.
+        const reconciled = await tx.courierStatement.findUniqueOrThrow({ where: { id: statement.id } });
+        expect(reconciled.deliveryChargeExpenseId).toBeNull();
+        // The final status arriving later posts nothing more.
+        await tx.shipment.update({ where: { id: shipment.id }, data: { finalizedAt: new Date() } });
+        expect(await postExchangeCourierCost(tx, replacement.id, null)).toBeNull();
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a replacement order takes no share of the day's ad spend — it isn't a new sale",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { replacement } = await runOnlineExchange(tx);
+        const allocation = await getDayAllocation(tx, todayInDhaka());
+        expect(allocation.orders.map((o) => o.id)).not.toContain(replacement.id);
       });
     },
     TIMEOUT,
@@ -275,6 +334,13 @@ describe("who sees what", () => {
         const seOpen = await listReturnCases(tx, se, { tab: "requested", page: 1, pageSize: 100 });
         expect(seOpen.items.some((c) => c.order.id === tlOrder.id)).toBe(false);
         expect(JSON.stringify(seDone)).not.toMatch(/unitCost|weightedAvgCost|companyCourierCost/);
+
+        // The channel filter narrows by the original sale's channel, inside the scope.
+        const online = await listReturnCases(tx, se, { tab: "done", channel: "ONLINE", page: 1, pageSize: 100 });
+        expect(online.items.some((c) => c.order.id === order.id)).toBe(true);
+        const walkIn = await listReturnCases(tx, se, { tab: "done", channel: "WALK_IN", page: 1, pageSize: 100 });
+        expect(walkIn.items.some((c) => c.order.id === order.id)).toBe(false);
+        expect(walkIn.items.every((c) => c.order.channel === "WALK_IN")).toBe(true);
       });
 
       // Route level, on the seeded data: no cost key in the SE's report.
