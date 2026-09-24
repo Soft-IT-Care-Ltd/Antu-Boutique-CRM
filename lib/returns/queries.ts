@@ -259,7 +259,8 @@ export async function getExchangeReport(db: Db, user: SessionUser, from: Date, t
     where: {
       status: { in: ["APPROVED", "COMPLETED"] },
       decidedAt: { gte: from, lt: to },
-      // The channel narrows inside the scope; it can never widen it (CLAUDE.md rule 6).
+      // The ORIGINAL sale's channel (PRD §4.11: a counter exchange of an online
+      // order counts as Online). It narrows inside the scope; it can never widen it (CLAUDE.md rule 6).
       order: orderScope(user, channel ? { channel } : {}),
     },
     select: {
