@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { mapSteadfastStatus, type MappedSteadfastStatus } from "@/lib/courier/steadfast/status";
 import { isTransitionAllowed, moveOrderStatus } from "@/lib/orders/lifecycle";
 import type { OrderStatusValue } from "@/lib/orders/constants";
+import { postExchangeCourierCost } from "@/lib/returns/exchange-courier-cost";
 
 // ============ Steadfast status → Antu (STEADFAST_INTEGRATION.md §3) ============
 //
@@ -145,6 +146,8 @@ export async function ingestSteadfastStatus(
   if (mapped.final && reachedTarget && !shipment.finalizedAt) data.finalizedAt = now;
 
   await tx.shipment.update({ where: { id: shipment.id }, data });
+  // P3.2 — a company-borne exchange parcel's charge is final now: post it once.
+  if (data.finalizedAt) await postExchangeCourierCost(tx, shipment.order.id, null);
 
   return { mapped, transitioned, orderStatus };
 }

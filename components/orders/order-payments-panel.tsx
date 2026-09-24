@@ -105,7 +105,7 @@ export function OrderPaymentsPanel({
   function openEdit(payment: PaymentView) {
     setForm({
       amount: payment.amount,
-      method: payment.method === "COURIER_COD" ? "CASH" : payment.method,
+      method: payment.method === "COURIER_COD" || payment.method === "EXCHANGE_CREDIT" ? "CASH" : payment.method,
       walletId: payment.walletId ?? "",
       transactionId: payment.transactionId ?? "",
       paidAt: toDateInputValue(payment.paidAt),

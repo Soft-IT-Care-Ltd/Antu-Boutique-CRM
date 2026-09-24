@@ -10,6 +10,7 @@ import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { packOrder } from "@/lib/orders/pack";
 import { reserveVariantStock } from "@/lib/orders/stock";
 import { testProductCode, testSku } from "@/lib/test/catalog-codes";
+import { runCounterExchange, runOnlineExchange, runReturnWithDamage } from "@/lib/test/returns-fixtures";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
 
 // CLAUDE.md rule 2 / PRD §6 invariant 2: a stock change and its
@@ -239,6 +240,24 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
 
           for (const vv of variants) await expectStockMatchesLedger(tx, vv.id);
         }
+      });
+    },
+    TIMEOUT,
+  );
+});
+
+// P3.2 — the return and exchange flows (lib/returns/cases.ts) move stock
+// through the same ledger: the invariant must survive every one of them.
+describe("returns and exchanges keep stock equal to the ledger", () => {
+  it(
+    "after an online exchange, a counter exchange and a return with one damaged unit",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        await runOnlineExchange(tx);
+        await runCounterExchange(tx);
+        await runReturnWithDamage(tx);
+        expect(await findStockLedgerDivergences(tx)).toEqual([]);
+        await checkDeferredConstraintsNow(tx);
       });
     },
     TIMEOUT,

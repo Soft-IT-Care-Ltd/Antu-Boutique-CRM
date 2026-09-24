@@ -9,6 +9,7 @@ import type { OrderStatusValue } from "@/lib/orders/constants";
 
 export {
   COURIER_OWNED_STATUSES,
+  isDedicatedMove,
   isTransitionAllowed,
   nextLegalStatuses,
   nextSelectableStatuses,
@@ -101,4 +102,21 @@ export async function moveOrderStatus(
   } else if (toStatus === "PARTIAL_DELIVERED") {
     await openReturnInspection(tx, { orderId: order.id, source: "PARTIAL_DELIVERY" });
   }
+}
+
+/**
+ * P3.2 — cancelling an approved return or exchange puts the original order
+ * back where it was before approval moved it (RETURNED / EXCHANGE_REQUESTED
+ * → DELIVERED, COMPLETED, …). Not a graph edge: the generic route must never
+ * make this move, so it lives here, claimed atomically like every move.
+ */
+export async function revertOrderStatus(
+  tx: Prisma.TransactionClient,
+  input: { orderId: string; from: OrderStatusValue; to: OrderStatusValue },
+  changedById: string | null,
+  note: string,
+): Promise<void> {
+  const claimed = await tx.order.updateMany({ where: { id: input.orderId, status: input.from }, data: { status: input.to } });
+  if (claimed.count !== 1) throw new StaleOrderStatusError(input.from, input.to);
+  await tx.orderStatusHistory.create({ data: { orderId: input.orderId, fromStatus: input.from, toStatus: input.to, changedById, note } });
 }

@@ -362,7 +362,8 @@ async function autoCompleteOrder(tx: Prisma.TransactionClient, orderId: string, 
  * charges as expenses — once, guarded by the unique FKs — and stamp it
  * reconciled. The delivery-charge expense excludes courier return charges
  * the condition check already posted for parcels on this statement, so a
- * returned parcel's charge is never booked twice (PRD §4.9 decision).
+ * returned parcel's charge is never booked twice (PRD §4.9 decision) — and,
+ * the same way, company-borne exchange charges already posted (P3.2).
  * Returns true when it reconciled on this call.
  */
 export async function finalizeStatement(tx: Prisma.TransactionClient, statementId: string, actorId: string | null): Promise<boolean> {
@@ -379,7 +380,14 @@ export async function finalizeStatement(tx: Prisma.TransactionClient, statementI
     where: { returnChargeInspection: { shipmentId: { in: shipmentIds } }, deletedAt: null },
     _sum: { amount: true },
   });
-  const deliveryCharge = round2(Math.max(toNumber(statement.deliveryCharge) - toNumber(alreadyPostedReturnCharges._sum.amount ?? 0), 0));
+  // P3.2 — a company-borne exchange parcel's charge already posted under
+  // "Exchange / return cost" (lib/returns/exchange-courier-cost.ts).
+  const alreadyPostedExchangeCharges = await tx.expense.aggregate({
+    where: { exchangeCourierCase: { replacementOrder: { shipment: { id: { in: shipmentIds } } } }, deletedAt: null },
+    _sum: { amount: true },
+  });
+  const alreadyPosted = toNumber(alreadyPostedReturnCharges._sum.amount ?? 0) + toNumber(alreadyPostedExchangeCharges._sum.amount ?? 0);
+  const deliveryCharge = round2(Math.max(toNumber(statement.deliveryCharge) - alreadyPosted, 0));
   const codCharge = round2(toNumber(statement.codCharge));
 
   let deliveryChargeExpenseId = statement.deliveryChargeExpenseId;

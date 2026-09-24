@@ -67,14 +67,16 @@ export async function restoreVariantStockAfterPack(
 // valued at the same cost that was just frozen into unitCostSnapshot).
 // Called from lib/orders/pack.ts inside the same transaction as the PACKED
 // status move.
+// P3.2 (PRD §4.11): an exchange's replacement order leaves as EXCHANGE_OUT —
+// the same deduction through the normal packing flow, told apart in the ledger.
 export async function deductVariantStockAtPack(
   tx: Prisma.TransactionClient,
-  input: { orderId: string; variantId: string; qty: number; unitCost: Prisma.Decimal; actorId: string },
+  input: { orderId: string; variantId: string; qty: number; unitCost: Prisma.Decimal; actorId: string; isExchange?: boolean },
 ): Promise<void> {
   if (input.qty === 0) return;
   await recordStockMovement(tx, {
     variantId: input.variantId,
-    type: "SALE_OUT",
+    type: input.isExchange ? "EXCHANGE_OUT" : "SALE_OUT",
     qty: -input.qty,
     unitCost: input.unitCost,
     referenceType: "ORDER",

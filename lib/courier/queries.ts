@@ -8,7 +8,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import type { CourierShipmentTab } from "@/lib/courier/constants";
 import type { CourierReturnRow, ReadyToShipRow, ShipmentDetailView, ShipmentRow } from "@/lib/courier/types";
 import { prisma } from "@/lib/prisma";
-import { onlineOrderCustomer } from "@/lib/orders/customer";
+import { onlineOrderCustomer, WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 
 // Read side of the Courier page and the order-detail shipment card. Every
 // query is scoped through scopedWhere() on the order (CLAUDE.md rule 6), and
@@ -205,8 +205,9 @@ export async function listCourierReturns(user: SessionUser, opts: { status: "ope
       orderId: r.order.id,
       orderNo: r.order.orderNo,
       orderStatus: r.order.status,
-      customerName: onlineOrderCustomer(r.order).name,
-      phone: onlineOrderCustomer(r.order).phone,
+      // P3.2 — a counter exchange's check can belong to an anonymous walk-in sale.
+      customerName: r.order.customer?.name ?? WALK_IN_CUSTOMER_LABEL,
+      phone: r.order.customer?.phone ?? "",
       consignmentId: r.order.shipment?.consignmentId ?? null,
       trackingUrl: r.order.shipment?.trackingUrl ?? null,
       createdAt: r.createdAt.toISOString(),

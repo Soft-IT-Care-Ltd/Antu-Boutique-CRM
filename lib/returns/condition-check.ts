@@ -2,6 +2,7 @@ import type { Prisma, ReturnInspectionSource } from "@prisma/client";
 
 import { writeAuditLogWith } from "@/lib/audit/log";
 import { COURIER_RETURN_CHARGE_EXPENSE_CATEGORY } from "@/lib/courier/constants";
+import { completeReturnCaseAfterCheck } from "@/lib/returns/case-completion";
 import { writeOffDamagedStock } from "@/lib/inventory/adjustments";
 import { recordStockMovement } from "@/lib/inventory/ledger";
 import { toNumber } from "@/lib/money";
@@ -19,8 +20,12 @@ import { toNumber } from "@/lib/money";
 // 3), so what comes back is worth exactly what went out. A courier return
 // also posts the courier's return charge as an expense, once.
 //
-// Deliberately free of "server-only" and of the prisma singleton — it acts
-// only through the `tx` it is handed (same convention as lib/inventory/ledger.ts).
+// P3.2: a customer return or exchange (lib/returns/cases.ts) opens its
+// inspection here with the exact lines coming back, and completing the check
+// completes the return case (lib/returns/case-completion.ts).
+//
+// Deliberately free of the prisma singleton — it acts only through the `tx`
+// it is handed (same convention as lib/inventory/ledger.ts).
 
 export class ConditionCheckError extends Error {}
 
@@ -30,11 +35,25 @@ export class ConditionCheckError extends Error {}
  * as-is, so a replayed courier webhook can never open a second one. Only
  * packed lines (unit_cost_snapshot set) are expected back; returns null
  * when there is nothing to check.
+ *
+ * With `lines` (a return case: these units of these lines, nothing else) a
+ * new inspection is always opened — the case owns it, one per case.
  */
 export async function openReturnInspection(
   tx: Prisma.TransactionClient,
-  input: { orderId: string; source: ReturnInspectionSource },
+  input: { orderId: string; source: ReturnInspectionSource; lines?: { orderItemId: string; qty: number }[] },
 ): Promise<{ id: string } | null> {
+  if (input.lines) {
+    const lines = input.lines.filter((l) => l.qty > 0).map((l) => ({ orderItemId: l.orderItemId, qty: l.qty }));
+    if (lines.length === 0) return null;
+    // No shipment: the item comes back on its own trip, not in the original
+    // parcel, so no courier return charge applies to it.
+    return tx.returnInspection.create({
+      data: { orderId: input.orderId, shipmentId: null, source: input.source, status: "PENDING", lines: { create: lines } },
+      select: { id: true },
+    });
+  }
+
   const existing = await tx.returnInspection.findFirst({
     where: { orderId: input.orderId, source: input.source, status: { not: "COMPLETED" } },
     select: { id: true },
@@ -181,6 +200,7 @@ export async function completeConditionCheck(
   }
 
   const returnChargePosted = inspection.source === "COURIER_RETURN" ? await postCourierReturnCharge(tx, inspection, actorId) : null;
+  await completeReturnCaseAfterCheck(tx, inspection.id, actorId);
 
   await writeAuditLogWith(tx, {
     actorId,

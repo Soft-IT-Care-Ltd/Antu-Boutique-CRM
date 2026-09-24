@@ -162,9 +162,13 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "order.status_update",
     "product.view",
     "inventory.view",
+    // P3.2: a TL requests returns/exchanges for the team and approves the
+    // ones their executives ask for (never their own — lib/returns/cases.ts).
     "return.view",
+    "return.create",
     "return.approve",
     "exchange.view",
+    "exchange.create",
     "exchange.approve",
     "target.view_team",
     "attendance.view_team",
@@ -186,6 +190,12 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "order.edit",
     "product.view",
     "inventory.view",
+    // P3.2: the executive talks to the customer, so asks for the return or
+    // exchange on their own orders; a TL/Manager/Admin approves it.
+    "return.view",
+    "return.create",
+    "exchange.view",
+    "exchange.create",
     "target.view_own",
     "attendance.view_own",
     "attendance.mark",
@@ -225,6 +235,9 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "expense.edit",
     "courier.reconcile",
     "order.view_all",
+    // P3.2: sees returns/exchanges to pay out the refunds they leave owed.
+    "return.view",
+    "exchange.view",
     "report.view",
     "attendance.view_own",
     "attendance.mark",
@@ -236,6 +249,9 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
   POS_OPERATOR: [
     "pos.sell",
     "pos.drawer",
+    // P3.2: exchanges at the counter — no approval, settled on the spot.
+    "exchange.view",
+    "exchange.create",
     "product.tags.print",
     "customer.view_own",
     "customer.create",

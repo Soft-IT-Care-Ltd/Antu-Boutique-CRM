@@ -39,6 +39,8 @@ const COST_FIELD_NAMES = new Set([
   "returnCharge",
   "codChargePercent",
   "lastBalance",
+  // Returns & exchanges (P3.2): the courier charge we bear on an exchange.
+  "companyCourierCost",
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

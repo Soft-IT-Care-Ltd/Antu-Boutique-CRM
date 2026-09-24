@@ -7,10 +7,11 @@ import { can } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { IllegalTransitionError, moveOrderStatus, STATUSES_REQUIRING_DEDICATED_FLOW } from "@/lib/orders/lifecycle";
+import { IllegalTransitionError, isDedicatedMove, moveOrderStatus } from "@/lib/orders/lifecycle";
 import { decideCourierOverride } from "@/lib/orders/status-graph";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { ORDER_STATUS_VALUES } from "@/lib/orders/constants";
+import { postExchangeCourierCost } from "@/lib/returns/exchange-courier-cost";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 
 const statusUpdateSchema = z.object({
@@ -36,6 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     include: {
       items: { select: { variantId: true, qty: true, unitCostSnapshot: true } },
       shipment: { select: { consignmentId: true } },
+      replacementFor: { select: { status: true } },
     },
   });
   if (!existing) return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -46,11 +48,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
   const { toStatus, note, courierOverrideReason } = parsed.data;
 
-  if (STATUSES_REQUIRING_DEDICATED_FLOW.includes(toStatus)) {
-    return NextResponse.json(
-      { error: `Moving an order to ${toStatus} goes through its own dedicated flow, not a plain status change.` },
-      { status: 400 },
-    );
+  if (isDedicatedMove(existing.status as OrderStatusValue, toStatus)) {
+    const error =
+      toStatus === "RETURNED" || toStatus === "EXCHANGE_REQUESTED"
+        ? "A customer return or exchange goes through a request with a reason and a TL/Admin approval — use Return or Exchange on the order."
+        : `Moving this order to ${toStatus} goes through its own dedicated flow, not a plain status change.`;
+    return NextResponse.json({ error }, { status: 400 });
+  }
+  // P3.2 — a replacement order is cancelled by cancelling its exchange,
+  // which also takes back the credit and the returned-item check.
+  if (toStatus === "CANCELLED" && existing.replacementFor && existing.replacementFor.status !== "CANCELLED") {
+    return NextResponse.json({ error: "This order is the replacement in an exchange — cancel the exchange instead (Returns & Exchanges)." }, { status: 409 });
   }
 
   // P2.2: once Steadfast has the parcel, the courier sync owns its journey —
@@ -79,6 +87,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       // webhook with a different outcome still gets flagged (lib/courier/sync.ts).
       if (isCourierOverride && (toStatus === "DELIVERED" || toStatus === "RETURNED")) {
         await tx.shipment.update({ where: { orderId: existing.id }, data: { finalizedAt: new Date() } });
+        // P3.2 — a company-borne exchange parcel's charge is final now.
+        await postExchangeCourierCost(tx, existing.id, guard.user.id);
       }
       // CANCELLED after PACKED writes one RETURN_IN ledger row per line.
     }, { timeout: 30_000 });

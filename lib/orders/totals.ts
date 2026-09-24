@@ -58,9 +58,11 @@ export function computeDueAmount(total: number, paidSoFar: number): number {
  * The payments that count toward what the customer has paid: every PAYMENT,
  * plus refunds only once APPROVED (a refund is a negative row). A pending
  * or rejected refund moves no money, so it can't move due_amount either.
+ * P3.2: an exchange credit counts on both orders — negative on the original
+ * (its returned items' value left it), positive on the replacement.
  */
 export const COUNTED_PAYMENTS_WHERE = {
-  OR: [{ kind: "PAYMENT" }, { kind: "REFUND", refundStatus: "APPROVED" }],
+  OR: [{ kind: "PAYMENT" }, { kind: "REFUND", refundStatus: "APPROVED" }, { kind: "EXCHANGE_CREDIT" }],
 } satisfies Prisma.PaymentWhereInput;
 
 // The one write path every payment create/update/delete route must call,

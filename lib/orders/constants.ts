@@ -58,7 +58,8 @@ export const DELIVERY_ZONE_LABELS: Record<DeliveryZoneValue, string> = {
 // deliberately absent: it only ever comes from a reconciled courier statement
 // (lib/courier/reconcile.ts), so the Zod schemas built on this list reject it.
 export const PAYMENT_METHOD_VALUES = ["BKASH", "NAGAD", "ROCKET", "BANK", "CASH", "CARD"] as const;
-export const ALL_PAYMENT_METHOD_VALUES = [...PAYMENT_METHOD_VALUES, "COURIER_COD"] as const;
+// EXCHANGE_CREDIT (P3.2) moves no money: an exchange's credit between two orders.
+export const ALL_PAYMENT_METHOD_VALUES = [...PAYMENT_METHOD_VALUES, "COURIER_COD", "EXCHANGE_CREDIT"] as const;
 export type PaymentMethodValue = (typeof ALL_PAYMENT_METHOD_VALUES)[number];
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethodValue, string> = {
@@ -69,6 +70,7 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethodValue, string> = {
   CASH: "Cash",
   CARD: "Card",
   COURIER_COD: "Courier COD",
+  EXCHANGE_CREDIT: "Exchange credit",
 };
 
 

@@ -14,6 +14,8 @@ import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 // P2.3: a refund is never edited or deleted here — it's approved or
 // rejected (lib/payments/refunds.ts), so its history stays intact.
 const REFUND_LOCKED = "Refunds can't be edited or deleted — reject it and request a new one if it's wrong.";
+// P3.2 — the credit an exchange carried between two orders; it changes only with its exchange.
+const CREDIT_LOCKED = "This is exchange credit — it changes only if the exchange is cancelled (Returns & Exchanges).";
 
 async function loadOrderForPaymentMutation(orderId: string, paymentId: string, user: Parameters<typeof scopedWhere>[1]) {
   const order = await prisma.order.findFirst({ where: scopedWhere({ id: orderId, deletedAt: null }, user), select: { id: true } });
@@ -31,6 +33,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.kind === "REFUND") return NextResponse.json({ error: REFUND_LOCKED }, { status: 409 });
+  if (payment.kind === "EXCHANGE_CREDIT") return NextResponse.json({ error: CREDIT_LOCKED }, { status: 409 });
 
   // P2.2b: a payment created by reconciling a courier statement is part of
   // that statement's audit trail — it can't be edited or deleted by hand.
@@ -111,6 +114,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.kind === "REFUND") return NextResponse.json({ error: REFUND_LOCKED }, { status: 409 });
+  if (payment.kind === "EXCHANGE_CREDIT") return NextResponse.json({ error: CREDIT_LOCKED }, { status: 409 });
 
   // P2.2b: a payment created by reconciling a courier statement is part of
   // that statement's audit trail — it can't be edited or deleted by hand.

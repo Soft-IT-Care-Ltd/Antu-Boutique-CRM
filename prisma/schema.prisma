@@ -82,6 +82,9 @@ enum PaymentMethod {
   // P2.2b — COD the courier collected at the door and paid out to us,
   // settled from a reconciled courier statement.
   COURIER_COD
+  // P3.2 — no money moves: the value of items returned in an exchange,
+  // carried from the original order to its replacement (kind EXCHANGE_CREDIT).
+  EXCHANGE_CREDIT
 }
 
 // PRD §4.6 edit window: PENDING until a TL/Admin acts on it, then terminal.
@@ -203,6 +206,9 @@ model User {
   adSpends                  DailyAdSpend[]           @relation("AdSpendCreatedBy")
   openedCashDrawers         CashDrawer[]             @relation("CashDrawerOpenedBy")
   closedCashDrawers         CashDrawer[]             @relation("CashDrawerClosedBy")
+  requestedReturnCases      ReturnCase[]             @relation("ReturnCaseRequestedBy")
+  decidedReturnCases        ReturnCase[]             @relation("ReturnCaseDecidedBy")
+  cancelledReturnCases      ReturnCase[]             @relation("ReturnCaseCancelledBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -339,6 +345,8 @@ model ProductVariant {
   orderItems     OrderItem[]
   stockMovements StockMovement[]
   purchaseItems  PurchaseItem[]
+  // P3.2 — exchange lines that swap an item for this variant.
+  exchangeLines  ReturnCaseLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -499,6 +507,12 @@ model Order {
   teamId      String?
   team        Team?   @relation("OrderTeam", fields: [teamId], references: [id])
 
+  // P3.2 (PRD §4.11) — set on the replacement order an exchange creates;
+  // points back at the order whose item is being exchanged.
+  exchangedFromOrderId String?
+  exchangedFrom        Order?  @relation("OrderExchange", fields: [exchangedFromOrderId], references: [id], onDelete: Restrict)
+  exchangeOrders       Order[] @relation("OrderExchange")
+
   items             OrderItem[]
   images            OrderImage[]
   payments          Payment[]
@@ -508,6 +522,8 @@ model Order {
   shipment          Shipment?
   returnInspections ReturnInspection[]
   statementLines    CourierStatementLine[]
+  returnCases       ReturnCase[]           @relation("ReturnCaseOrder")
+  replacementFor    ReturnCase?            @relation("ReturnCaseReplacement")
 
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
@@ -520,6 +536,7 @@ model Order {
   @@index([teamId])
   @@index([status])
   @@index([deletedAt])
+  @@index([exchangedFromOrderId])
   @@map("orders")
 }
 
@@ -550,6 +567,7 @@ model OrderItem {
 
   images                OrderImage[]
   returnInspectionLines ReturnInspectionLine[]
+  returnCaseLines       ReturnCaseLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -646,6 +664,12 @@ model Payment {
   // P2.2b — set when this payment settled a courier statement line.
   courierStatementLine CourierStatementLine?
 
+  // P3.2 — the return/exchange this row belongs to: an EXCHANGE_CREDIT
+  // pair (−credit on the original, +credit on the replacement), or the
+  // refund a counter exchange requested for the difference.
+  returnCaseId String?
+  returnCase   ReturnCase? @relation(fields: [returnCaseId], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -654,6 +678,7 @@ model Payment {
   @@index([verified])
   @@index([refundStatus])
   @@index([paidAt])
+  @@index([returnCaseId])
   @@map("payments")
 }
 
@@ -935,6 +960,10 @@ model Expense {
   // replayed check can never post the charge twice.
   returnChargeInspectionId String?           @unique
   returnChargeInspection   ReturnInspection? @relation("ReturnChargeExpense", fields: [returnChargeInspectionId], references: [id], onDelete: Restrict)
+  // P3.2 — an online exchange's replacement parcel, when the company bears
+  // its courier charge: posted once, under "Exchange / return cost".
+  exchangeCourierCaseId    String?           @unique
+  exchangeCourierCase      ReturnCase?       @relation("ExchangeCourierCostExpense", fields: [exchangeCourierCaseId], references: [id], onDelete: Restrict)
   statementDeliveryCharge  CourierStatement? @relation("StatementDeliveryChargeExpense")
   statementCodCharge       CourierStatement? @relation("StatementCodChargeExpense")
 
@@ -960,6 +989,9 @@ model Expense {
 enum PaymentKind {
   PAYMENT
   REFUND
+  // P3.2 — exchange credit moved between two orders (method EXCHANGE_CREDIT,
+  // no wallet): negative on the original, positive on the replacement.
+  EXCHANGE_CREDIT
 }
 
 enum RefundStatus {
@@ -1311,6 +1343,7 @@ model ReturnInspection {
 
   lines               ReturnInspectionLine[]
   returnChargeExpense Expense?               @relation("ReturnChargeExpense")
+  returnCase          ReturnCase?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1521,4 +1554,114 @@ model CashDrawer {
   @@unique([walletId, businessDay])
   @@index([status])
   @@map("cash_drawers")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.11 — returns and exchanges (P3.2)
+// ---------------------------------------------------------------------------
+
+enum ReturnCaseType {
+  RETURN
+  EXCHANGE
+}
+
+// ONLINE: requested, approved, then PENDING until the item is physically
+// back and checked. COUNTER: the customer is at the showroom with the item —
+// inspected and settled on the spot, created COMPLETED in one transaction.
+enum ReturnCaseMode {
+  ONLINE
+  COUNTER
+}
+
+enum ReturnCaseStatus {
+  // Waiting for a TL/Manager/Admin (return.approve / exchange.approve).
+  REQUESTED
+  // Approved: money and the replacement are set up; waiting for the item to
+  // come back and pass the Packing condition check. No stock has moved.
+  APPROVED
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum ReturnReason {
+  WRONG_SIZE
+  WRONG_COLOR
+  NOT_AS_EXPECTED
+  DEFECTIVE
+  OTHER
+}
+
+enum CourierChargeBearer {
+  CUSTOMER
+  COMPANY
+}
+
+model ReturnCase {
+  id     String           @id @default(cuid())
+  type   ReturnCaseType
+  mode   ReturnCaseMode
+  status ReturnCaseStatus @default(REQUESTED)
+
+  orderId            String
+  order              Order   @relation("ReturnCaseOrder", fields: [orderId], references: [id], onDelete: Restrict)
+  // Exchanges: the linked order carrying the replacement (its
+  // exchangedFromOrderId points back at `orderId`). Set on approval.
+  replacementOrderId String? @unique
+  replacementOrder   Order?  @relation("ReturnCaseReplacement", fields: [replacementOrderId], references: [id], onDelete: Restrict)
+
+  reason              ReturnReason
+  reasonNote          String?
+  // Online exchanges only (DB CHECK): who pays the replacement's courier.
+  courierChargeBearer CourierChargeBearer?
+
+  // The original order's status before approval moved it (to RETURNED or
+  // EXCHANGE_REQUESTED) — where cancelling puts it back.
+  orderStatusBefore OrderStatus?
+  // The Packing condition check for the items coming back
+  // (lib/returns/condition-check.ts), opened on approval.
+  inspectionId      String?           @unique
+  inspection        ReturnInspection? @relation(fields: [inspectionId], references: [id], onDelete: Restrict)
+
+  requestedById String?
+  requestedBy   User?     @relation("ReturnCaseRequestedBy", fields: [requestedById], references: [id])
+  decidedById   String?
+  decidedBy     User?     @relation("ReturnCaseDecidedBy", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  decisionNote  String?
+  cancelledById String?
+  cancelledBy   User?     @relation("ReturnCaseCancelledBy", fields: [cancelledById], references: [id])
+  cancelledAt   DateTime?
+  cancelNote    String?
+  completedAt   DateTime?
+
+  lines              ReturnCaseLine[]
+  payments           Payment[]
+  courierCostExpense Expense?         @relation("ExchangeCourierCostExpense")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([type, createdAt])
+  @@map("return_cases")
+}
+
+model ReturnCaseLine {
+  id          String     @id @default(cuid())
+  caseId      String
+  returnCase  ReturnCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  orderItemId String
+  orderItem   OrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  // Units of that line coming back.
+  qty         Int
+
+  // Exchanges: what the customer gets instead, one for one.
+  replacementVariantId String?
+  replacementVariant   ProductVariant? @relation(fields: [replacementVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([caseId, orderItemId])
+  @@index([replacementVariantId])
+  @@map("return_case_lines")
 }

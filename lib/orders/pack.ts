@@ -26,7 +26,8 @@ type OrderForPacking = {
  * The one place an order reaches PACKED (PRD §4.8, CLAUDE.md rule 2 + 3 +
  * 10). For every line: freezes unit_cost_snapshot from the variant's
  * CURRENT weighted average cost (never touched again — rule 3) and deducts
- * real stock with a SALE_OUT ledger row at that same cost (rules 2 + 10), then moves the order to PACKED via the same
+ * real stock with a SALE_OUT ledger row (EXCHANGE_OUT for an exchange's
+ * replacement) at that same cost (rules 2 + 10), then moves the order to PACKED via the same
  * status-history writer every other transition uses. All of it — item
  * updates, stock deduction, status move — runs in the caller's transaction,
  * so a failure anywhere rolls the whole pack back (rule 2).
@@ -40,6 +41,8 @@ export async function packOrder(
   if (!isTransitionAllowed(order.status, "PACKED")) {
     throw new IllegalTransitionError(order.status, "PACKED");
   }
+
+  const { exchangedFromOrderId } = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { exchangedFromOrderId: true } });
 
   for (const item of order.items) {
     const variant = await tx.productVariant.findUniqueOrThrow({
@@ -56,6 +59,7 @@ export async function packOrder(
       qty: item.qty,
       unitCost: variant.weightedAvgCost,
       actorId: packerId,
+      isExchange: exchangedFromOrderId !== null,
     });
   }
 

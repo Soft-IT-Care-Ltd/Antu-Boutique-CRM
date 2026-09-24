@@ -23,7 +23,10 @@ export const ORDER_TRANSITIONS: Record<OrderStatusValue, OrderStatusValue[]> = {
   CANCELLED: [],
   RETURNED: ["REFUNDED"],
   REFUNDED: [],
-  EXCHANGE_REQUESTED: ["COMPLETED", "CANCELLED"],
+  // P3.2 — completes when the returned item passes its condition check.
+  // Never CANCELLED: the customer has the goods; cancelling the exchange
+  // puts the order back where it was (lib/returns/cases.ts).
+  EXCHANGE_REQUESTED: ["COMPLETED"],
   // P2.2 — the customer kept part of the parcel. Once kept items are marked
   // and Accounts has reviewed the money, the order completes (or, Phase 3,
   // turns into an exchange).
@@ -35,7 +38,23 @@ export const ORDER_TRANSITIONS: Record<OrderStatusValue, OrderStatusValue[]> = {
 // status change.
 // PARTIAL_DELIVERED only ever comes from the courier (lib/courier/sync.ts),
 // which also opens the kept-items / condition-check task for it.
-export const STATUSES_REQUIRING_DEDICATED_FLOW: OrderStatusValue[] = ["PACKED", "PARTIAL_DELIVERED"];
+// P3.2 (PRD §4.11): EXCHANGE_REQUESTED comes only from an approved exchange,
+// which creates the linked replacement order with it; REFUNDED only from an
+// approved refund on a returned order (lib/payments/refunds.ts).
+export const STATUSES_REQUIRING_DEDICATED_FLOW: OrderStatusValue[] = ["PACKED", "PARTIAL_DELIVERED", "EXCHANGE_REQUESTED", "REFUNDED"];
+
+/**
+ * Moves the generic status control/route may not make: into a dedicated
+ * status, out of EXCHANGE_REQUESTED (the condition check completes it), and
+ * a customer's return of goods they already have (DELIVERED/COMPLETED →
+ * RETURNED), which needs a reason and a TL/Admin approval (return request).
+ * A courier return (in transit → RETURNED) stays a plain move.
+ */
+export function isDedicatedMove(from: OrderStatusValue, to: OrderStatusValue): boolean {
+  if (STATUSES_REQUIRING_DEDICATED_FLOW.includes(to)) return true;
+  if (from === "EXCHANGE_REQUESTED") return true;
+  return to === "RETURNED" && (from === "DELIVERED" || from === "COMPLETED");
+}
 
 // Statuses a booked courier shipment owns: once a consignment exists, only
 // the courier sync may move the order into these, so the order can't drift
@@ -76,7 +95,7 @@ export function nextLegalStatuses(from: OrderStatusValue): OrderStatusValue[] {
   return ORDER_TRANSITIONS[from] ?? [];
 }
 
-/** What the generic status-change UI/route may offer — the legal graph edges minus the ones reserved for a dedicated flow. */
+/** What the generic status-change UI/route may offer — the legal graph edges minus the moves reserved for a dedicated flow. */
 export function nextSelectableStatuses(from: OrderStatusValue): OrderStatusValue[] {
-  return nextLegalStatuses(from).filter((s) => !STATUSES_REQUIRING_DEDICATED_FLOW.includes(s));
+  return nextLegalStatuses(from).filter((s) => !isDedicatedMove(from, s));
 }

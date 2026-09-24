@@ -6,6 +6,7 @@ import { writeAuditLogWith } from "@/lib/audit/log";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { toNumber } from "@/lib/money";
 import type { PaymentMethodValue } from "@/lib/orders/constants";
+import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
@@ -28,11 +29,13 @@ export class RefundError extends Error {
 /**
  * What can still be refunded on an order: verified money received, less
  * refunds already approved or waiting for approval. Unverified payments
- * aren't refundable — the money may never have arrived.
+ * aren't refundable — the money may never have arrived. P3.2: exchange
+ * credit counts too — carried in on a replacement, and less what an original
+ * passed on to its replacement.
  */
 export async function refundableAmount(tx: Prisma.TransactionClient, orderId: string, excludePaymentId?: string): Promise<number> {
   const [received, refunds] = await Promise.all([
-    tx.payment.aggregate({ where: { orderId, kind: "PAYMENT", verified: true }, _sum: { amount: true } }),
+    tx.payment.aggregate({ where: { orderId, OR: [{ kind: "PAYMENT", verified: true }, { kind: "EXCHANGE_CREDIT" }] }, _sum: { amount: true } }),
     tx.payment.aggregate({
       where: { orderId, kind: "REFUND", refundStatus: { in: ["PENDING", "APPROVED"] }, ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}) },
       _sum: { amount: true },
@@ -116,13 +119,23 @@ export async function decideRefund(tx: Prisma.TransactionClient, paymentId: stri
   if (count === 0) throw new RefundError("This refund has already been decided.", 409);
 
   const dueAmount = await recomputeOrderDueAmount(tx, refund.orderId);
+  // PRD §4.11: a returned order whose money has gone back is REFUNDED — the
+  // only way in (lib/orders/status-graph.ts).
+  let orderRefunded = false;
+  if (input.decision === "APPROVE") {
+    const order = await tx.order.findUniqueOrThrow({ where: { id: refund.orderId }, select: { status: true } });
+    if (order.status === "RETURNED") {
+      await moveOrderStatus(tx, { id: refund.orderId, status: "RETURNED", items: [] }, "REFUNDED", actorId, "Refund approved");
+      orderRefunded = true;
+    }
+  }
   await writeAuditLogWith(tx, {
     actorId,
     action: input.decision === "APPROVE" ? "payment.refund.approve" : "payment.refund.reject",
     entityType: "order",
     entityId: refund.orderId,
     before: { paymentId, refundStatus: "PENDING", amount: toNumber(refund.amount) },
-    after: { paymentId, refundStatus: input.decision === "APPROVE" ? "APPROVED" : "REJECTED", note: input.note ?? null, dueAmount },
+    after: { paymentId, refundStatus: input.decision === "APPROVE" ? "APPROVED" : "REJECTED", note: input.note ?? null, dueAmount, orderRefunded },
   });
   return tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
 }

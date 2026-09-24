@@ -26,6 +26,7 @@ export const METHOD_WALLET_TYPES: Record<PaymentMethodValue, readonly WalletType
   CARD: ["BANK"],
   CASH: ["CASH"],
   COURIER_COD: [],
+  EXCHANGE_CREDIT: [],
 };
 
 export const WALLET_ENTRY_TYPE_VALUES = ["MANUAL_IN", "MANUAL_OUT", "TRANSFER_IN", "TRANSFER_OUT"] as const;
