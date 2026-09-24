@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
+import { PRODUCT_CODE_MESSAGE, PRODUCT_CODE_PATTERN } from "@/lib/catalog/codes";
 import { generateProductCode } from "@/lib/catalog/sku";
 import { getProductStockSummaries, summaryFor, type StockStatus } from "@/lib/catalog/stock-status";
 
@@ -23,7 +24,8 @@ const querySchema = z.object({
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  code: z.string().trim().min(1).max(20).optional(),
+  // PRD §4.2: 2–3 characters, suggested from the name when left blank.
+  code: z.string().trim().toUpperCase().regex(PRODUCT_CODE_PATTERN, PRODUCT_CODE_MESSAGE).optional(),
   categoryId: z.string().cuid().nullish(),
   brand: z.string().trim().max(120).nullish(),
   description: z.string().trim().max(4000).nullish(),
@@ -135,7 +137,7 @@ export async function POST(request: NextRequest) {
     const clash = await prisma.product.findUnique({ where: { code } });
     if (clash) return NextResponse.json({ error: "Product code already in use" }, { status: 409 });
   } else {
-    code = await generateProductCode(name);
+    code = await generateProductCode(prisma, name);
   }
 
   if (categoryId) {

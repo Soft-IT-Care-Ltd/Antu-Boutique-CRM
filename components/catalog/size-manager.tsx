@@ -30,10 +30,11 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
+import { suggestSizeCode } from "@/lib/catalog/codes";
 import type { SizeMaster } from "@/lib/catalog/types";
 
-type FormState = { id?: string; name: string; sortOrder: number; isActive: boolean };
-const EMPTY_FORM: FormState = { name: "", sortOrder: 0, isActive: true };
+type FormState = { id?: string; name: string; code: string; sortOrder: number; isActive: boolean };
+const EMPTY_FORM: FormState = { name: "", code: "", sortOrder: 0, isActive: true };
 
 export function SizeManager({ canManage }: { canManage: boolean }) {
   const [sizes, setSizes] = useState<SizeMaster[] | null>(null);
@@ -41,6 +42,7 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const suggestedCode = !form.id && form.name.trim() ? suggestSizeCode(form.name, new Set((sizes ?? []).map((s) => s.code))) : null;
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -65,7 +67,7 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
   }
 
   function openEdit(size: SizeMaster) {
-    setForm({ id: size.id, name: size.name, sortOrder: size.sortOrder, isActive: size.isActive });
+    setForm({ id: size.id, name: size.name, code: size.code, sortOrder: size.sortOrder, isActive: size.isActive });
     setFormError(null);
     setDialogOpen(true);
   }
@@ -77,12 +79,12 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
       if (form.id) {
         await fetchJson(`/api/catalog/sizes/${form.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ name: form.name, sortOrder: form.sortOrder, isActive: form.isActive }),
+          body: JSON.stringify({ name: form.name, code: form.code || undefined, sortOrder: form.sortOrder, isActive: form.isActive }),
         });
       } else {
         await fetchJson("/api/catalog/sizes", {
           method: "POST",
-          body: JSON.stringify({ name: form.name, sortOrder: form.sortOrder, isActive: form.isActive }),
+          body: JSON.stringify({ name: form.name, code: form.code || suggestedCode || undefined, sortOrder: form.sortOrder, isActive: form.isActive }),
         });
       }
       setDialogOpen(false);
@@ -127,6 +129,20 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
                   <Input id="size-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 </div>
                 <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="size-code">SKU code</Label>
+                  <Input
+                    id="size-code"
+                    className="font-mono uppercase placeholder:normal-case"
+                    maxLength={3}
+                    value={form.code}
+                    placeholder={suggestedCode ?? "e.g. M"}
+                    onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    1–3 letters or digits (Free → F), part of every SKU in this size{form.id ? " — can't change once tags are printed" : suggestedCode ? ` (${suggestedCode} if left blank)` : ""}.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
                   <Label htmlFor="size-sort">Sort order</Label>
                   <Input
                     id="size-sort"
@@ -159,6 +175,7 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Code</TableHead>
               <TableHead>Variants</TableHead>
               <TableHead>Status</TableHead>
               {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
@@ -168,6 +185,7 @@ export function SizeManager({ canManage }: { canManage: boolean }) {
             {sizes.map((size) => (
               <TableRow key={size.id}>
                 <TableCell className="font-medium">{size.name}</TableCell>
+                <TableCell className="font-mono text-sm">{size.code}</TableCell>
                 <TableCell>{size._count?.variants ?? 0}</TableCell>
                 <TableCell>
                   <Badge variant={size.isActive ? "secondary" : "outline"}>{size.isActive ? "Active" : "Inactive"}</Badge>

@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { generateUniqueVariantSku } from "@/lib/catalog/sku";
+import { skuForNewVariant, SkuError } from "@/lib/catalog/sku";
 
 // PRD §4.2 — the variant matrix screen: pick sizes × colours, generate every
 // combination at once. Only fills in combos that don't exist yet; existing
@@ -41,13 +41,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const existingPairs = new Set(existingVariants.map((v) => `${v.sizeId}:${v.colorId}`));
 
+  // SKU = product + size + colour code (PRD §4.2). Every combination is
+  // checked before any is created, so a clash leaves nothing half-made.
   const toCreate: { sizeId: string; colorId: string; sku: string }[] = [];
-  for (const size of sizes) {
-    for (const color of colors) {
-      if (existingPairs.has(`${size.id}:${color.id}`)) continue;
-      const sku = await generateUniqueVariantSku(product.code, size.name, color.name);
-      toCreate.push({ sizeId: size.id, colorId: color.id, sku });
+  try {
+    for (const size of sizes) {
+      for (const color of colors) {
+        if (existingPairs.has(`${size.id}:${color.id}`)) continue;
+        const sku = await skuForNewVariant(prisma, product.code, size.code, color.code);
+        toCreate.push({ sizeId: size.id, colorId: color.id, sku });
+      }
     }
+  } catch (error) {
+    if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
   }
 
   if (toCreate.length > 0) {

@@ -1,4 +1,4 @@
-import { code128Bars, CODE128_QUIET_ZONE_MODULES } from "@/lib/barcode/code128";
+import { code128Bars } from "@/lib/barcode/code128";
 import { isBarcodeSafeSku } from "@/lib/barcode/scan";
 import { formatBDT } from "@/lib/money";
 
@@ -43,10 +43,21 @@ export function findLabelStock(id: string): LabelStock | undefined {
 
 export type TagData = { sku: string; productName: string; sizeName: string; colorName: string; price: string };
 
-/** Smallest bar we'd want a cheap 1D scanner to read reliably (~10 mil). */
-const COMFORTABLE_MODULE_MM = 0.25;
-/** Below this no ordinary scanner reads it. */
-const MIN_MODULE_MM = 0.1;
+/**
+ * The narrowest bar that survives a thermal head's ink spread: at 203 dpi,
+ * 2 dots. Measured (P3.1): with one dot of spread, 1-dot bars (0.125 mm)
+ * close their 1-dot spaces and stop scanning; 2-dot bars keep reading.
+ * (Dot sizes aren't exact: 2 dots at 203 dpi is 0.2502 mm, hence the slack.)
+ */
+const MIN_RELIABLE_MODULE_MM = 0.249;
+/**
+ * Quiet zone either side, in bar widths. The spec asks for 10; a tag's own
+ * edges run into blank liner, and 5 read reliably under ink spread in the
+ * same test, so 6 keeps a margin while letting a 9-character SKU fit 38 mm.
+ */
+const TAG_QUIET_ZONE_MODULES = 6;
+/** Left for the label drifting sideways in the printer, each side. */
+const DRIFT_MM = 0.4;
 
 export type BarcodeFit = {
   modules: number;
@@ -54,8 +65,8 @@ export type BarcodeFit = {
   moduleMm: number;
   dots: number;
   widthMm: number;
-  /** "ok" scans easily; "dense" needs a decent scanner — test one label; "too-long" won't fit. */
-  quality: "ok" | "dense" | "too-long";
+  /** "ok" scans reliably; "too-long" can't get 0.25 mm bars on this label — refused. */
+  quality: "ok" | "too-long";
 };
 
 /**
@@ -65,14 +76,12 @@ export type BarcodeFit = {
 export function fitBarcode(sku: string, stock: LabelStock, dpi: number): BarcodeFit {
   const { modules } = code128Bars(sku);
   const dotMm = 25.4 / dpi;
-  // The tag's left/right edges are blank liner or the next blank tag, so
-  // the quiet zone may use nearly the full width; keep 1 mm for print drift.
-  const usableMm = stock.width - 2;
-  const withQuiet = modules + 2 * CODE128_QUIET_ZONE_MODULES;
-  const dots = Math.floor(usableMm / (withQuiet * dotMm));
-  const moduleMm = Math.max(1, dots) * dotMm;
-  const quality = dots < 1 || moduleMm < MIN_MODULE_MM ? "too-long" : moduleMm < COMFORTABLE_MODULE_MM ? "dense" : "ok";
-  return { modules, moduleMm, dots: Math.max(1, dots), widthMm: modules * moduleMm, quality };
+  const usableMm = stock.width - 2 * DRIFT_MM;
+  const withQuiet = modules + 2 * TAG_QUIET_ZONE_MODULES;
+  const dots = Math.max(1, Math.floor(usableMm / (withQuiet * dotMm)));
+  const moduleMm = dots * dotMm;
+  const quality = moduleMm >= MIN_RELIABLE_MODULE_MM && withQuiet * moduleMm <= usableMm ? "ok" : "too-long";
+  return { modules, moduleMm, dots, widthMm: modules * moduleMm, quality };
 }
 
 export function stockDpi(stock: LabelStock, rollDpi: RollPrinterDpi): number {

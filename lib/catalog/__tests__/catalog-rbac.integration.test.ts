@@ -21,7 +21,7 @@ async function sessionUserFor(phone: string): Promise<SessionUser> {
 
 describe("catalog stock roll-up", () => {
   it("flags the seeded low-stock and out-of-stock variants correctly", async () => {
-    const product = await prisma.product.findUniqueOrThrow({ where: { code: "KURTI12" } });
+    const product = await prisma.product.findUniqueOrThrow({ where: { code: "K12" } });
     const summaries = await getProductStockSummaries([product.id]);
     const summary = summaryFor(summaries, product.id);
 
@@ -32,7 +32,7 @@ describe("catalog stock roll-up", () => {
   });
 
   it("treats a product whose only variants are all out of stock as OUT_OF_STOCK", async () => {
-    const product = await prisma.product.findUniqueOrThrow({ where: { code: "WEST02" } });
+    const product = await prisma.product.findUniqueOrThrow({ where: { code: "W02" } });
     const variants = await prisma.productVariant.findMany({ where: { productId: product.id } });
     const totalAvailable = variants.reduce((sum, v) => sum + (v.stockQty - v.reservedQty), 0);
     expect(totalAvailable).toBeGreaterThan(0); // sanity: seed has some stock on this product overall
@@ -46,12 +46,12 @@ describe("catalog stock roll-up", () => {
 describe("catalog cost fields never reach a SALES_EXECUTIVE", () => {
   it("strips weightedAvgCost from a product-detail response for an SE, keeps it for Admin", async () => {
     const product = await prisma.product.findUniqueOrThrow({
-      where: { code: "KURTI12" },
+      where: { code: "K12" },
       select: { id: true },
     });
 
     const row = await loadProductDetail(product.id);
-    if (!row) throw new Error("seed product KURTI12 not found — run npm run db:seed");
+    if (!row) throw new Error("seed product K12 not found — run npm run db:seed");
 
     const summaries = await getProductStockSummaries([product.id]);
     const serialized = serializeProductDetail(row, summaryFor(summaries, product.id).available);

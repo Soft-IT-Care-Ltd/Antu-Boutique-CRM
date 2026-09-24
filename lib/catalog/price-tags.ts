@@ -24,6 +24,8 @@ export type TagSourceItem = TagData & {
   /** Suggested number of tags: units received (purchase) or on hand (product). */
   suggestedCopies: number;
   barcodeSafe: boolean;
+  /** A tag was printed before: the SKU can't change any more. */
+  locked: boolean;
 };
 
 const variantSelect = {
@@ -31,6 +33,7 @@ const variantSelect = {
   sku: true,
   stockQty: true,
   priceOverride: true,
+  tagPrintedAt: true,
   size: { select: { name: true } },
   color: { select: { name: true } },
   product: { select: { id: true, name: true, basePrice: true } },
@@ -50,6 +53,7 @@ function toItem(v: VariantRow, suggestedCopies: number): TagSourceItem {
     onHand: v.stockQty,
     suggestedCopies,
     barcodeSafe: isBarcodeSafeSku(v.sku),
+    locked: v.tagPrintedAt !== null,
   };
 }
 

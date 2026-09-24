@@ -9,6 +9,7 @@ import { createPurchase, PurchaseError } from "@/lib/inventory/purchases";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { packOrder } from "@/lib/orders/pack";
 import { reserveVariantStock } from "@/lib/orders/stock";
+import { testProductCode, testSku } from "@/lib/test/catalog-codes";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
 
 // CLAUDE.md rule 2 / PRD §6 invariant 2: a stock change and its
@@ -36,11 +37,12 @@ async function expectStockMatchesLedger(tx: Prisma.TransactionClient, variantId:
 
 async function makeScratchVariant(tx: Prisma.TransactionClient, tag: string) {
   const [size, color] = await Promise.all([tx.size.findFirstOrThrow({}), tx.color.findFirstOrThrow({})]);
+  const code = testProductCode();
   const product = await tx.product.create({
-    data: { code: `TST${tag}${Date.now()}`, name: `Ledger test ${tag}`, basePrice: 1000 },
+    data: { code, name: `Ledger test ${tag}`, basePrice: 1000 },
   });
   return tx.productVariant.create({
-    data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: `TST-${tag}-${Date.now()}` },
+    data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: testSku(code) },
   });
 }
 

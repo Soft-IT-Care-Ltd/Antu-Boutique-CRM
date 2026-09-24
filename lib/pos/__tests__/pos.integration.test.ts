@@ -29,6 +29,7 @@ import { closeDrawer, DrawerError, getDrawerSummary, openDrawer, recordDrawerMov
 import { findVariantByCode } from "@/lib/pos/lookup";
 import { loadReceiptOrder, renderReceiptHtml } from "@/lib/pos/receipt";
 import { createPosSale, PosSaleError, type PosContext } from "@/lib/pos/sale";
+import { testProductCode, testSku } from "@/lib/test/catalog-codes";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
 import { getWalletBalances } from "@/lib/wallets/ledger";
 
@@ -72,9 +73,9 @@ const post = (url: string, body: unknown) => new NextRequest(`http://localhost${
 async function freshVariant(tx: Prisma.TransactionClient, opts: { stock?: number; wac?: number; price?: number; sku?: string } = {}) {
   const size = await tx.size.findFirstOrThrow({ orderBy: { sortOrder: "asc" } });
   const color = await tx.color.findFirstOrThrow({ orderBy: { sortOrder: "asc" } });
-  const code = `POS${uniquePhone()}`;
+  const code = testProductCode();
   const product = await tx.product.create({ data: { code, name: `POS test ${code}`, basePrice: opts.price ?? 1000 } });
-  const variant = await tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: opts.sku ?? `PRD-${code}-T`, weightedAvgCost: opts.wac ?? 400 } });
+  const variant = await tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: opts.sku ?? testSku(code), weightedAvgCost: opts.wac ?? 400 } });
   if ((opts.stock ?? 10) > 0) {
     await recordStockMovement(tx, { variantId: variant.id, type: "PURCHASE_IN", qty: opts.stock ?? 10, unitCost: opts.wac ?? 400, referenceType: "OPENING_BALANCE", actorId: null });
   }
@@ -316,10 +317,11 @@ describe("price tags ↔ POS scan", () => {
       const tags = await expandTags(tx, { items: items.map((i) => ({ variantId: i.variantId, copies: 2 })), stock: roll, dpi: 203, startAt: 1 });
       expect(tags).toHaveLength(items.length * 2);
 
-      const legacy = await freshVariant(tx, { sku: "prd legacy" });
-      await expect(expandTags(tx, { items: [{ variantId: legacy.id, copies: 1 }], stock: roll, dpi: 203, startAt: 1 })).rejects.toThrow(PriceTagError);
-      const long = await freshVariant(tx, { sku: "PRD-AVERYLONGCODE-XXL-MUSTARDYELLOW" });
-      await expect(expandTags(tx, { items: [{ variantId: long.id, copies: 1 }], stock: findLabelStock("roll-38x25")!, dpi: 203, startAt: 1 })).rejects.toThrow(/too long/);
+      // Every SKU fits the smallest label now (≤ 9 characters, DB CHECK), so
+      // nothing tagged can be refused for length; a vanished variant still is.
+      await expect(expandTags(tx, { items: [{ variantId: "cmissingvariant000000000", copies: 1 }], stock: roll, dpi: 203, startAt: 1 })).rejects.toThrow(PriceTagError);
+      const smallest = findLabelStock("roll-38x25")!;
+      expect(await expandTags(tx, { items: items.map((i) => ({ variantId: i.variantId, copies: 1 })), stock: smallest, dpi: 203, startAt: 1 })).toHaveLength(items.length);
     });
   }, 120_000);
 });

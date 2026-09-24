@@ -31,6 +31,7 @@ import { recomputeOrderDueAmount } from "@/lib/orders/totals";
 import { verifyPayments } from "@/lib/payments/queries";
 import { prisma } from "@/lib/prisma";
 import { completeConditionCheck } from "@/lib/returns/condition-check";
+import { testProductCode, testSku } from "@/lib/test/catalog-codes";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
 import { getWalletBalances, getWalletStatement } from "@/lib/wallets/ledger";
 
@@ -73,8 +74,9 @@ function mockPayouts(payouts: Record<string, unknown>[], consignmentsByRef: Reco
 async function scratchVariant(tx: Tx) {
   const [size, color] = await Promise.all([tx.size.findFirstOrThrow({}), tx.color.findFirstOrThrow({})]);
   const tag = uniquePhone();
-  const product = await tx.product.create({ data: { code: `VFY${tag}`, name: `Verify P2 ${tag}`, basePrice: 1000 } });
-  return tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: `VFY-${tag}` } });
+  const code = testProductCode();
+  const product = await tx.product.create({ data: { code, name: `Verify P2 ${tag}`, basePrice: 1000 } });
+  return tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: testSku(code) } });
 }
 
 /** The invariant, three ways: the running figure we expect, sum(ledger) = stock_qty, and the DB's own commit-time trigger. */

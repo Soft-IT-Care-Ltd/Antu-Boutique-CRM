@@ -215,7 +215,7 @@ export function PosCheckout({
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {t.method !== "CARD" ? (
-                    <Input className="h-10 flex-1 font-mono uppercase" placeholder="TrxID (recommended)" aria-label="Transaction ID" value={t.transactionId} onChange={(e) => onChangeTender(t.key, { transactionId: e.target.value })} />
+                    <Input className="h-10 flex-1 font-mono uppercase placeholder:normal-case" placeholder="TrxID (recommended)" aria-label="Transaction ID" value={t.transactionId} onChange={(e) => onChangeTender(t.key, { transactionId: e.target.value })} />
                   ) : null}
                   {matching.length > 1 ? <WalletSelect wallets={matching} value={t.walletId} onChange={(v) => onChangeTender(t.key, { walletId: v })} className="h-10 w-44" /> : null}
                 </div>

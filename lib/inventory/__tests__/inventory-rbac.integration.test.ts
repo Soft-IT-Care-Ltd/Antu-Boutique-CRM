@@ -92,7 +92,7 @@ describe("a SALES_EXECUTIVE never gets inventory cost data", () => {
 describe("low-stock roll-up on seeded data", () => {
   it("rolls Embroidered Kurti's low variants up into one product alert", async () => {
     const alerts = await getLowStockAlerts();
-    const kurti = alerts.find((a) => a.productCode === "KURTI12");
+    const kurti = alerts.find((a) => a.productCode === "K12");
     expect(kurti).toBeDefined();
     expect(kurti!.lowVariants.length).toBeGreaterThan(0);
     expect(kurti!.message.length).toBeGreaterThan(0);

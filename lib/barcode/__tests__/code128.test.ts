@@ -61,33 +61,34 @@ describe("code128 encode → decode", () => {
 
 describe("POS scan normalisation", () => {
   it("reads back what the tag encodes, whatever the scanner adds", () => {
-    expect(normalizeScannedCode("PRD-KURTI12-XL-MAROON")).toBe("PRD-KURTI12-XL-MAROON");
-    expect(normalizeScannedCode("  PRD-KURTI12-XL-MAROON\r\n")).toBe("PRD-KURTI12-XL-MAROON");
-    expect(normalizeScannedCode("\tPRD-KURTI12-XL-MAROON")).toBe("PRD-KURTI12-XL-MAROON");
+    expect(normalizeScannedCode("K12MMYL")).toBe("K12MMYL");
+    expect(normalizeScannedCode("  K12MMYL\r\n")).toBe("K12MMYL");
+    expect(normalizeScannedCode("\tK12MMYL")).toBe("K12MMYL");
     // Caps Lock on: the scanner's keyboard emulation inverts letter case.
-    expect(normalizeScannedCode("prd-kurti12-xl-maroon")).toBe("PRD-KURTI12-XL-MAROON");
+    expect(normalizeScannedCode("k12mmyl")).toBe("K12MMYL");
   });
 
   it("rejects what can't be a SKU", () => {
     expect(normalizeScannedCode("red kurti")).toBeNull();
     expect(normalizeScannedCode("")).toBeNull();
-    expect(normalizeScannedCode("PRD_KURTI")).toBeNull();
+    expect(normalizeScannedCode("K12-M-MYL")).toBeNull();
+    expect(normalizeScannedCode("K12XXLMYL1")).toBeNull(); // 10 characters
   });
 
   it("only allows SKUs a barcode and a scanner round-trip exactly", () => {
-    expect(isBarcodeSafeSku("PRD-KURTI12-XL-MAROON")).toBe(true);
-    expect(isBarcodeSafeSku("prd-kurti")).toBe(false);
-    expect(isBarcodeSafeSku("PRD KURTI")).toBe(false);
-    expect(isBarcodeSafeSku("PRD-কুর্তি")).toBe(false);
+    expect(isBarcodeSafeSku("K12MMYL")).toBe(true);
+    expect(isBarcodeSafeSku("k12mmyl")).toBe(false);
+    expect(isBarcodeSafeSku("K12 M")).toBe(false);
+    expect(isBarcodeSafeSku("K12কুর্তি")).toBe(false);
   });
 
   it("spots a Bangla keyboard layout eating the scan", () => {
     expect(looksLikeBanglaKeyboard("প্রদ-কুর্তি")).toBe(true);
-    expect(looksLikeBanglaKeyboard("PRD-KURTI")).toBe(false);
+    expect(looksLikeBanglaKeyboard("K12MMYL")).toBe(false);
   });
 
   it("every normalised scan of a tag decodes to a barcode-safe SKU", () => {
-    for (const sku of ["PRD-KURTI12-XL-MAROON", "PRD-3PC05-M-BOTTLEGREEN"]) {
+    for (const sku of ["K12MMYL", "S01FMRN", "3P5XXLEGR"]) {
       const scanned = decode(code128Widths(sku));
       expect(normalizeScannedCode(scanned)).toBe(sku);
     }

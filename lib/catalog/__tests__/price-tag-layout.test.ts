@@ -8,17 +8,17 @@ const tag = (sku: string): TagData => ({ sku, productName: "Cotton Kurti <b>", s
 
 describe("price tag barcode fit", () => {
   it("uses whole printer dots for every bar", () => {
-    const fit = fitBarcode("PRD-KURTI12-M-MAROON", findLabelStock("roll-50x25")!, 203);
+    const fit = fitBarcode("K12MMRN", findLabelStock("roll-38x25")!, 203);
     expect(fit.dots).toBeGreaterThanOrEqual(1);
     expect(fit.moduleMm).toBeCloseTo((fit.dots * 25.4) / 203, 10);
-    expect(fit.widthMm).toBeLessThanOrEqual(50 - 2);
+    expect(fit.widthMm).toBeLessThanOrEqual(38 - 0.8);
   });
 
-  it("refuses a SKU that can't fit the label, and allows it on a wider one", () => {
-    const sku = "PRD-KURTI12-M-MUSTARDYELLOW";
-    expect(fitBarcode(sku, findLabelStock("roll-38x25")!, 203).quality).toBe("too-long");
-    expect(fitBarcode(sku, findLabelStock("roll-50x25")!, 203).quality).not.toBe("too-long");
-    expect(fitBarcode(sku, findLabelStock("a4-24")!, 600).quality).not.toBe("too-long");
+  it("refuses a code too long for reliable bars on the label, and allows it on a wider one", () => {
+    const long = "K12XXLMYL00"; // 11 characters — more than a SKU may have
+    expect(fitBarcode(long, findLabelStock("roll-38x25")!, 203).quality).toBe("too-long");
+    expect(fitBarcode(long, findLabelStock("roll-60x40")!, 203).quality).toBe("ok");
+    expect(fitBarcode(long, findLabelStock("a4-24")!, 600).quality).toBe("ok");
   });
 
   it("gives short SKUs comfortable bars", () => {
@@ -28,7 +28,7 @@ describe("price tag barcode fit", () => {
 
 describe("price tag HTML", () => {
   it("draws exactly the bars of the SKU and escapes the text", () => {
-    const sku = "PRD-KURTI12-M-MAROON";
+    const sku = "K12MMRN";
     const html = renderTagHtml(tag(sku), findLabelStock("roll-50x25")!, 203);
     expect(html).toContain(`>${sku}<`);
     expect(html).toContain("Cotton Kurti &lt;b&gt;");

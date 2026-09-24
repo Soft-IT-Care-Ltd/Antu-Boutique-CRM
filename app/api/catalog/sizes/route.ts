@@ -4,8 +4,12 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
+import { SIZE_CODE_MESSAGE, SIZE_CODE_PATTERN } from "@/lib/catalog/codes";
+import { generateSizeCode } from "@/lib/catalog/sku";
 
 const createSchema = z.object({
+  // PRD §4.2 SKU code — suggested from the name when left blank.
+  code: z.string().trim().toUpperCase().regex(SIZE_CODE_PATTERN, SIZE_CODE_MESSAGE).optional(),
   name: z.string().trim().min(1).max(30),
   sortOrder: z.number().int().default(0),
   isActive: z.boolean().default(true),
@@ -35,7 +39,10 @@ export async function POST(request: NextRequest) {
   const existing = await prisma.size.findUnique({ where: { name: parsed.data.name } });
   if (existing) return NextResponse.json({ error: "A size with this name already exists" }, { status: 409 });
 
-  const size = await prisma.size.create({ data: parsed.data });
+  const code = parsed.data.code || (await generateSizeCode(prisma, parsed.data.name));
+  if (await prisma.size.findUnique({ where: { code } })) return NextResponse.json({ error: `Size code ${code} is already used` }, { status: 409 });
+
+  const size = await prisma.size.create({ data: { ...parsed.data, code } });
 
   await writeAuditLog({
     actorId: guard.user.id,

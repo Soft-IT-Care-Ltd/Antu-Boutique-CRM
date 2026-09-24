@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { writeAuditLog } from "@/lib/audit/log";
 import { requirePermission } from "@/lib/auth/require-permission";
+import { lockSkusForPrintedTags } from "@/lib/catalog/sku";
 import { findLabelStock, LABEL_STOCKS, ROLL_PRINTER_DPIS, stockDpi } from "@/lib/catalog/price-tag-layout";
 import { expandTags, PriceTagError, renderPriceTagsPdf } from "@/lib/catalog/price-tags";
 import { badRequest, idString } from "@/lib/finance/http";
@@ -12,7 +14,8 @@ import { prisma } from "@/lib/prisma";
 // (label printer), or a grid on an A4 sticker sheet. Posted as a normal form
 // (field `payload`, JSON) by the tag screen so the PDF opens in a new tab on
 // every browser, iPad Safari included, without a pop-up blocker in the way;
-// a JSON body works too. Reads only; nothing is stored.
+// a JSON body works too. The PDF isn't stored; printing locks each tagged
+// variant's SKU (PRD §4.2).
 
 const requestSchema = z.object({
   items: z
@@ -48,6 +51,16 @@ export async function POST(request: NextRequest) {
   try {
     const tags = await expandTags(prisma, { items: parsed.data.items, stock, dpi, startAt: parsed.data.startAt });
     const pdf = await renderPriceTagsPdf(tags, stock, dpi, parsed.data.startAt);
+
+    // PRD §4.2: a SKU locks the first time its tag is printed — from now on
+    // a physical tag carries it. Audited per product.
+    const locked = await prisma.$transaction((tx) => lockSkusForPrintedTags(tx, parsed.data.items.filter((i) => i.copies > 0).map((i) => i.variantId)));
+    const byProduct = new Map<string, string[]>();
+    for (const v of locked) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v.sku]);
+    for (const [productId, skus] of byProduct) {
+      await writeAuditLog({ actorId: guard.user.id, action: "catalog.variant.sku_lock", entityType: "product", entityId: productId, after: { lockedSkus: skus, reason: "price tag printed" }, request });
+    }
+
     return new NextResponse(new Uint8Array(pdf), {
       headers: {
         "Content-Type": "application/pdf",

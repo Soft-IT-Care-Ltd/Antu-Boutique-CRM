@@ -2,6 +2,7 @@ import { PrismaClient, type RoleName } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { PERMISSIONS, ROLE_TEMPLATES } from "../lib/auth/permission-definitions";
+import { buildVariantSku } from "../lib/catalog/codes";
 // Imported, not duplicated: these take a transaction client and are free of
 // "server-only", so demo stock moves through the exact code the app uses —
 // the DB's stock/ledger consistency trigger would reject anything else.
@@ -10,7 +11,7 @@ import { recordStockMovement } from "../lib/inventory/ledger";
 import { createPurchase } from "../lib/inventory/purchases";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
-// for the same "server-only" reason as buildVariantSku/nextOrderNo above.
+// for the same "server-only" reason as nextOrderNo below.
 const ORDER_EDIT_WINDOW_SETTING_KEY = "order_edit_window_minutes";
 const DEFAULT_ORDER_EDIT_WINDOW_MINUTES = 30;
 
@@ -18,16 +19,8 @@ const DEFAULT_ORDER_EDIT_WINDOW_MINUTES = 30;
 const PACKING_SLA_HOURS_SETTING_KEY = "packing_sla_hours";
 const DEFAULT_PACKING_SLA_HOURS = 24;
 
-// Mirrors lib/catalog/sku.ts's buildVariantSku — duplicated instead of
-// imported because that module is marked "server-only" (throws outside a
-// Next.js RSC context) and this script runs standalone under tsx.
-function buildVariantSku(productCode: string, sizeName: string, colorName: string): string {
-  const slug = (input: string) => input.toUpperCase().replace(/[^A-Z0-9]+/g, "");
-  return `PRD-${slug(productCode)}-${slug(sizeName)}-${slug(colorName)}`;
-}
-
 // Mirrors lib/orders/order-number.ts's generateOrderNumber — duplicated for
-// the same "server-only" reason as buildVariantSku above. Demo orders MUST
+// the same "server-only" reason. Demo orders MUST
 // go through this (not a hardcoded "AB-2609-0001" string) so they advance
 // the same order_sequences counter the real API route reads — otherwise the
 // very first order placed through the app collides with a seeded one.
@@ -57,17 +50,26 @@ const ROLE_LABELS: Record<RoleName, string> = {
   POS_OPERATOR: "Showroom / POS Operator",
 };
 
-const SIZES = ["Free", "S", "M", "L", "XL", "XXL"];
+// PRD §4.2 short SKU codes (lib/catalog/codes.ts): the same codes the
+// 20260925120000 migration gave an existing database.
+const SIZES: Array<{ name: string; code: string }> = [
+  { name: "Free", code: "F" },
+  { name: "S", code: "S" },
+  { name: "M", code: "M" },
+  { name: "L", code: "L" },
+  { name: "XL", code: "XL" },
+  { name: "XXL", code: "XXL" },
+];
 
-const COLORS: Array<{ name: string; hexCode: string }> = [
-  { name: "Black", hexCode: "#000000" },
-  { name: "White", hexCode: "#FFFFFF" },
-  { name: "Maroon", hexCode: "#800000" },
-  { name: "Navy Blue", hexCode: "#000080" },
-  { name: "Red", hexCode: "#D7263D" },
-  { name: "Mustard Yellow", hexCode: "#E1AD01" },
-  { name: "Pink", hexCode: "#F4A6C6" },
-  { name: "Emerald Green", hexCode: "#046A38" },
+const COLORS: Array<{ name: string; code: string; hexCode: string }> = [
+  { name: "Black", code: "BLK", hexCode: "#000000" },
+  { name: "White", code: "WHT", hexCode: "#FFFFFF" },
+  { name: "Maroon", code: "MRN", hexCode: "#800000" },
+  { name: "Navy Blue", code: "NBL", hexCode: "#000080" },
+  { name: "Red", code: "RD", hexCode: "#D7263D" },
+  { name: "Mustard Yellow", code: "MYL", hexCode: "#E1AD01" },
+  { name: "Pink", code: "PNK", hexCode: "#F4A6C6" },
+  { name: "Emerald Green", code: "EGR", hexCode: "#046A38" },
 ];
 
 const CATEGORIES = ["Saree", "Salwar Kameez / Three-Piece", "Kurti", "Western Wear", "Abaya & Hijab", "Accessories"];
@@ -129,11 +131,11 @@ async function seedPermissionsAndRoles() {
 }
 
 async function seedCatalogMasters() {
-  for (const [index, name] of SIZES.entries()) {
+  for (const [index, size] of SIZES.entries()) {
     await prisma.size.upsert({
-      where: { name },
+      where: { name: size.name },
       update: { sortOrder: index },
-      create: { name, sortOrder: index },
+      create: { name: size.name, code: size.code, sortOrder: index },
     });
   }
 
@@ -141,7 +143,7 @@ async function seedCatalogMasters() {
     await prisma.color.upsert({
       where: { name: color.name },
       update: { hexCode: color.hexCode, sortOrder: index },
-      create: { name: color.name, hexCode: color.hexCode, sortOrder: index },
+      create: { name: color.name, code: color.code, hexCode: color.hexCode, sortOrder: index },
     });
   }
 
@@ -173,7 +175,7 @@ type DemoProduct = {
 
 const DEMO_PRODUCTS: DemoProduct[] = [
   {
-    code: "SAREE01",
+    code: "S01",
     name: "Jamdani Saree — Classic",
     categoryName: "Saree",
     brand: "Antu Originals",
@@ -187,7 +189,7 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     ],
   },
   {
-    code: "KURTI12",
+    code: "K12",
     name: "Embroidered Kurti",
     categoryName: "Kurti",
     brand: "Antu Originals",
@@ -203,7 +205,7 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     ],
   },
   {
-    code: "3PC05",
+    code: "3P5",
     name: "Three-Piece Salwar Set",
     categoryName: "Salwar Kameez / Three-Piece",
     brand: "Antu Originals",
@@ -217,7 +219,7 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     ],
   },
   {
-    code: "WEST02",
+    code: "W02",
     name: "Western Top",
     categoryName: "Western Wear",
     brand: "Antu Originals",
@@ -288,7 +290,7 @@ async function seedCatalogProducts() {
             productId: product.id,
             sizeId: size.id,
             colorId: color.id,
-            sku: buildVariantSku(demo.code, size.name, color.name),
+            sku: buildVariantSku(demo.code, size.code, color.code),
             weightedAvgCost: variant.cost,
             lowStockThreshold: variant.threshold ?? null,
             priceOverride: variant.priceOverride ?? null,
@@ -527,10 +529,10 @@ async function seedDemoOrders() {
   const farzana = await prisma.customer.findUniqueOrThrow({ where: { phone: "01911223344" } });
   const shirin = await prisma.customer.findUniqueOrThrow({ where: { phone: "01611556677" } });
   const kurtiVariant = await prisma.productVariant.findFirstOrThrow({
-    where: { product: { code: "KURTI12" }, size: { name: "M" }, color: { name: "Maroon" } },
+    where: { product: { code: "K12" }, size: { name: "M" }, color: { name: "Maroon" } },
   });
   const sareeVariant = await prisma.productVariant.findFirstOrThrow({
-    where: { product: { code: "SAREE01" }, size: { name: "Free" }, color: { name: "Navy Blue" } },
+    where: { product: { code: "S01" }, size: { name: "Free" }, color: { name: "Navy Blue" } },
   });
   const steadfast = await prisma.courierCompany.findUniqueOrThrow({ where: { name: "Steadfast Courier" } });
   const insideZone = await prisma.courierZone.findFirstOrThrow({ where: { courierId: steadfast.id, zone: "INSIDE_CITY" } });
@@ -637,12 +639,12 @@ async function seedInventory() {
 
   const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
   const [sareeMaroon, sareeBlack, kurtiMM, kurtiLM, kurtiLMustard, threePcPink] = await Promise.all([
-    variantFor("SAREE01", "Free", "Maroon"),
-    variantFor("SAREE01", "Free", "Black"),
-    variantFor("KURTI12", "M", "Maroon"),
-    variantFor("KURTI12", "L", "Maroon"),
-    variantFor("KURTI12", "L", "Mustard Yellow"),
-    variantFor("3PC05", "L", "Pink"),
+    variantFor("S01", "Free", "Maroon"),
+    variantFor("S01", "Free", "Black"),
+    variantFor("K12", "M", "Maroon"),
+    variantFor("K12", "L", "Maroon"),
+    variantFor("K12", "L", "Mustard Yellow"),
+    variantFor("3P5", "L", "Pink"),
   ]);
 
   await prisma.$transaction(
@@ -706,9 +708,9 @@ const STEADFAST_COST_RATES = [
   { zone: "OUTSIDE_CITY", baseRate: 120, perKgRate: 25 },
 ] as const;
 
-// Parcel weight per unit in grams. WEST02 is deliberately left blank so the
+// Parcel weight per unit in grams. W02 is deliberately left blank so the
 // send dialog's "some items have no weight" warning has something to show.
-const VARIANT_WEIGHTS_GRAMS: Record<string, number> = { SAREE01: 650, KURTI12: 250, "3PC05": 480 };
+const VARIANT_WEIGHTS_GRAMS: Record<string, number> = { S01: 650, K12: 250, "3P5": 480 };
 
 async function seedCourierCosts() {
   const steadfast = await prisma.courierCompany.findUniqueOrThrow({ where: { provider: "STEADFAST" } });
@@ -749,7 +751,7 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
   {
     stage: "PACKED",
     customerPhone: "01812345678",
-    lines: [{ code: "KURTI12", size: "M", color: "Mustard Yellow", qty: 1, unitPrice: 1450 }],
+    lines: [{ code: "K12", size: "M", color: "Mustard Yellow", qty: 1, unitPrice: 1450 }],
     zone: "INSIDE_CITY",
     deliveryNote: "Call before coming — office hours only, 10am–6pm.",
     internalNote: "Customer is a repeat buyer; gave 50 tk discount last time.",
@@ -759,8 +761,8 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
     stage: "PACKED",
     customerPhone: "01511998877",
     lines: [
-      { code: "3PC05", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
-      { code: "WEST02", size: "S", color: "White", qty: 1, unitPrice: 990 },
+      { code: "3P5", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
+      { code: "W02", size: "S", color: "White", qty: 1, unitPrice: 990 },
     ],
     zone: "OUTSIDE_CITY",
     advance: 500,
@@ -769,7 +771,7 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
   {
     stage: "HANDED_TO_COURIER",
     customerPhone: "01711998800",
-    lines: [{ code: "SAREE01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
+    lines: [{ code: "S01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
     zone: "OUTSIDE_CITY",
     advance: 1000,
     hoursAgo: 20,
@@ -777,7 +779,7 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
   {
     stage: "IN_TRANSIT",
     customerPhone: "01911223344",
-    lines: [{ code: "KURTI12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 }],
+    lines: [{ code: "K12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 }],
     zone: "INSIDE_CITY",
     deliveryNote: "Leave with the guard if not home.",
     hoursAgo: 30,
@@ -785,14 +787,14 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
   {
     stage: "APPROVAL_PENDING",
     customerPhone: "01611556677",
-    lines: [{ code: "3PC05", size: "L", color: "Pink", qty: 1, unitPrice: 2750 }],
+    lines: [{ code: "3P5", size: "L", color: "Pink", qty: 1, unitPrice: 2750 }],
     zone: "OUTSIDE_CITY",
     hoursAgo: 52,
   },
   {
     stage: "DELIVERED",
     customerPhone: "01812345678",
-    lines: [{ code: "SAREE01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
+    lines: [{ code: "S01", size: "Free", color: "Navy Blue", qty: 1, unitPrice: 4200 }],
     zone: "INSIDE_CITY",
     advance: 1200,
     hoursAgo: 75,
@@ -800,7 +802,7 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
   {
     stage: "RETURNED",
     customerPhone: "01511998877",
-    lines: [{ code: "KURTI12", size: "M", color: "Mustard Yellow", qty: 2, unitPrice: 1450 }],
+    lines: [{ code: "K12", size: "M", color: "Mustard Yellow", qty: 2, unitPrice: 1450 }],
     zone: "OUTSIDE_CITY",
     hoursAgo: 96,
   },
@@ -808,8 +810,8 @@ const COURIER_DEMO_ORDERS: CourierDemoSpec[] = [
     stage: "PARTIAL_DELIVERED",
     customerPhone: "01911223344",
     lines: [
-      { code: "KURTI12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 },
-      { code: "3PC05", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
+      { code: "K12", size: "L", color: "Maroon", qty: 1, unitPrice: 1450 },
+      { code: "3P5", size: "M", color: "Emerald Green", qty: 1, unitPrice: 2950 },
     ],
     zone: "INSIDE_CITY",
     hoursAgo: 60,

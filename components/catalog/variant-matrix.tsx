@@ -249,8 +249,10 @@ export function VariantMatrix({
                       <Input
                         value={fieldValue(variant, "sku") as string}
                         disabled={!canEdit || variant.skuLocked}
-                        onChange={(e) => setField(variant, "sku", e.target.value)}
-                        className="h-7 w-40 font-mono text-xs"
+                        maxLength={9}
+                        title={variant.skuLocked ? "Locked — a price tag has been printed for this SKU" : "Up to 9 capital letters and digits"}
+                        onChange={(e) => setField(variant, "sku", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                        className="h-7 w-28 font-mono text-xs"
                       />
                     </TableCell>
                     <TableCell>

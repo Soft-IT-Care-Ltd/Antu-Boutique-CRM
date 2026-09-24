@@ -214,6 +214,8 @@ model User {
 model Size {
   id        String           @id @default(cuid())
   name      String           @unique
+  // SKU code, 1–3 capital letters/digits (Free → F, XL → XL). See Color.code.
+  code      String           @unique
   sortOrder Int              @default(0)
   isActive  Boolean          @default(true)
   variants  ProductVariant[]
@@ -226,6 +228,10 @@ model Size {
 model Color {
   id        String           @id @default(cuid())
   name      String           @unique
+  // SKU code, 2–3 capital letters/digits (Maroon → MRN, Mustard Yellow → MYL).
+  // SKU = product code + size code + colour code, at most 9 characters, so
+  // every price tag scans reliably on a 38 mm label (lib/catalog/codes.ts).
+  code      String           @unique
   hexCode   String
   sortOrder Int              @default(0)
   isActive  Boolean          @default(true)
@@ -313,8 +319,12 @@ model ProductVariant {
   colorId   String
   color     Color   @relation(fields: [colorId], references: [id])
 
-  sku       String  @unique
-  skuLocked Boolean @default(false)
+  sku          String    @unique
+  // Locked once its first price tag is printed (tagPrintedAt set): a printed
+  // tag carries this SKU for good. Kept equal to (tagPrintedAt IS NOT NULL)
+  // by a DB CHECK; a trigger refuses any SKU change after that.
+  skuLocked    Boolean   @default(false)
+  tagPrintedAt DateTime?
 
   stockQty          Int      @default(0)
   reservedQty       Int      @default(0)

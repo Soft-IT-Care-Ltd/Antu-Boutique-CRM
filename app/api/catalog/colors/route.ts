@@ -4,8 +4,12 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
+import { COLOR_CODE_MESSAGE, COLOR_CODE_PATTERN } from "@/lib/catalog/codes";
+import { generateColorCode } from "@/lib/catalog/sku";
 
 const createSchema = z.object({
+  // PRD §4.2 SKU code — suggested from the name when left blank.
+  code: z.string().trim().toUpperCase().regex(COLOR_CODE_PATTERN, COLOR_CODE_MESSAGE).optional(),
   name: z.string().trim().min(1).max(40),
   hexCode: z
     .string()
@@ -39,7 +43,10 @@ export async function POST(request: NextRequest) {
   const existing = await prisma.color.findUnique({ where: { name: parsed.data.name } });
   if (existing) return NextResponse.json({ error: "A colour with this name already exists" }, { status: 409 });
 
-  const color = await prisma.color.create({ data: { ...parsed.data, hexCode: parsed.data.hexCode.toUpperCase() } });
+  const code = parsed.data.code || (await generateColorCode(prisma, parsed.data.name));
+  if (await prisma.color.findUnique({ where: { code } })) return NextResponse.json({ error: `Colour code ${code} is already used` }, { status: 409 });
+
+  const color = await prisma.color.create({ data: { ...parsed.data, code, hexCode: parsed.data.hexCode.toUpperCase() } });
 
   await writeAuditLog({
     actorId: guard.user.id,

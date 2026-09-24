@@ -61,6 +61,8 @@ export function ProductForm({
 }) {
   const router = useRouter();
   const isEdit = Boolean(product);
+  // PRD §4.2: the code is in every SKU — locked once any of them is on a printed tag.
+  const codeLocked = Boolean(product?.variants?.some((v) => v.skuLocked));
   const [values, setValues] = useState<ProductFormValues>(toFormValues(product));
   const [tagInput, setTagInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -134,10 +136,16 @@ export function ProductForm({
               </Label>
               <Input
                 id="product-code"
+                className="font-mono uppercase placeholder:normal-case"
+                maxLength={3}
+                disabled={codeLocked}
                 value={values.code}
-                onChange={(e) => setValues({ ...values, code: e.target.value.toUpperCase() })}
-                placeholder="e.g. KURTI12"
+                onChange={(e) => setValues({ ...values, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })}
+                placeholder="e.g. K12"
               />
+              <p className="text-xs text-muted-foreground">
+                {codeLocked ? "Locked — price tags are printed for this product's SKUs." : "2–3 letters or digits; starts every SKU of this product (K12 + M + MYL = K12MMYL)."}
+              </p>
             </div>
           </div>
 

@@ -30,10 +30,11 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
+import { suggestColorCode } from "@/lib/catalog/codes";
 import type { ColorMaster } from "@/lib/catalog/types";
 
-type FormState = { id?: string; name: string; hexCode: string; sortOrder: number; isActive: boolean };
-const EMPTY_FORM: FormState = { name: "", hexCode: "#000000", sortOrder: 0, isActive: true };
+type FormState = { id?: string; name: string; code: string; hexCode: string; sortOrder: number; isActive: boolean };
+const EMPTY_FORM: FormState = { name: "", code: "", hexCode: "#000000", sortOrder: 0, isActive: true };
 
 export function ColorManager({ canManage }: { canManage: boolean }) {
   const [colors, setColors] = useState<ColorMaster[] | null>(null);
@@ -43,6 +44,8 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  // A new colour's code is suggested from its name (Mustard Yellow → MYL), never clashing.
+  const suggestedCode = !form.id && form.name.trim() ? suggestColorCode(form.name, new Set((colors ?? []).map((c) => c.code))) : null;
 
   async function load() {
     try {
@@ -65,7 +68,7 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
   }
 
   function openEdit(color: ColorMaster) {
-    setForm({ id: color.id, name: color.name, hexCode: color.hexCode, sortOrder: color.sortOrder, isActive: color.isActive });
+    setForm({ id: color.id, name: color.name, code: color.code, hexCode: color.hexCode, sortOrder: color.sortOrder, isActive: color.isActive });
     setFormError(null);
     setDialogOpen(true);
   }
@@ -77,12 +80,12 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
       if (form.id) {
         await fetchJson(`/api/catalog/colors/${form.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ name: form.name, hexCode: form.hexCode, sortOrder: form.sortOrder, isActive: form.isActive }),
+          body: JSON.stringify({ name: form.name, code: form.code || undefined, hexCode: form.hexCode, sortOrder: form.sortOrder, isActive: form.isActive }),
         });
       } else {
         await fetchJson("/api/catalog/colors", {
           method: "POST",
-          body: JSON.stringify({ name: form.name, hexCode: form.hexCode, sortOrder: form.sortOrder, isActive: form.isActive }),
+          body: JSON.stringify({ name: form.name, code: form.code || suggestedCode || undefined, hexCode: form.hexCode, sortOrder: form.sortOrder, isActive: form.isActive }),
         });
       }
       setDialogOpen(false);
@@ -125,6 +128,20 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="color-name">Name</Label>
                   <Input id="color-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="color-code">SKU code</Label>
+                  <Input
+                    id="color-code"
+                    className="font-mono uppercase placeholder:normal-case"
+                    maxLength={3}
+                    value={form.code}
+                    placeholder={suggestedCode ?? "e.g. MRN"}
+                    onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    2–3 letters or digits, part of every SKU in this colour{form.id ? " — can't change once tags are printed" : suggestedCode ? ` (${suggestedCode} if left blank)` : ""}.
+                  </p>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="color-hex">Hex code</Label>
@@ -177,6 +194,7 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
           <TableHeader>
             <TableRow>
               <TableHead>Colour</TableHead>
+              <TableHead>Code</TableHead>
               <TableHead>Hex</TableHead>
               <TableHead>Variants</TableHead>
               <TableHead>Status</TableHead>
@@ -195,6 +213,7 @@ export function ColorManager({ canManage }: { canManage: boolean }) {
                     {color.name}
                   </div>
                 </TableCell>
+                <TableCell className="font-mono text-sm">{color.code}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{color.hexCode}</TableCell>
                 <TableCell>{color._count?.variants ?? 0}</TableCell>
                 <TableCell>

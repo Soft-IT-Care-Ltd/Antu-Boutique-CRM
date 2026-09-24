@@ -6,11 +6,13 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { loadProductDetail, serializeProductDetail } from "@/lib/catalog/product-detail";
+import { PRODUCT_CODE_MESSAGE, PRODUCT_CODE_PATTERN } from "@/lib/catalog/codes";
+import { countLockedVariants, regenerateSkus, SkuError } from "@/lib/catalog/sku";
 import { getProductStockSummaries, summaryFor } from "@/lib/catalog/stock-status";
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  code: z.string().trim().min(1).max(20).optional(),
+  code: z.string().trim().toUpperCase().regex(PRODUCT_CODE_PATTERN, PRODUCT_CODE_MESSAGE).optional(),
   categoryId: z.string().cuid().nullish(),
   brand: z.string().trim().max(120).nullish(),
   description: z.string().trim().max(4000).nullish(),
@@ -48,9 +50,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
   const { categoryId, code, ...rest } = parsed.data;
 
-  if (code && code !== existing.code) {
+  const codeChanges = Boolean(code && code !== existing.code);
+  if (codeChanges) {
     const clash = await prisma.product.findUnique({ where: { code } });
     if (clash) return NextResponse.json({ error: "Product code already in use" }, { status: 409 });
+    // PRD §4.2: editable until the first tag is printed — the code is in every printed SKU.
+    const locked = await countLockedVariants(prisma, { productId: id });
+    if (locked > 0) return NextResponse.json({ error: `Price tags are already printed for ${locked} of this product's variants — its code is locked.` }, { status: 409 });
   }
 
   if (categoryId) {
@@ -58,15 +64,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!category) return NextResponse.json({ error: "Category not found" }, { status: 400 });
   }
 
-  const product = await prisma.product.update({
-    where: { id },
-    data: {
-      ...rest,
-      ...(code !== undefined ? { code } : {}),
-      ...(categoryId !== undefined ? { categoryId } : {}),
-    },
-    include: { category: { select: { id: true, name: true } } },
-  });
+  let product;
+  let skuChanges: [string, string][] = [];
+  try {
+    ({ product, skuChanges } = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id },
+        data: {
+          ...rest,
+          ...(code !== undefined ? { code } : {}),
+          ...(categoryId !== undefined ? { categoryId } : {}),
+        },
+        include: { category: { select: { id: true, name: true } } },
+      });
+      // Every SKU is built from the product code: rebuild them with it.
+      return { product: updated, skuChanges: codeChanges ? await regenerateSkus(tx, { productId: id }) : [] };
+    }));
+  } catch (error) {
+    if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
 
   await writeAuditLog({
     actorId: guard.user.id,
@@ -74,7 +91,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     entityType: "product",
     entityId: product.id,
     before: { ...existing, basePrice: existing.basePrice.toString() },
-    after: { ...product, basePrice: product.basePrice.toString() },
+    after: { ...product, basePrice: product.basePrice.toString(), ...(skuChanges.length > 0 ? { skuChanges } : {}) },
     request,
   });
 

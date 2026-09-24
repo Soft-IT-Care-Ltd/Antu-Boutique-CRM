@@ -4,13 +4,14 @@
 // can find.
 
 /**
- * SKUs are uppercase letters, digits and hyphens — exactly what the
- * generator produces (PRD-<code>-<SIZE>-<COLOR>). Nothing a scanner's
- * keyboard emulation could type differently, nothing Code 128 can't carry.
+ * SKUs are capital letters and digits, at most 9 (lib/catalog/codes.ts:
+ * product + size + colour code). Nothing a scanner's keyboard emulation
+ * could type differently, nothing Code 128 can't carry, and short enough for
+ * reliable 0.25 mm bars on a 38 mm tag. Held by a DB CHECK too.
  */
-export const SKU_PATTERN = /^[A-Z0-9-]{1,60}$/;
+export const SKU_PATTERN = /^[A-Z0-9]{1,9}$/;
 
-export const SKU_PATTERN_MESSAGE = "A SKU may only use capital letters A–Z, digits and hyphens (no spaces)";
+export const SKU_PATTERN_MESSAGE = "A SKU is up to 9 capital letters and digits — no spaces or symbols";
 
 export function isBarcodeSafeSku(sku: string): boolean {
   return SKU_PATTERN.test(sku);

@@ -37,7 +37,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 const editSchema = z.object({
   variantId: z.string().cuid(),
   // P3.1 — a SKU is what its price tag's barcode carries and what the POS
-  // scan box reads back, so it's held to the barcode-safe form (lib/barcode/scan.ts).
+  // scan box reads back: up to 9 capital letters/digits (lib/barcode/scan.ts).
   sku: z.string().trim().toUpperCase().regex(SKU_PATTERN, SKU_PATTERN_MESSAGE).optional(),
   priceOverride: z.union([z.coerce.number().nonnegative(), z.null()]).optional(),
   lowStockThreshold: z.union([z.coerce.number().int().min(0), z.null()]).optional(),
@@ -70,9 +70,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   for (const edit of parsed.data.edits) {
     const current = existingById.get(edit.variantId)!;
-    if (edit.sku !== undefined && edit.sku !== current.sku && current.skuLocked) {
+    // PRD §4.2: a SKU can be edited until its first price tag is printed —
+    // after that the tag carries it (a DB trigger refuses the change too).
+    if (edit.sku !== undefined && edit.sku !== current.sku && current.tagPrintedAt) {
       return NextResponse.json(
-        { error: `SKU for ${current.sku} has already been edited once and is now locked` },
+        { error: `A price tag has already been printed for ${current.sku} — its SKU is locked` },
         { status: 409 },
       );
     }
@@ -93,10 +95,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     parsed.data.edits.map((edit) => {
       const current = existingById.get(edit.variantId)!;
       const data: Record<string, unknown> = {};
-      if (edit.sku !== undefined && edit.sku !== current.sku) {
-        data.sku = edit.sku;
-        data.skuLocked = true;
-      }
+      if (edit.sku !== undefined && edit.sku !== current.sku) data.sku = edit.sku;
       if (edit.priceOverride !== undefined) data.priceOverride = edit.priceOverride;
       if (edit.lowStockThreshold !== undefined) data.lowStockThreshold = edit.lowStockThreshold;
       if (edit.weightGrams !== undefined) data.weightGrams = edit.weightGrams;

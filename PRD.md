@@ -81,16 +81,16 @@ It must run the whole business in one place: lead → order → stock → packin
 
 **Category:** name, parent (one level of nesting), active flag, sort order.
 
-**Product** (the garment): name, category, brand/house, description, fabric, base selling price, product images (multiple), `is_active`, tags.
+**Product** (the garment): name, **short code** (2–3 capital letters/digits, unique, e.g. `K12`; suggested from the name, editable until the first price tag is printed), category, brand/house, description, fabric, base selling price, product images (multiple), `is_active`, tags.
 
 **Product Variant** (what actually has stock and price):
 
 | Field | Note |
 |---|---|
 | `product_id` | parent garment |
-| `size` | from the Size master list (Free, S, M, L, XL, XXL, or numeric) |
-| `color` | from the Colour master list, with a hex swatch |
-| `sku` | auto-generated `PRD-<code>-<SIZE>-<COLOR>`, unique, editable once |
+| `size` | from the Size master list (Free, S, M, L, XL, XXL, or numeric), each with a 1–3 character SKU code (Free → `F`) |
+| `color` | from the Colour master list, with a hex swatch and a 2–3 character SKU code (Maroon → `MRN`, Mustard Yellow → `MYL`) |
+| `sku` | `<product code><size code><colour code>`, e.g. `K12MMYL` — no separators, **at most 9 characters**, unique; **locked once its first price tag is printed** |
 | `stock_qty`, `reserved_qty` | on-hand and reserved (available = stock − reserved) |
 | `weighted_avg_cost` | recalculated on every purchase |
 | `price_override` | optional; falls back to product base price |
@@ -99,6 +99,8 @@ It must run the whole business in one place: lead → order → stock → packin
 
 - **Variant matrix screen:** pick sizes × colours, generate all combinations at once, set stock and cost in a grid.
 - Size and Colour are **master lists in Settings** — so "Maroon" is one value, not five spellings.
+- **Why SKUs are short** (decided P3.1, before real products went in). The SKU is what a price tag's Code 128 barcode carries and what the POS scan box reads back, and it must scan reliably on the smallest label, 38 mm at 203 dpi. That needs bars at least 2 printer dots (0.25 mm) wide: measured with one dot of thermal ink spread, 1-dot bars stop scanning while 2-dot bars keep reading. At 2 dots, with a 6-bar quiet zone each side, a 38 mm label holds 9 Code 128 characters. So SKU = product code (2–3) + size code (1–3) + colour code (2–3), **without hyphens**, which keeps every combination, XXL and Free included, within 9. Codes are suggested automatically (`lib/catalog/codes.ts`; a taken code is numbered: `MRN` → `MR2`) and can be typed. The database holds all of it: code lengths, SKU ≤ 9 capital letters/digits (CHECKs), and uniqueness.
+- **SKU lock.** Generating a price-tag PDF for a variant stamps `tagPrintedAt` and locks its SKU; a DB trigger refuses any later SKU change or un-locking. Until then the SKU follows its codes: changing a product, size or colour code rebuilds the affected SKUs in the same transaction (audited). Once any of them is on a printed tag, that code can't change either. A SKU can also be typed by hand (≤ 9 capital letters/digits) until its tag is printed.
 - Low-stock alerts fire **per variant**, plus a product-level roll-up ("Kurti #12: only XL left").
 
 **Outfit Set (BOM / package):** a sellable item composed of multiple variants (kurti L/Maroon + dupatta + plazo L). Cost = sum of component `weighted_avg_cost`. **Available-to-sell = floor of (component available ÷ component qty)** across components. Selling an outfit set deducts every component.
@@ -187,8 +189,8 @@ plus `ON_HOLD`, `CANCELLED`, `RETURNED`, `REFUNDED`, `EXCHANGE_REQUESTED`, and `
 - **Day-end count.** Closing needs a note when the count differs. It freezes the expected figure. **The count verifies that day's cash payments** into the wallet (audited as `payment.verify` via `cash_drawer_close`); card and mobile payments stay in the Accounts queue. **The difference posts once** as a **"Cash over/short"** expense (`CASH_OVER_SHORT`, a system category) from the wallet: a shortage is a cost, an overage a credit (negative, allowed by `expenses_amount_sign_chk` for drawer rows only). So the wallet follows the counted cash, and P&L sees cash losses under their own heading, apart from stock shortage.
 - **An opening count** that differs from the last counted close needs a note but posts nothing (it may be a top-up). Any gap between the wallet's books and the count is shown on the reconciliation screen for Accounts to fix with a wallet entry. Money recorded for a closed day after its count is flagged "after close" there.
 - **Channel filter.** Orders list, payments lists (verification, refunds, history) and the collection report filter Online / Walk-in; the collection report also breaks totals down by channel. The expense report has no channel: expenses aren't tied to orders.
-- **Price tags** (`/catalog/price-tags`, permission `product.tags.print`). Each tag carries product name, size, colour, selling price and a **Code 128 barcode of the SKU, exactly**, plus the SKU in text. Tags are chosen by variant, a whole product (one per piece on hand), or everything a purchase received (one per piece). Label-printer stock is printed one label per PDF page at the label's size (50×25, 40×30, 38×25, 60×40 mm; 203/300 dpi); sheet stock is A4 at 24, 40 or 21 up, with a start position for half-used sheets. Bars are snapped to the printer's dot grid. A SKU too long for the chosen label is refused with a suggestion to use a wider label or A4.
-- **What the tag prints is what the POS reads.** SKUs are held to `A–Z 0–9 -` (edits are upper-cased and validated), which Code 128 carries and a keyboard-mode scanner types back unchanged. The POS scan box normalises the scan (strips Tab/CR/LF, undoes Caps Lock) and does an exact SKU lookup before any type-ahead match. A Bangla keyboard layout is detected and the operator is told to switch. Verified by an encode→decode test for every seeded SKU and by decoding rendered 203 dpi tags with an independent barcode reader.
+- **Price tags** (`/catalog/price-tags`, permission `product.tags.print`). Each tag carries product name, size, colour, selling price and a **Code 128 barcode of the SKU, exactly**, plus the SKU in text. Tags are chosen by variant, a whole product (one per piece on hand), or everything a purchase received (one per piece). Label-printer stock is printed one label per PDF page at the label's size (50×25, 40×30, 38×25, 60×40 mm; 203/300 dpi); sheet stock is A4 at 24, 40 or 21 up, with a start position for half-used sheets. Bars are snapped to the printer's dot grid and are never narrower than 2 dots (0.25 mm); every SKU (≤ 9 characters, §4.2) fits the smallest label that way. Printing locks each tagged variant's SKU.
+- **What the tag prints is what the POS reads.** SKUs are held to 9 capital letters and digits (§4.2; edits are upper-cased and validated), which Code 128 carries and a keyboard-mode scanner types back unchanged. The POS scan box normalises the scan (strips Tab/CR/LF, undoes Caps Lock) and does an exact SKU lookup before any type-ahead match. A Bangla keyboard layout is detected and the operator is told to switch. Verified by an encode→decode test for every seeded SKU and by decoding rendered 203 dpi tags with an independent barcode reader.
 
 ### 4.8 Packing & operations
 

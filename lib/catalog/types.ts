@@ -15,6 +15,8 @@ export type Category = {
 export type SizeMaster = {
   id: string;
   name: string;
+  /** SKU code (PRD §4.2), 1–3 characters. */
+  code: string;
   sortOrder: number;
   isActive: boolean;
   _count?: { variants: number };
@@ -23,6 +25,8 @@ export type SizeMaster = {
 export type ColorMaster = {
   id: string;
   name: string;
+  /** SKU code (PRD §4.2), 2–3 characters. */
+  code: string;
   hexCode: string;
   sortOrder: number;
   isActive: boolean;

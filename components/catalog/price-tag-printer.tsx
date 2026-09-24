@@ -35,6 +35,7 @@ export type TagSourceItem = {
   onHand: number;
   suggestedCopies: number;
   barcodeSafe: boolean;
+  locked: boolean;
 };
 
 type Row = TagSourceItem & { copies: number };
@@ -118,7 +119,7 @@ export function PriceTagPrinter({ initialItems, initialSource }: { initialItems:
   const fits = useMemo(() => new Map(rows.map((r) => [r.variantId, r.barcodeSafe ? fitBarcode(r.sku, stock, dpi).quality : "unsafe"])), [rows, stock, dpi]);
   const totalTags = rows.reduce((a, r) => a + r.copies, 0);
   const blocked = rows.filter((r) => r.copies > 0 && (fits.get(r.variantId) === "too-long" || fits.get(r.variantId) === "unsafe"));
-  const dense = rows.some((r) => r.copies > 0 && fits.get(r.variantId) === "dense");
+  const willLock = rows.filter((r) => r.copies > 0 && !r.locked).length;
   const sheets = stock.kind === "SHEET" && totalTags > 0 ? Math.ceil((totalTags + startAt - 1) / (stock.cols * stock.rows)) : 0;
   const previewRow = rows.find((r) => r.copies > 0 && r.barcodeSafe) ?? rows[0];
 
@@ -209,8 +210,8 @@ export function PriceTagPrinter({ initialItems, initialSource }: { initialItems:
                       <Badge variant="destructive" className="mt-1">SKU has characters a barcode can&apos;t carry — edit the SKU</Badge>
                     ) : fit === "too-long" ? (
                       <Badge variant="destructive" className="mt-1">SKU too long for this label — pick a wider label or an A4 sheet</Badge>
-                    ) : fit === "dense" ? (
-                      <Badge variant="outline" className="mt-1">Fine barcode on this label — test-scan one first</Badge>
+                    ) : r.locked ? (
+                      <Badge variant="outline" className="mt-1">SKU locked — tags already printed</Badge>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-1">
@@ -318,8 +319,8 @@ export function PriceTagPrinter({ initialItems, initialSource }: { initialItems:
           <p className="flex items-start gap-2 text-sm text-destructive">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {blocked.length} item{blocked.length === 1 ? " can't" : "s can't"} be printed on these labels — see the red notes.
           </p>
-        ) : dense ? (
-          <p className="text-xs text-muted-foreground">Some barcodes are fine on this label size. Scan one test tag at the counter before printing the lot.</p>
+        ) : willLock > 0 ? (
+          <p className="text-xs text-muted-foreground">Printing locks the SKU of {willLock} variant{willLock === 1 ? "" : "s"} — once a tag carries a SKU it can&apos;t change.</p>
         ) : null}
         <Button type="button" className="h-12 text-base" disabled={totalTags === 0 || blocked.length > 0} onClick={print}>
           <Printer />
