@@ -67,3 +67,8 @@ export const caseListSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+export const counterQuoteSchema = z.object({
+  orderId: id,
+  lines: z.array(z.object({ orderItemId: id, qty: units.min(1), replacementVariantId: id })).min(1).max(50),
+});

@@ -65,6 +65,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!DIRECTLY_EDITABLE_STATUSES.includes(existing.status as OrderStatusValue)) {
     return NextResponse.json({ error: "This order has moved past the stage where it can be edited directly" }, { status: 409 });
   }
+  // P3.2 — a replacement's items and price come from its exchange, and the
+  // exchange credit was sized to them: change the exchange, not the order.
+  if (existing.exchangedFromOrderId) {
+    return NextResponse.json({ error: "This order is the replacement in an exchange — cancel the exchange and request a new one to change it." }, { status: 409 });
+  }
 
   const parsed = updateOrderSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

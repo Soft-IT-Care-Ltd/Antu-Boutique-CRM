@@ -11,7 +11,12 @@ import { listWalletOptions } from "@/lib/wallets/service";
 // /api/pos/* response is stripped server-side anyway).
 export default async function PosPage() {
   const user = await guardPage("/pos");
-  const [wallets, canSellOutOfStock, canManageDrawer] = await Promise.all([listWalletOptions(prisma), can(user, "order.stock_override"), can(user, "pos.drawer")]);
+  const [wallets, canSellOutOfStock, canManageDrawer, canExchange] = await Promise.all([
+    listWalletOptions(prisma),
+    can(user, "order.stock_override"),
+    can(user, "pos.drawer"),
+    can(user, "exchange.create"),
+  ]);
 
   let initialDrawer: DrawerState | null = null;
   let drawerError: string | null = null;
@@ -28,7 +33,7 @@ export default async function PosPage() {
         <h1 className="text-2xl font-semibold tracking-tight">POS</h1>
         <p className="text-sm text-muted-foreground">Showroom sale — scan or search, take payment, done. Stock leaves the shelf the moment the sale completes.</p>
       </div>
-      <PosScreen initialDrawer={initialDrawer} drawerError={drawerError} wallets={wallets} canSellOutOfStock={canSellOutOfStock} canManageDrawer={canManageDrawer} />
+      <PosScreen initialDrawer={initialDrawer} drawerError={drawerError} wallets={wallets} canSellOutOfStock={canSellOutOfStock} canManageDrawer={canManageDrawer} canExchange={canExchange} />
     </div>
   );
 }

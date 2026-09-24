@@ -149,6 +149,7 @@ const ITEMS_FOR_RETURN = {
     qty: true,
     returnedQty: true,
     unitPrice: true,
+    lineDiscount: true,
     variantId: true,
     variant: { select: { sku: true, productId: true, product: { select: { name: true } }, size: { select: { name: true } }, color: { select: { name: true, hexCode: true } } } },
   },
@@ -169,6 +170,7 @@ async function returnableItems(db: Db, orderId: string, items: Prisma.OrderItemG
     qty: i.qty,
     returnedQty: i.returnedQty,
     unitPrice: i.unitPrice.toString(),
+    paidPerUnit: fromPaisa(Math.round((toPaisa(i.unitPrice) * i.qty - toPaisa(i.lineDiscount)) / i.qty)),
     returnable: Math.max(0, i.qty - i.returnedQty - (pending.get(i.id) ?? 0)),
   }));
 }

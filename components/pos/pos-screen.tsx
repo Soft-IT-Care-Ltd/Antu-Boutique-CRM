@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Banknote, CheckCircle2, Printer, ReceiptText } from "lucide-react";
+import { AlertTriangle, Banknote, CheckCircle2, Printer, ReceiptText, Repeat2 } from "lucide-react";
 
 import { PosCart, type CartLine } from "@/components/pos/pos-cart";
 import { PosCheckout, type CustomerInput, type Tender } from "@/components/pos/pos-checkout";
@@ -10,6 +10,7 @@ import { PosSearch, type PosSearchHandle } from "@/components/pos/pos-search";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CounterExchangeDialog } from "@/components/returns/counter-exchange-dialog";
 import { newLocalId } from "@/lib/browser/local-id";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
@@ -55,12 +56,15 @@ export function PosScreen({
   wallets,
   canSellOutOfStock,
   canManageDrawer,
+  canExchange = false,
 }: {
   initialDrawer: DrawerState | null;
   drawerError: string | null;
   wallets: WalletOption[];
   canSellOutOfStock: boolean;
   canManageDrawer: boolean;
+  /** P3.2 — exchange.create: swap an item the customer brought back. */
+  canExchange?: boolean;
 }) {
   const searchRef = useRef<PosSearchHandle>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -78,6 +82,7 @@ export function PosScreen({
   const [done, setDone] = useState<PosSaleResult | null>(null);
   const [printing, setPrinting] = useState(false);
   const [drawer, setDrawer] = useState<DrawerState | null>(initialDrawer);
+  const [exchangeOpen, setExchangeOpen] = useState(false);
   const [recent, setRecent] = useState<PosRecentSale[]>([]);
 
   const refreshSide = useCallback(() => {
@@ -259,12 +264,21 @@ export function PosScreen({
             </span>
           )}
         </div>
-        {canManageDrawer ? (
-          <Button render={<Link href="/pos/drawer" />} nativeButton={false} variant="outline" className="h-10">
-            {cashAllowed ? "Drawer" : "Open drawer"}
-          </Button>
-        ) : null}
+        <div className="flex gap-2">
+          {canExchange ? (
+            <Button variant="outline" className="h-10" onClick={() => setExchangeOpen(true)}>
+              <Repeat2 />
+              Exchange
+            </Button>
+          ) : null}
+          {canManageDrawer ? (
+            <Button render={<Link href="/pos/drawer" />} nativeButton={false} variant="outline" className="h-10">
+              {cashAllowed ? "Drawer" : "Open drawer"}
+            </Button>
+          ) : null}
+        </div>
       </div>
+      {exchangeOpen ? <CounterExchangeDialog onClose={() => setExchangeOpen(false)} onDone={refreshSide} /> : null}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-3">

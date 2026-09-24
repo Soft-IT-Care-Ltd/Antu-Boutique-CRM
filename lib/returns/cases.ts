@@ -203,7 +203,7 @@ function priceReplacement(item: ItemForCase, qty: number, replacement: Replaceme
  * difference keptLine() makes — so an order whose stored total ever
  * differed from its lines only moves by what came back. Returns that value.
  */
-async function applyReturnedUnits(tx: Prisma.TransactionClient, order: OrderForCase, lines: { orderItemId: string; qty: number }[], sign: 1 | -1): Promise<number> {
+function returnedValue(order: OrderForCase, lines: { orderItemId: string; qty: number }[], sign: 1 | -1) {
   const qtyById = new Map(lines.map((l) => [l.orderItemId, l.qty * sign]));
   const priced = (withChange: boolean) =>
     order.items.map((i) =>
@@ -211,7 +211,11 @@ async function applyReturnedUnits(tx: Prisma.TransactionClient, order: OrderForC
     );
   const before = computeOrderTotals(priced(false), 0);
   const after = computeOrderTotals(priced(true), 0);
-  const valuePaisa = toPaisa(before.total) - toPaisa(after.total);
+  return { qtyById, before, after, valuePaisa: toPaisa(before.total) - toPaisa(after.total) };
+}
+
+async function applyReturnedUnits(tx: Prisma.TransactionClient, order: OrderForCase, lines: { orderItemId: string; qty: number }[], sign: 1 | -1): Promise<number> {
+  const { qtyById, before, after, valuePaisa } = returnedValue(order, lines, sign);
 
   for (const [orderItemId, delta] of qtyById) {
     await tx.orderItem.update({ where: { id: orderItemId }, data: { returnedQty: { increment: delta } } });
@@ -770,6 +774,34 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
       refundRequested: fromPaisa(owedPaisa),
       restockedUnits: check.restockedUnits,
       writtenOffUnits: check.writtenOffUnits,
+    };
+  });
+}
+
+export type CounterQuote = { returnedValue: string; replacementTotal: string; toPay: string; toRefund: string };
+
+/**
+ * The counter screen's preview: exactly what createCounterExchange would
+ * charge or owe for these lines, computed the same way, writing nothing.
+ */
+export async function quoteCounterExchange(db: Db, input: { orderId: string; lines: { orderItemId: string; qty: number; replacementVariantId: string }[] }): Promise<CounterQuote> {
+  return withTx(db, async (tx) => {
+    const order = await loadOrder(tx, input.orderId);
+    assertReturnable(order);
+    validateLines(order, input.lines, await returnableQtyByItem(tx, order));
+    const replacements = await lockReplacements(tx, order, input.lines);
+    const replacementPaisa = toPaisa(
+      computeOrderTotals(
+        input.lines.map((l) => ({ qty: l.qty, ...priceReplacement(order.items.find((i) => i.id === l.orderItemId)!, l.qty, replacements.get(l.replacementVariantId)!) })),
+        0,
+      ).total,
+    );
+    const valuePaisa = returnedValue(order, input.lines, 1).valuePaisa;
+    return {
+      returnedValue: fromPaisa(valuePaisa),
+      replacementTotal: fromPaisa(replacementPaisa),
+      toPay: fromPaisa(Math.max(0, replacementPaisa - valuePaisa)),
+      toRefund: fromPaisa(Math.max(0, valuePaisa - replacementPaisa)),
     };
   });
 }

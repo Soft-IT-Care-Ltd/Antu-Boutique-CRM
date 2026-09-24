@@ -9,6 +9,15 @@ import { buildVariantSku } from "../lib/catalog/codes";
 import { adjustStock, writeOffDamagedStock } from "../lib/inventory/adjustments";
 import { recordStockMovement } from "../lib/inventory/ledger";
 import { createPurchase } from "../lib/inventory/purchases";
+// P3.2 — the returns demo goes through the real services (lib/returns/*,
+// packing, status moves). They're marked "server-only", which is why every
+// seed entry point runs tsx with --conditions=react-server: under that
+// condition the server-only guard is an empty module.
+import { moveOrderStatus } from "../lib/orders/lifecycle";
+import { packOrder } from "../lib/orders/pack";
+import { getPosCashWalletId } from "../lib/pos/drawer";
+import { completeConditionCheck } from "../lib/returns/condition-check";
+import { createCounterExchange, decideReturnCase, requestReturnCase } from "../lib/returns/cases";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
 // for the same "server-only" reason as nextOrderNo below.
@@ -1372,6 +1381,139 @@ async function seedPosDemo() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// P3.2 — returns and exchanges demo (PRD §4.11): one of each state, built
+// through the real services so stock, ledger, credit and audit are genuine.
+// ---------------------------------------------------------------------------
+
+type SessionLike = { id: string; role: RoleName; teamId: string | null };
+
+async function sessionFor(phone: string): Promise<SessionLike> {
+  const u = await prisma.user.findUniqueOrThrow({ where: { phone }, select: { id: true, teamId: true, role: { select: { name: true } } } });
+  return { id: u.id, role: u.role.name, teamId: u.teamId };
+}
+
+/** Pairs of active variants of one product, both with stock to spare: the one sold and the one it's swapped for. */
+async function variantPairs(minAvailable: number) {
+  const variants = await prisma.productVariant.findMany({
+    where: { isActive: true, product: { isActive: true, deletedAt: null } },
+    orderBy: { sku: "asc" },
+    select: { id: true, productId: true, stockQty: true, reservedQty: true, product: { select: { basePrice: true } }, priceOverride: true },
+  });
+  const byProduct = new Map<string, typeof variants>();
+  for (const v of variants) if (v.stockQty - v.reservedQty >= minAvailable) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
+  // Every product gives as many disjoint pairs as it has stocked variants for.
+  return [...byProduct.values()].flatMap((vs) =>
+    Array.from({ length: Math.floor(vs.length / 2) }, (_, i) => ({ sold: vs[2 * i], swap: vs[2 * i + 1], price: Number(vs[2 * i].priceOverride ?? vs[2 * i].product.basePrice) })),
+  );
+}
+
+/** A delivered online order sold by the demo SE, paid in full by bKash (verified), packed and walked through the courier statuses. */
+async function seedDeliveredOrder(customerPhone: string, variantId: string, qty: number, unitPrice: number, daysAgo: number): Promise<{ id: string; itemId: string }> {
+  const [se, packer, accounts] = await Promise.all([sessionFor("01711000004"), sessionFor("01711000005"), sessionFor("01711000006")]);
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { phone: customerPhone } });
+  const bkash = await prisma.wallet.findFirstOrThrow({ where: { type: "BKASH", isActive: true }, orderBy: { sortOrder: "asc" } });
+  const at = new Date(Date.now() - daysAgo * 86_400_000);
+  return prisma.$transaction(
+    async (tx: Tx) => {
+      const total = qty * unitPrice;
+      const order = await tx.order.create({
+        data: {
+          orderNo: await nextOrderNo(tx, at),
+          channel: "ONLINE",
+          status: "CONFIRMED",
+          customerId: customer.id,
+          subtotal: total,
+          total,
+          dueAmount: 0,
+          createdById: se.id,
+          teamId: se.teamId,
+          createdAt: at,
+          items: { create: [{ variantId, qty, unitPrice }] },
+        },
+        include: { items: true },
+      });
+      await tx.productVariant.update({ where: { id: variantId }, data: { reservedQty: { increment: qty } } });
+      await tx.orderStatusHistory.create({ data: { orderId: order.id, toStatus: "CONFIRMED", changedById: se.id, createdAt: at } });
+      await tx.payment.create({
+        data: { orderId: order.id, amount: total, method: "BKASH", walletId: bkash.id, paidAt: at, receivedById: se.id, verified: true, verifiedById: accounts.id, verifiedAt: at, note: "Demo: paid in full by bKash" },
+      });
+      await packOrder(tx, { id: order.id, status: "CONFIRMED", items: order.items }, packer.id);
+      let status: "PACKED" | "HANDED_TO_COURIER" | "IN_TRANSIT" | "DELIVERED" = "PACKED";
+      for (const next of ["HANDED_TO_COURIER", "IN_TRANSIT", "DELIVERED"] as const) {
+        await moveOrderStatus(tx, { id: order.id, status, items: [] }, next, packer.id);
+        status = next;
+      }
+      return { id: order.id, itemId: order.items[0].id };
+    },
+    { timeout: 60_000 },
+  );
+}
+
+async function seedReturnsDemo() {
+  if ((await prisma.returnCase.count()) > 0) return;
+  const [se, tl, manager, packer, pos] = await Promise.all(["01711000004", "01711000003", "01711000002", "01711000005", "01711000007"].map(sessionFor));
+  const pairs = await variantPairs(3);
+  if (pairs.length < 4) {
+    console.log("Returns demo skipped: not enough products with two stocked variants.");
+    return;
+  }
+
+  // 1. Awaiting approval: a size exchange the SE asked for.
+  const a = await seedDeliveredOrder("01911223344", pairs[0].sold.id, 1, pairs[0].price, 4);
+  await requestReturnCase(prisma, se, {
+    orderId: a.id,
+    type: "EXCHANGE",
+    reason: "WRONG_SIZE",
+    reasonNote: "Customer says it's tight at the chest",
+    courierChargeBearer: "CUSTOMER",
+    lines: [{ orderItemId: a.itemId, qty: 1, replacementVariantId: pairs[0].swap.id }],
+  });
+
+  // 2. Approved, waiting for the item: we pay delivery on the replacement.
+  const b = await seedDeliveredOrder("01812345678", pairs[1].sold.id, 1, pairs[1].price, 6);
+  const bCase = await requestReturnCase(prisma, se, {
+    orderId: b.id,
+    type: "EXCHANGE",
+    reason: "DEFECTIVE",
+    reasonNote: "Loose stitching on the hem",
+    courierChargeBearer: "COMPANY",
+    lines: [{ orderItemId: b.itemId, qty: 1, replacementVariantId: pairs[1].swap.id }],
+  });
+  await decideReturnCase(prisma, tl, bCase.id, { decision: "APPROVE", note: "Our fault — we pay the courier" });
+
+  // 3. Completed return: two came back, one good, one damaged (written off at cost).
+  const c = await seedDeliveredOrder("01911223344", pairs[2].sold.id, 2, pairs[2].price, 9);
+  const cCase = await requestReturnCase(prisma, se, { orderId: c.id, type: "RETURN", reason: "NOT_AS_EXPECTED", reasonNote: "Colour looked different in the photo", lines: [{ orderItemId: c.itemId, qty: 2 }] });
+  await decideReturnCase(prisma, manager, cCase.id, { decision: "APPROVE" });
+  const cInspection = await prisma.returnCase.findUniqueOrThrow({ where: { id: cCase.id }, select: { inspectionId: true } });
+  await prisma.$transaction((tx: Tx) => completeConditionCheck(tx, { inspectionId: cInspection.inspectionId!, lines: [{ orderItemId: c.itemId, goodQty: 1, damagedQty: 1 }], note: "One has a lipstick stain" }, packer.id), { timeout: 60_000 });
+
+  // 4. Rejected.
+  const d = await seedDeliveredOrder("01812345678", pairs[3].sold.id, 1, pairs[3].price, 20);
+  const dCase = await requestReturnCase(prisma, se, { orderId: d.id, type: "RETURN", reason: "OTHER", reasonNote: "Customer changed their mind", lines: [{ orderItemId: d.itemId, qty: 1 }] });
+  await decideReturnCase(prisma, tl, dCase.id, { decision: "REJECT", note: "Worn and washed — can't be resold" });
+
+  // 5. At the counter: a walk-in swaps a size of the same garment, no difference to pay.
+  const walkIn = await prisma.order.findFirst({
+    where: { channel: "WALK_IN", status: "COMPLETED", exchangedFromOrderId: null },
+    orderBy: { createdAt: "asc" },
+    include: { items: { include: { variant: { select: { productId: true } } } } },
+  });
+  const item = walkIn?.items[0];
+  const swap = item
+    ? await prisma.productVariant.findFirst({ where: { productId: item.variant.productId, id: { not: item.variantId }, isActive: true, stockQty: { gte: 2 } }, orderBy: { sku: "asc" } })
+    : null;
+  if (walkIn && item && swap) {
+    await createCounterExchange(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma) }, {
+      orderId: walkIn.id,
+      reason: "WRONG_SIZE",
+      lines: [{ orderItemId: item.id, qty: 1, replacementVariantId: swap.id, goodQty: 1, damagedQty: 0 }],
+      tenders: [],
+    });
+  }
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -1403,6 +1545,7 @@ async function main() {
   await seedCourierStatementsDemo();
   await seedFinanceDemo();
   await seedPosDemo();
+  await seedReturnsDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

@@ -15,6 +15,7 @@ import { OrderPaymentsPanel } from "@/components/orders/order-payments-panel";
 import { OrderShipmentCard } from "@/components/orders/order-shipment-card";
 import { OrderStatusControl } from "@/components/orders/order-status-control";
 import { SendToSteadfastDialog } from "@/components/courier/send-to-steadfast-dialog";
+import { OrderReturnsCard, type ReturnPermissions } from "@/components/returns/order-returns-card";
 import type { ShipmentDetailView } from "@/lib/courier/types";
 import { formatBDT } from "@/lib/money";
 import { fetchJson } from "@/lib/orders/client";
@@ -46,6 +47,7 @@ export function OrderDetail({
   shipment,
   canSendToSteadfast,
   canOverrideCourier,
+  returnPermissions,
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -64,9 +66,16 @@ export function OrderDetail({
   shipment: ShipmentDetailView | null;
   canSendToSteadfast: boolean;
   canOverrideCourier: boolean;
+  returnPermissions: ReturnPermissions;
 }) {
   const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
+  // A return or exchange refreshes the page (router.refresh): take the new totals and status.
+  const [prevInitialOrder, setPrevInitialOrder] = useState(initialOrder);
+  if (initialOrder !== prevInitialOrder) {
+    setPrevInitialOrder(initialOrder);
+    setOrder(initialOrder);
+  }
   const [sendOpen, setSendOpen] = useState(false);
   const [images, setImages] = useState(initialOrder.images);
 
@@ -101,7 +110,7 @@ export function OrderDetail({
             </Button>
           ) : null}
           {canUpdateStatus ? <OrderStatusControl order={order} onChange={setOrder} courierBooked={Boolean(shipment?.consignmentId)} canOverrideCourier={canOverrideCourier} /> : null}
-          {canEdit ? (
+          {canEdit && !order.exchangedFromOrderId ? (
             <Button render={<Link href={`/orders/${order.id}/edit`} />} nativeButton={false} variant="outline">
               <Pencil />
               Edit order
@@ -370,6 +379,8 @@ export function OrderDetail({
           </CardContent>
         </Card>
       </div>
+
+      <OrderReturnsCard orderId={order.id} orderNo={order.orderNo} permissions={returnPermissions} />
     </div>
   );
 }

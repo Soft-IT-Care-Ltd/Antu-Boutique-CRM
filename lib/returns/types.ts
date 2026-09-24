@@ -57,6 +57,8 @@ export type ReturnableItem = {
   qty: number;
   returnedQty: number;
   unitPrice: string;
+  /** What the customer paid per unit after the line discount — the credit one returned unit brings (a preview; the server decides). */
+  paidPerUnit: string;
   /** Units that can still come back (not returned, not in a pending request). */
   returnable: number;
 };

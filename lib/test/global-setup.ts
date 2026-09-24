@@ -45,6 +45,8 @@ function fingerprint(): string {
   const hash = createHash("sha256");
   hash.update(readFileSync(path.join(root, "prisma/schema.prisma")));
   hash.update(readFileSync(path.join(root, "prisma/seed.ts")));
+  // The seed syncs every role's permissions from these templates.
+  hash.update(readFileSync(path.join(root, "lib/auth/permission-definitions.ts")));
   for (const dir of readdirSync(path.join(root, "prisma/migrations")).sort()) hash.update(dir);
   return hash.digest("hex");
 }
@@ -66,7 +68,7 @@ export default async function setup() {
     const [row] = await prisma.$queryRawUnsafe<{ hash: string }[]>(`SELECT "hash" FROM "_test_seed_state" WHERE "id" = 1`);
     const want = fingerprint();
     if (row?.hash !== want) {
-      run("npx", ["tsx", "prisma/seed.ts"]);
+      run("npx", ["tsx", "--conditions=react-server", "prisma/seed.ts"]);
       await prisma.$executeRawUnsafe(
         `INSERT INTO "_test_seed_state" ("id", "hash") VALUES (1, $1) ON CONFLICT ("id") DO UPDATE SET "hash" = EXCLUDED."hash"`,
         want,

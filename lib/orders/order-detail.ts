@@ -98,6 +98,7 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
     dueAmount: order.dueAmount.toString(),
     internalNote: order.internalNote,
     deliveryNote: order.deliveryNote,
+    exchangedFromOrderId: order.exchangedFromOrderId,
     items: order.items.map((item) => ({
       id: item.id,
       variantId: item.variantId,

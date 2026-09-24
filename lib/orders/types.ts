@@ -121,6 +121,8 @@ export type OrderDetail = {
   deliveryZone: DeliveryZoneValue | null;
   deliveryCharge: string;
   expectedDeliveryDate: string | null;
+  /** P3.2 — set on an exchange's replacement order (its items come from the exchange). */
+  exchangedFromOrderId: string | null;
   subtotal: string;
   discountTotal: string;
   total: string;
