@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/auth/permissions";
 import type { SessionUser } from "@/lib/auth/types";
@@ -8,6 +10,9 @@ import { DIRECTLY_EDITABLE_STATUSES, type OrderStatusValue } from "@/lib/orders/
 import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { releaseVariantStock, reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE, recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
+import { SetError } from "@/lib/sets/service";
+import type { SetLineInput } from "@/lib/sets/types";
 
 // Shared by the direct in-window PATCH (app/api/orders/[id]/route.ts) and
 // the TL/Admin edit-request approval (app/api/order-edit-requests/[id]/
@@ -24,6 +29,19 @@ import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE, recompute
 
 export class OrderEditConflictError extends Error {}
 
+/** An order's set lines as the edit form sends them back: set, qty, price, discount and the chosen variant per component product. */
+export function existingSetInputs(
+  setLines: { outfitSetId: string; qty: number; unitPrice: Prisma.Decimal; lineDiscount: Prisma.Decimal; items: { variantId: string; variant: { productId: string } }[] }[],
+): SetLineInput[] {
+  return setLines.map((s) => ({
+    setId: s.outfitSetId,
+    qty: s.qty,
+    unitPrice: toNumber(s.unitPrice),
+    lineDiscount: toNumber(s.lineDiscount),
+    choices: s.items.map((i) => ({ productId: i.variant.productId, variantId: i.variantId })),
+  }));
+}
+
 const notEditableMessage = (status: string) => `This order is ${status} now — it can only be edited while it is a lead or confirmed.`;
 
 export type OrderEditItemInput = {
@@ -35,7 +53,10 @@ export type OrderEditItemInput = {
 };
 
 export type OrderEditInput = {
+  /** The order's plain lines. With `sets`, the full new set of lines: either one given replaces all lines (the other stays as it is). */
   items?: OrderEditItemInput[];
+  /** P3.3 — the order's outfit sets, with their chosen sizes/colours. */
+  sets?: SetLineInput[];
   courierId?: string | null;
   courierZoneId?: string | null;
   deliveryCharge?: number;
@@ -50,6 +71,8 @@ export type OrderEditValidation =
   | {
       ok: true;
       validatedItems: ValidatedItem[] | null;
+      /** P3.3 — the sets, exploded; set whenever the lines change. */
+      validatedSets: ResolvedSetLine[] | null;
       effectiveDeliveryCharge: number;
       subtotal: number;
       discountTotal: number;
@@ -66,6 +89,7 @@ export function parseStoredOrderEditInput(raw: unknown): OrderEditInput {
   const rawDate = obj.expectedDeliveryDate;
   return {
     items: Array.isArray(obj.items) ? (obj.items as OrderEditItemInput[]) : undefined,
+    sets: Array.isArray(obj.sets) ? (obj.sets as SetLineInput[]) : undefined,
     courierId: obj.courierId === undefined ? undefined : (obj.courierId as string | null),
     courierZoneId: obj.courierZoneId === undefined ? undefined : (obj.courierZoneId as string | null),
     deliveryCharge: typeof obj.deliveryCharge === "number" ? obj.deliveryCharge : undefined,
@@ -79,7 +103,11 @@ export function parseStoredOrderEditInput(raw: unknown): OrderEditInput {
 export async function validateOrderEdit(orderId: string, input: OrderEditInput, actor: SessionUser): Promise<OrderEditValidation> {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true, payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } } },
+    include: {
+      items: true,
+      setLines: { include: { items: { select: { variantId: true, variant: { select: { productId: true } } } } } },
+      payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } },
+    },
   });
   if (!existing) return { ok: false, error: "Order not found", status: 404 };
   if (!DIRECTLY_EDITABLE_STATUSES.includes(existing.status as OrderStatusValue)) {
@@ -99,25 +127,43 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
   }
 
   let validatedItems: ValidatedItem[] | null = null;
+  let validatedSets: ResolvedSetLine[] | null = null;
 
-  if (input.items) {
-    const variantIds = [...new Set(input.items.map((i) => i.variantId))];
-    const variants = await prisma.productVariant.findMany({
-      where: { id: { in: variantIds } },
-      include: { product: { select: { isActive: true, deletedAt: true } } },
-    });
-    const variantById = new Map(variants.map((v) => [v.id, v]));
+  if (input.items || input.sets) {
+    // Either list given replaces the order's lines; the other is kept as it is.
+    const newItems: OrderEditItemInput[] =
+      input.items ??
+      existing.items
+        .filter((i) => i.setLineId === null)
+        .map((i) => ({ variantId: i.variantId, qty: i.qty, unitPrice: toNumber(i.unitPrice), lineDiscount: toNumber(i.lineDiscount), stockOverrideReason: i.stockOverrideReason ?? undefined }));
+    const newSetInputs: SetLineInput[] = input.sets ?? existingSetInputs(existing.setLines);
+    if (newItems.length + newSetInputs.length === 0) return { ok: false, error: "An order needs at least one item.", status: 400 };
 
     const hasCostAccess = await can(actor, "product.cost.view");
     const hasStockOverride = await can(actor, "order.stock_override");
+    try {
+      validatedSets = await resolveSetLines(prisma, newSetInputs, { hasCostAccess });
+    } catch (error) {
+      if (error instanceof SetError) return { ok: false, error: error.message, status: error.status };
+      throw error;
+    }
+    const setChildren = validatedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason ?? undefined, fromSet: true })));
+    const allLines = [...newItems.map((i) => ({ ...i, fromSet: false })), ...setChildren];
+
+    const variantIds = [...new Set(allLines.map((i) => i.variantId))];
+    const variants = await prisma.productVariant.findMany({
+      where: { id: { in: variantIds } },
+      include: { product: { select: { isActive: true, deletedAt: true, kind: true } } },
+    });
+    const variantById = new Map(variants.map((v) => [v.id, v]));
     const newQtyByVariant = new Map<string, number>();
 
-    for (const item of input.items) {
+    for (const item of allLines) {
       const variant = variantById.get(item.variantId);
-      if (!variant || !variant.isActive || !variant.product || variant.product.deletedAt) {
+      if (!variant || !variant.isActive || !variant.product || variant.product.deletedAt || variant.product.kind !== "SELLABLE") {
         return { ok: false, error: "One of the selected items is no longer available", status: 400 };
       }
-      if (isPriceBelowFloor(item.unitPrice, toNumber(variant.weightedAvgCost), hasCostAccess)) {
+      if (!item.fromSet && isPriceBelowFloor(item.unitPrice, toNumber(variant.weightedAvgCost), hasCostAccess)) {
         return {
           ok: false,
           error: `Unit price for ${variant.sku} is below the minimum allowed. Increase the price or ask a Manager/Admin.`,
@@ -135,14 +181,14 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
         if (!hasStockOverride) {
           return { ok: false, error: `Not enough stock for ${variant.sku} (${available} available, ${newQty} requested)`, status: 400 };
         }
-        const line = input.items.find((i) => i.variantId === variantId);
+        const line = allLines.find((i) => i.variantId === variantId && i.stockOverrideReason);
         if (!line?.stockOverrideReason) {
           return { ok: false, error: `A reason is required to sell ${variant.sku} below available stock`, status: 400 };
         }
       }
     }
 
-    validatedItems = input.items.map((item) => {
+    validatedItems = newItems.map((item) => {
       const variant = variantById.get(item.variantId)!;
       const alreadyReservedHere = oldQtyByVariant.get(item.variantId) ?? 0;
       const newQty = newQtyByVariant.get(item.variantId)!;
@@ -152,7 +198,7 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
   }
 
   const effectiveDeliveryCharge = input.deliveryCharge ?? toNumber(existing.deliveryCharge);
-  const effectiveItems = (validatedItems ?? existing.items).map((item) => ({
+  const effectiveItems = (validatedItems ? [...validatedItems, ...validatedSets!.flatMap((s) => s.children)] : existing.items).map((item) => ({
     qty: item.qty,
     unitPrice: toNumber(item.unitPrice),
     lineDiscount: toNumber(item.lineDiscount),
@@ -164,6 +210,7 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
   return {
     ok: true,
     validatedItems,
+    validatedSets,
     effectiveDeliveryCharge,
     subtotal: totals.subtotal,
     discountTotal: totals.discountTotal,
@@ -187,6 +234,7 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
         await releaseVariantStock(tx, item.variantId, item.qty);
       }
       await tx.orderItem.deleteMany({ where: { orderId } });
+      await tx.orderSetLine.deleteMany({ where: { orderId } });
       for (const item of validation.validatedItems) {
         const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: item.variantId } });
         const available = variant.stockQty - variant.reservedQty;
@@ -203,6 +251,12 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
           },
         });
         await reserveVariantStock(tx, item.variantId, item.qty);
+      }
+      // P3.3 — the sets' component lines, reserved like any line.
+      const overrideByVariant = new Map<string, string>();
+      for (const s of validation.validatedSets ?? []) for (const c of s.children) if (s.stockOverrideReason) overrideByVariant.set(c.variantId, s.stockOverrideReason);
+      for (const child of await writeSetLines(tx, orderId, validation.validatedSets ?? [], { overrideByVariant })) {
+        await reserveVariantStock(tx, child.variantId, child.qty);
       }
     }
 

@@ -19,6 +19,13 @@ import { getPosCashWalletId } from "../lib/pos/drawer";
 import { completeConditionCheck } from "../lib/returns/condition-check";
 import { createCounterExchange, decideReturnCase, requestReturnCase } from "../lib/returns/cases";
 import { adjustStoreCredit } from "../lib/store-credit/ledger";
+import { setPackaging } from "../lib/packaging/service";
+import { createPosSale } from "../lib/pos/sale";
+import { reserveVariantStock } from "../lib/orders/stock";
+import { computeOrderTotals } from "../lib/orders/totals";
+import { generateOrderNumber } from "../lib/orders/order-number";
+import { resolveSetLines, writeSetLines } from "../lib/sets/order-lines";
+import { saveSet } from "../lib/sets/service";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
 // for the same "server-only" reason as nextOrderNo below.
@@ -1551,6 +1558,132 @@ async function seedStoreCreditDemo() {
   if (regular) await adjustStoreCredit(prisma, { customerId: regular.id, amount: 300, reason: "Goodwill — the parcel arrived two days late", actorId: admin.id });
 }
 
+// P3.3 — outfit sets and packaging (PRD §4.2). Antu's branded packaging as
+// component-only products with opening stock; a dupatta and a plazo so a
+// three-piece set can be built from separate products; two sets; the
+// packaging rules; and one set sold online (reserved) and one at the counter
+// (packaging taken out of stock). All through the real services.
+async function seedSetsAndPackagingDemo() {
+  if ((await prisma.outfitSet.count()) > 0) return;
+  const [admin, se, pos] = await Promise.all(["01711000001", "01711000004", "01711000007"].map(sessionFor));
+  const [sizes, colors] = await Promise.all([prisma.size.findMany(), prisma.color.findMany()]);
+  const size = (name: string) => sizes.find((s) => s.name === name)!;
+  const color = (name: string) => colors.find((c) => c.name === name)!;
+
+  async function product(input: { code: string; name: string; kind: "SELLABLE" | "COMPONENT_ONLY"; basePrice: number; cost: number; stock: number; variants: [string, string][] }) {
+    const existing = await prisma.product.findUnique({ where: { code: input.code } });
+    if (existing) return prisma.product.findUniqueOrThrow({ where: { id: existing.id }, include: { variants: true } });
+    const p = await prisma.product.create({ data: { code: input.code, name: input.name, kind: input.kind, basePrice: input.basePrice, createdById: admin.id } });
+    for (const [s, c] of input.variants) {
+      const v = await prisma.productVariant.create({
+        data: { productId: p.id, sizeId: size(s).id, colorId: color(c).id, sku: buildVariantSku(input.code, size(s).code, color(c).code), weightedAvgCost: input.cost },
+      });
+      await prisma.$transaction((tx: Tx) => recordStockMovement(tx, { variantId: v.id, type: "PURCHASE_IN", qty: input.stock, unitCost: input.cost, referenceType: "OPENING_BALANCE", actorId: admin.id, note: "Opening stock" }));
+    }
+    return prisma.product.findUniqueOrThrow({ where: { id: p.id }, include: { variants: true } });
+  }
+
+  // Packaging materials: never sold, no price, costed from purchases.
+  const bag = await product({ code: "BG1", name: "Antu shopping bag", kind: "COMPONENT_ONLY", basePrice: 0, cost: 18, stock: 300, variants: [["Free", "White"]] });
+  const mailer = await product({ code: "ML1", name: "Antu mailer bag", kind: "COMPONENT_ONLY", basePrice: 0, cost: 9, stock: 400, variants: [["Free", "Black"]] });
+  const box = await product({ code: "BX1", name: "Saree gift box", kind: "COMPONENT_ONLY", basePrice: 0, cost: 55, stock: 40, variants: [["Free", "Maroon"]] });
+  const tissue = await product({ code: "TS1", name: "Tissue paper sheet", kind: "COMPONENT_ONLY", basePrice: 0, cost: 2, stock: 1000, variants: [["Free", "Pink"]] });
+  const tag = await product({ code: "TG1", name: "Brand hang tag", kind: "COMPONENT_ONLY", basePrice: 0, cost: 3, stock: 800, variants: [["Free", "Black"]] });
+
+  // Separate pieces a set is built from.
+  const dupatta = await product({ code: "D01", name: "Chiffon Dupatta", kind: "SELLABLE", basePrice: 600, cost: 220, stock: 12, variants: [["Free", "Maroon"], ["Free", "Mustard Yellow"], ["Free", "Pink"]] });
+  const plazo = await product({ code: "P01", name: "Cotton Plazo", kind: "SELLABLE", basePrice: 900, cost: 350, stock: 8, variants: [["M", "White"], ["L", "White"], ["XL", "White"], ["M", "Black"], ["L", "Black"]] });
+  const [kurti, saree, top] = await Promise.all(["K12", "S01", "W02"].map((code) => prisma.product.findUnique({ where: { code } })));
+  if (!kurti || !saree || !top) {
+    console.log("Outfit set demo skipped: the demo kurti, saree or top is missing.");
+    return;
+  }
+
+  // Packaging rules: every parcel a mailer bag; every counter sale a bag and
+  // two sheets of tissue; a tag on every kurti and top; a box with every saree.
+  await setPackaging(prisma, admin.id, { scope: "ONLINE_PARCEL" }, [{ materialVariantId: mailer.variants[0].id, qty: 1 }]);
+  await setPackaging(prisma, admin.id, { scope: "POS_SALE" }, [
+    { materialVariantId: bag.variants[0].id, qty: 1 },
+    { materialVariantId: tissue.variants[0].id, qty: 2 },
+  ]);
+  await setPackaging(prisma, admin.id, { productId: saree.id }, [{ materialVariantId: box.variants[0].id, qty: 1 }]);
+  for (const p of [kurti, top]) await setPackaging(prisma, admin.id, { productId: p.id }, [{ materialVariantId: tag.variants[0].id, qty: 1 }]);
+
+  const eid = await saveSet(prisma, admin.id, {
+    name: "Eid Three-Piece — Kurti + Dupatta + Plazo",
+    description: "Pick the kurti, dupatta and plazo separately — any size, any colour.",
+    price: 2800,
+    isActive: true,
+    components: [
+      { productId: kurti.id, qty: 1 },
+      { productId: dupatta.id, qty: 1 },
+      { productId: plazo.id, qty: 1 },
+    ],
+    packaging: [{ materialVariantId: tissue.variants[0].id, qty: 1 }],
+  });
+  await saveSet(prisma, admin.id, {
+    name: "Mother & Daughter — Saree + 2 Tops",
+    price: 5500,
+    isActive: true,
+    components: [
+      { productId: saree.id, qty: 1 },
+      { productId: top.id, qty: 2 },
+    ],
+    packaging: [],
+  });
+
+  // Choices for the Eid set: the first in-stock size/colour of each piece.
+  const inStock = async (productId: string, need: number) =>
+    (await prisma.productVariant.findMany({ where: { productId, isActive: true }, orderBy: { sku: "asc" } })).find((v) => v.stockQty - v.reservedQty >= need)?.id;
+  const choices: { productId: string; variantId: string }[] = [];
+  for (const productId of [kurti.id, dupatta.id, plazo.id]) {
+    const variantId = await inStock(productId, 2);
+    if (!variantId) {
+      console.log("Outfit set sales demo skipped: a component is out of stock.");
+      return;
+    }
+    choices.push({ productId, variantId });
+  }
+
+  // Sold online (confirmed, reserved) to a demo customer…
+  const customer = await prisma.customer.findUnique({ where: { phone: "01911223344" } });
+  if (customer) {
+    await prisma.$transaction(
+      async (tx: Tx) => {
+        const [line] = await resolveSetLines(tx, [{ setId: eid.id, qty: 1, unitPrice: 2800, lineDiscount: 0, choices }], { hasCostAccess: true });
+        const totals = computeOrderTotals(line.children, 80);
+        const order = await tx.order.create({
+          data: {
+            orderNo: await generateOrderNumber(tx),
+            channel: "ONLINE",
+            status: "CONFIRMED",
+            customerId: customer.id,
+            deliveryCharge: 80,
+            subtotal: totals.subtotal,
+            discountTotal: totals.discountTotal,
+            total: totals.total,
+            dueAmount: totals.total,
+            createdById: se.id,
+            teamId: se.teamId,
+          },
+        });
+        for (const child of await writeSetLines(tx, order.id, [line])) await reserveVariantStock(tx, child.variantId, child.qty);
+        await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "CONFIRMED", changedById: se.id, note: "Order created — Eid set" } });
+      },
+      { timeout: 60_000 },
+    );
+  }
+
+  // …and at the counter, paid by card: the bag and tissue leave stock with it.
+  await createPosSale(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma), hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true }, {
+    items: [],
+    sets: [{ setId: eid.id, qty: 1, unitPrice: 2800, lineDiscount: 100, choices }],
+    cartDiscount: 0,
+    customer: null,
+    tenders: [{ method: "CARD", amount: 2700 }],
+  });
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -1584,6 +1717,7 @@ async function main() {
   await seedPosDemo();
   await seedReturnsDemo();
   await seedStoreCreditDemo();
+  await seedSetsAndPackagingDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

@@ -18,6 +18,7 @@ const querySchema = z.object({
   stockStatus: z.enum(["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"]).optional(),
   lowStockOnly: z.coerce.boolean().optional(),
   isActive: z.coerce.boolean().optional(),
+  kind: z.enum(["SELLABLE", "COMPONENT_ONLY"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -33,6 +34,9 @@ const createSchema = z.object({
   basePrice: z.coerce.number().nonnegative(),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
   isActive: z.boolean().default(true),
+  // P3.3 — COMPONENT_ONLY: packaging material, stocked and costed but never
+  // sold, so it has no selling price. Chosen at creation.
+  kind: z.enum(["SELLABLE", "COMPONENT_ONLY"]).default("SELLABLE"),
 });
 
 export async function GET(request: NextRequest) {
@@ -43,7 +47,7 @@ export async function GET(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
-  const { q, categoryId, stockStatus, lowStockOnly, isActive, page, pageSize } = parsed.data;
+  const { q, categoryId, stockStatus, lowStockOnly, isActive, kind, page, pageSize } = parsed.data;
 
   // Stock status/low-stock filters need the per-product aggregate computed
   // in JS (see lib/catalog/stock-status.ts) before we know which product ids
@@ -69,6 +73,7 @@ export async function GET(request: NextRequest) {
   const andConditions: Prisma.ProductWhereInput[] = [{ deletedAt: null }];
   if (categoryId) andConditions.push({ categoryId });
   if (isActive !== undefined) andConditions.push({ isActive });
+  if (kind) andConditions.push({ kind });
   if (q) {
     andConditions.push({
       OR: [
@@ -130,7 +135,8 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { name, categoryId, brand, description, fabric, basePrice, tags, isActive } = parsed.data;
+  const { name, categoryId, brand, description, fabric, tags, isActive, kind } = parsed.data;
+  const basePrice = kind === "COMPONENT_ONLY" ? 0 : parsed.data.basePrice;
   let { code } = parsed.data;
 
   if (code) {
@@ -156,6 +162,7 @@ export async function POST(request: NextRequest) {
       basePrice,
       tags,
       isActive,
+      kind,
       createdById: guard.user.id,
     },
     include: { category: { select: { id: true, name: true } } },

@@ -9,6 +9,7 @@ export const STOCK_MOVEMENT_TYPES = [
   "DAMAGE_OUT",
   "ADJUSTMENT",
   "POS_SALE_OUT",
+  "PACKAGING_OUT",
 ] as const;
 export type StockMovementTypeValue = (typeof STOCK_MOVEMENT_TYPES)[number];
 
@@ -21,6 +22,7 @@ export const STOCK_MOVEMENT_LABELS: Record<StockMovementTypeValue, string> = {
   DAMAGE_OUT: "Damage / write-off",
   ADJUSTMENT: "Adjustment",
   POS_SALE_OUT: "POS sale out",
+  PACKAGING_OUT: "Packaging used",
 };
 
 export const STOCK_REFERENCE_LABELS: Record<string, string> = {

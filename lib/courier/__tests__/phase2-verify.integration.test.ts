@@ -221,7 +221,7 @@ describe("2. no path changes stock without its ledger row — or twice", () => {
     expect(validation).toMatchObject({ ok: false, status: 409 });
 
     // Even a validation obtained earlier (the request sat PENDING while the order was packed) is refused inside the write.
-    const stale = { ok: true as const, validatedItems: [], effectiveDeliveryCharge: 0, subtotal: 0, discountTotal: 0, total: 0, dueAmount: 0 };
+    const stale = { ok: true as const, validatedItems: [], validatedSets: [], effectiveDeliveryCharge: 0, subtotal: 0, discountTotal: 0, total: 0, dueAmount: 0 };
     await expect(applyValidatedOrderEdit(packed.id, { items: [] }, stale)).rejects.toBeInstanceOf(OrderEditConflictError);
     const after = await prisma.order.findUniqueOrThrow({ where: { id: packed.id }, include: { items: true } });
     expect(after.items.map((i) => [i.id, i.qty, i.unitCostSnapshot?.toString()])).toEqual(packed.items.map((i) => [i.id, i.qty, i.unitCostSnapshot?.toString()]));
@@ -327,7 +327,10 @@ describe("7. money round trip: advance + COD → packed → sent → delivered �
       expect(await balanceOf(tx, bkashId)).toBe(before.bkash + 500);
 
       // Expenses: exactly the two courier charges, once each, from no wallet (the courier deducted them).
-      const created = await tx.expense.findMany({ where: { id: { notIn: [...before.expenses] } }, include: { category: true } });
+      // P3.3: plus, at most, the one "Packaging used" posting packing made — its own heading, not a courier charge.
+      const all = await tx.expense.findMany({ where: { id: { notIn: [...before.expenses] } }, include: { category: true } });
+      expect(all.filter((e) => e.category.kind === "PACKAGING").map((e) => e.packagingOrderId)).toEqual(all.some((e) => e.category.kind === "PACKAGING") ? [order.id] : []);
+      const created = all.filter((e) => e.category.kind !== "PACKAGING");
       expect(created.map((e) => [e.category.name, e.category.kind, toNumber(e.amount), e.walletId]).sort()).toEqual([
         ["COD charge", "COURIER", fee, null],
         ["Courier delivery charge", "COURIER", 60, null],

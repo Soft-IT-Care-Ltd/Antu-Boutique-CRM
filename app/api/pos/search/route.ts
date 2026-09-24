@@ -6,9 +6,11 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { badRequest } from "@/lib/finance/http";
 import { searchSellableVariants } from "@/lib/pos/lookup";
 import { prisma } from "@/lib/prisma";
+import { listSets } from "@/lib/sets/service";
 
 // POS type-ahead (CORRECTIONS Round 2 §2.3): product name, code or SKU →
-// every sellable size/colour, with price and live available stock.
+// every sellable size/colour, with price and live available stock. P3.3:
+// plus outfit sets by name (sizes/colours are picked when one is added).
 const querySchema = z.object({ q: z.string().trim().min(1).max(100) });
 
 export async function GET(request: NextRequest) {
@@ -16,5 +18,6 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success) return badRequest(parsed.error);
-  return NextResponse.json(await stripCostFieldsForUser({ variants: await searchSellableVariants(prisma, parsed.data.q) }, guard.user));
+  const [variants, sets] = await Promise.all([searchSellableVariants(prisma, parsed.data.q), listSets(prisma, { q: parsed.data.q, activeOnly: true, take: 5 })]);
+  return NextResponse.json(await stripCostFieldsForUser({ variants, sets }, guard.user));
 }

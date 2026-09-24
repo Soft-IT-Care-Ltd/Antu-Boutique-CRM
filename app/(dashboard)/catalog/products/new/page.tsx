@@ -5,7 +5,8 @@ import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 
-export default async function NewProductPage() {
+export default async function NewProductPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
+  const { kind } = await searchParams;
   const user = await guardPage("/catalog");
   if (!(await can(user, "product.create"))) redirect("/catalog");
 
@@ -20,7 +21,7 @@ export default async function NewProductPage() {
         <h1 className="text-2xl font-semibold tracking-tight">New product</h1>
         <p className="text-sm text-muted-foreground">Add sizes and colours from the product page after saving.</p>
       </div>
-      <ProductForm categories={categories.map((c) => ({ ...c }))} />
+      <ProductForm categories={categories.map((c) => ({ ...c }))} initialKind={kind === "COMPONENT_ONLY" ? "COMPONENT_ONLY" : "SELLABLE"} />
     </div>
   );
 }

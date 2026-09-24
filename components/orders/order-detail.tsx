@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Pencil, Printer, Send } from "lucide-react";
+import { FileText, Layers, Pencil, Printer, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -219,32 +219,52 @@ export function OrderDetail({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {order.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>
+              {[...order.items.filter((i) => i.setLineId === null), ...order.setLines.flatMap((s) => [s, ...order.items.filter((i) => i.setLineId === s.id)])].map((row) =>
+                // P3.3 — an outfit set, then each component with its chosen size/colour.
+                "itemIds" in row ? (
+                  <TableRow key={row.id} className="bg-muted/40">
+                    <TableCell>
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <Layers className="size-3.5 shrink-0 text-muted-foreground" />
+                        {row.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">Outfit set — its pieces are listed below</div>
+                    </TableCell>
+                    <TableCell>{row.qty}</TableCell>
+                    <TableCell>{formatBDT(row.unitPrice)}</TableCell>
+                    <TableCell>{formatBDT(row.lineDiscount)}</TableCell>
+                    {hasCostAccess ? <TableCell /> : null}
+                    <TableCell className="font-medium">
+                      {formatBDT(String(order.items.filter((i) => i.setLineId === row.id).reduce((sum, i) => sum + Math.round(Number(i.lineTotal) * 100), 0) / 100))}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                <TableRow key={row.id} className={row.setLineId ? "text-muted-foreground" : undefined}>
+                  <TableCell className={row.setLineId ? "pl-6" : undefined}>
                     <div className="flex items-center gap-1.5 font-medium">
-                      <span className="size-3 shrink-0 rounded-full border border-border" style={{ backgroundColor: item.colorHex }} />
-                      {item.productName}
+                      <span className="size-3 shrink-0 rounded-full border border-border" style={{ backgroundColor: row.colorHex }} />
+                      {row.productName}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {item.sizeName} / {item.colorName} · <span className="font-mono">{item.sku}</span>
+                      {row.sizeName} / {row.colorName} · <span className="font-mono">{row.sku}</span>
                     </div>
-                    {item.stockOverride ? (
+                    {row.stockOverride ? (
                       <Badge variant="destructive" className="mt-1 w-fit">
-                        Stock override: {item.stockOverrideReason}
+                        Stock override: {row.stockOverrideReason}
                       </Badge>
                     ) : null}
                   </TableCell>
                   <TableCell>
-                    {item.qty}
-                    {item.returnedQty > 0 ? <div className="text-xs text-amber-600">{item.returnedQty} returned</div> : null}
+                    {row.qty}
+                    {row.returnedQty > 0 ? <div className="text-xs text-amber-600">{row.returnedQty} returned</div> : null}
                   </TableCell>
-                  <TableCell>{formatBDT(item.unitPrice)}</TableCell>
-                  <TableCell>{formatBDT(item.lineDiscount)}</TableCell>
-                  {hasCostAccess ? <TableCell className="text-muted-foreground">{item.unitCostSnapshot ? formatBDT(item.unitCostSnapshot) : "—"}</TableCell> : null}
-                  <TableCell className="font-medium">{formatBDT(item.lineTotal)}</TableCell>
+                  <TableCell>{formatBDT(row.unitPrice)}</TableCell>
+                  <TableCell>{formatBDT(row.lineDiscount)}</TableCell>
+                  {hasCostAccess ? <TableCell className="text-muted-foreground">{row.unitCostSnapshot ? formatBDT(row.unitCostSnapshot) : "—"}</TableCell> : null}
+                  <TableCell className="font-medium">{formatBDT(row.lineTotal)}</TableCell>
                 </TableRow>
-              ))}
+                ),
+              )}
             </TableBody>
           </Table>
         </CardContent>

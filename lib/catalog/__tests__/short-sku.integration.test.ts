@@ -46,7 +46,8 @@ describe("every SKU in the catalog", () => {
         // What the tag prints is what the POS scan finds.
         const scanned = decodeCode128Widths(code128Widths(v.sku));
         expect(scanned).toBe(v.sku);
-        if (v.isActive) expect((await findVariantByCode(tx, scanned))?.variantId).toBe(v.id);
+        // Packaging material (P3.3) is never sold, so the POS scan doesn't find it.
+        if (v.isActive && v.product.kind === "SELLABLE") expect((await findVariantByCode(tx, scanned))?.variantId).toBe(v.id);
       }
     });
   }, 120_000);

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import type { ProductSearchResult } from "@/lib/orders/types";
+import { listSets } from "@/lib/sets/service";
 
 // Lightweight product+variant typeahead for the order item picker (PRD
 // §4.6 section 2: "Product search by name or SKU -> pick variant"). Kept in
@@ -12,8 +13,9 @@ import type { ProductSearchResult } from "@/lib/orders/types";
 // it needs the exact same "sellable variant with an effective price and
 // live available stock" shape.
 //
-// Outfit sets (PRD §4.2) are not included here yet — they don't exist in
-// the schema until P3.3; a comment there should point back to this route.
+// P3.3: packaging material (COMPONENT_ONLY) never appears — it isn't sold on
+// its own — and outfit sets matching the name come back alongside, for the
+// picker to offer (their sizes/colours are chosen when one is added).
 
 const querySchema = z.object({
   q: z.string().trim().min(1),
@@ -33,6 +35,7 @@ export async function GET(request: NextRequest) {
     where: {
       deletedAt: null,
       isActive: true,
+      kind: "SELLABLE",
       OR: [
         { name: { contains: q, mode: "insensitive" } },
         { code: { contains: q, mode: "insensitive" } },
@@ -69,5 +72,6 @@ export async function GET(request: NextRequest) {
     })),
   }));
 
-  return NextResponse.json(await stripCostFieldsForUser({ products: results }, guard.user));
+  const sets = await listSets(prisma, { q, activeOnly: true, take: 5 });
+  return NextResponse.json(await stripCostFieldsForUser({ products: results, sets }, guard.user));
 }

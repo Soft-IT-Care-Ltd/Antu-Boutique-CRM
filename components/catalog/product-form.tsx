@@ -31,11 +31,13 @@ type ProductFormValues = {
   basePrice: string;
   tags: string[];
   isActive: boolean;
+  /** P3.3 — chosen at creation; packaging material has no selling price. */
+  kind: "SELLABLE" | "COMPONENT_ONLY";
 };
 
-function toFormValues(product?: ProductDetail): ProductFormValues {
+function toFormValues(product?: ProductDetail, initialKind: ProductFormValues["kind"] = "SELLABLE"): ProductFormValues {
   if (!product) {
-    return { name: "", code: "", categoryId: null, brand: "", description: "", fabric: "", basePrice: "", tags: [], isActive: true };
+    return { name: "", code: "", categoryId: null, brand: "", description: "", fabric: "", basePrice: initialKind === "COMPONENT_ONLY" ? "0" : "", tags: [], isActive: true, kind: initialKind };
   }
   return {
     name: product.name,
@@ -47,6 +49,7 @@ function toFormValues(product?: ProductDetail): ProductFormValues {
     basePrice: product.basePrice,
     tags: product.tags,
     isActive: product.isActive,
+    kind: product.kind,
   };
 }
 
@@ -54,16 +57,19 @@ export function ProductForm({
   categories,
   product,
   onSaved,
+  initialKind,
 }: {
   categories: Category[];
   product?: ProductDetail;
   onSaved?: (product: ProductDetail) => void;
+  initialKind?: "SELLABLE" | "COMPONENT_ONLY";
 }) {
   const router = useRouter();
   const isEdit = Boolean(product);
   // PRD §4.2: the code is in every SKU — locked once any of them is on a printed tag.
   const codeLocked = Boolean(product?.variants?.some((v) => v.skuLocked));
-  const [values, setValues] = useState<ProductFormValues>(toFormValues(product));
+  const [values, setValues] = useState<ProductFormValues>(toFormValues(product, initialKind));
+  const isMaterial = values.kind === "COMPONENT_ONLY";
   const [tagInput, setTagInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +98,10 @@ export function ProductForm({
       brand: values.brand || null,
       description: values.description || null,
       fabric: values.fabric || null,
-      basePrice: values.basePrice,
+      basePrice: isMaterial ? 0 : values.basePrice,
       tags: values.tags,
       isActive: values.isActive,
+      ...(isEdit ? {} : { kind: values.kind }),
     };
 
     try {
@@ -125,6 +132,27 @@ export function ProductForm({
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="flex flex-col gap-4">
+          {!isEdit ? (
+            <div className="flex flex-col gap-1.5">
+              <Label>Type</Label>
+              <div className="flex overflow-hidden rounded-lg border self-start" role="group" aria-label="Product type">
+                {(["SELLABLE", "COMPONENT_ONLY"] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={values.kind === k}
+                    className={`h-9 px-3 text-sm ${values.kind === k ? "bg-primary text-primary-foreground" : "bg-background"}`}
+                    onClick={() => setValues({ ...values, kind: k, basePrice: k === "COMPONENT_ONLY" ? "0" : values.basePrice === "0" ? "" : values.basePrice })}
+                  >
+                    {k === "SELLABLE" ? "For sale" : "Packaging material"}
+                  </button>
+                ))}
+              </div>
+              {isMaterial ? <p className="text-xs text-muted-foreground">Branded bags, boxes, tissue, tags: stocked and costed, never sold, and hidden from order and POS search. Give it one size and colour (e.g. Free / White).</p> : null}
+            </div>
+          ) : isMaterial ? (
+            <p className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">Packaging material — stocked and costed, never sold on its own.</p>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="product-name">Name</Label>
@@ -180,18 +208,25 @@ export function ProductForm({
               <Label htmlFor="product-fabric">Fabric</Label>
               <Input id="product-fabric" value={values.fabric} onChange={(e) => setValues({ ...values, fabric: e.target.value })} />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="product-price">Base selling price (৳)</Label>
-              <Input
-                id="product-price"
-                type="number"
-                min={0}
-                step="0.01"
-                value={values.basePrice}
-                onChange={(e) => setValues({ ...values, basePrice: e.target.value })}
-                required
-              />
-            </div>
+            {isMaterial ? (
+              <div className="flex flex-col gap-1.5">
+                <Label>Selling price</Label>
+                <p className="text-sm text-muted-foreground">None — packaging material is never sold on its own. Its cost comes from purchases.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="product-price">Base selling price (৳)</Label>
+                <Input
+                  id="product-price"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={values.basePrice}
+                  onChange={(e) => setValues({ ...values, basePrice: e.target.value })}
+                  required
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -248,7 +283,7 @@ export function ProductForm({
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
         </CardContent>
         <CardFooter className="justify-end gap-2">
-          <Button type="submit" disabled={saving || !values.name.trim() || !values.basePrice}>
+          <Button type="submit" disabled={saving || !values.name.trim() || (!isMaterial && !values.basePrice)}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : null}
             {isEdit ? "Save changes" : "Create product"}
           </Button>

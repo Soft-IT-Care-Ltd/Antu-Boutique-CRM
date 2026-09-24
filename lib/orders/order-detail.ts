@@ -25,6 +25,8 @@ const orderDetailInclude = {
     },
     orderBy: { createdAt: "asc" },
   },
+  // P3.3 — outfit sets; their components are among `items` (setLineId).
+  setLines: { orderBy: { createdAt: "asc" } },
   images: {
     where: { deletedAt: null },
     orderBy: { uploadedAt: "asc" },
@@ -55,8 +57,9 @@ const orderDetailInclude = {
 
 export type LoadedOrder = NonNullable<Awaited<ReturnType<typeof loadOrderDetail>>>;
 
-export async function loadOrderDetail(id: string) {
-  return prisma.order.findFirst({
+/** `db` defaults to the app client; tests pass their rolled-back transaction. */
+export async function loadOrderDetail(id: string, db: Prisma.TransactionClient = prisma) {
+  return db.order.findFirst({
     where: { id, deletedAt: null },
     include: orderDetailInclude,
   });
@@ -117,6 +120,16 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
       stockOverride: item.stockOverride,
       stockOverrideReason: item.stockOverrideReason,
       returnedQty: item.returnedQty,
+      setLineId: item.setLineId,
+    })),
+    setLines: order.setLines.map((s) => ({
+      id: s.id,
+      setId: s.outfitSetId,
+      name: s.name,
+      qty: s.qty,
+      unitPrice: s.unitPrice.toFixed(2),
+      lineDiscount: s.lineDiscount.toFixed(2),
+      itemIds: order.items.filter((i) => i.setLineId === s.id).map((i) => i.id),
     })),
     images: order.images.map((image) => ({
       id: image.id,

@@ -91,10 +91,19 @@ export function PackingOrderDetail({ order: initialOrder, canPack }: { order: Pa
         </CardHeader>
         <CardContent>
           <ul className="flex flex-col divide-y">
-            {order.items.map((item) => (
-              <li key={item.id} className="flex items-center justify-between py-2 text-sm">
+            {order.items.map((item, i) => (
+              <li key={item.id} className={`flex flex-wrap items-center justify-between py-2 text-sm ${item.set ? "pl-4" : ""}`}>
+                {/* P3.3 — the set's name heads its pieces; each piece is picked on its own. */}
+                {item.set && order.items[i - 1]?.set?.id !== item.set.id ? (
+                  <p className="-ml-4 w-full pb-1 text-xs font-semibold text-muted-foreground">
+                    {item.set.name} × {item.set.qty} — outfit set, pack every piece
+                  </p>
+                ) : null}
                 <div>
-                  <p>{item.productName}</p>
+                  <p>
+                    {item.set ? "↳ " : ""}
+                    {item.productName}
+                  </p>
                   <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
                 </div>
                 <div className="text-right">
@@ -106,6 +115,12 @@ export function PackingOrderDetail({ order: initialOrder, canPack }: { order: Pa
               </li>
             ))}
           </ul>
+          {order.packaging.length > 0 ? (
+            <div className="mt-3 rounded-md bg-muted/50 p-2.5 text-sm">
+              <p className="text-xs font-medium text-muted-foreground">{order.packedAt ? "Packaging used" : "Packaging to use"}</p>
+              <p>{order.packaging.map((p) => `${p.qty} × ${p.label}`).join(" · ")}</p>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

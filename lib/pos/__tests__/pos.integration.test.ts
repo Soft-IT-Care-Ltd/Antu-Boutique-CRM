@@ -293,7 +293,8 @@ describe("POS sale guards", () => {
 describe("price tags ↔ POS scan", () => {
   it("every seeded variant's tag barcode scans back to that variant, even with Caps Lock on", async () => {
     await inRolledBackTransaction(async (tx) => {
-      const variants = await tx.productVariant.findMany({ where: { isActive: true, product: { deletedAt: null, isActive: true } }, select: { id: true, sku: true } });
+      // Packaging material (P3.3) is never sold — the scan leaves it out on purpose.
+      const variants = await tx.productVariant.findMany({ where: { isActive: true, product: { deletedAt: null, isActive: true, kind: "SELLABLE" } }, select: { id: true, sku: true } });
       expect(variants.length).toBeGreaterThan(0);
       for (const v of variants) {
         const scanned = decodeCode128Widths(code128Widths(v.sku));

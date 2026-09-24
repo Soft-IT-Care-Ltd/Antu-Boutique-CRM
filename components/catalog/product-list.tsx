@@ -192,13 +192,14 @@ export function ProductList({ canCreate }: { canCreate: boolean }) {
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{product.category?.name ?? "—"}</TableCell>
-                <TableCell>{formatBDT(product.basePrice)}</TableCell>
+                <TableCell>{product.kind === "COMPONENT_ONLY" ? <span className="text-xs text-muted-foreground">Packaging</span> : formatBDT(product.basePrice)}</TableCell>
                 <TableCell>{product._count.variants}</TableCell>
                 <TableCell>{product.stock.available}</TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
                     <Badge variant={STOCK_VARIANT[product.stock.status]}>{STOCK_LABEL[product.stock.status]}</Badge>
                     {!product.isActive ? <Badge variant="outline">Inactive</Badge> : null}
+                    {product.kind === "COMPONENT_ONLY" ? <Badge variant="secondary">Packaging</Badge> : null}
                   </div>
                 </TableCell>
               </TableRow>

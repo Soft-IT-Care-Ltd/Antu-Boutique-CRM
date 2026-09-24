@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Search } from "lucide-react";
+import { Layers, Loader2, Plus, Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { ApiError, fetchJson } from "@/lib/orders/client";
+import { formatBDT } from "@/lib/money";
 import type { ProductSearchResult, ProductSearchVariant } from "@/lib/orders/types";
+import type { SetListItem } from "@/lib/sets/types";
 
 export type PickedVariant = {
   variantId: string;
@@ -20,11 +22,13 @@ export type PickedVariant = {
 };
 
 // PRD §4.6 section 2: "Product search by name or SKU -> pick variant (size
-// + colour)". Outfit sets aren't searchable here yet — they don't exist in
-// the schema until P3.3 (see the comment on the search route itself).
-export function OrderItemPicker({ onPick }: { onPick: (variant: PickedVariant) => void }) {
+// + colour)". P3.3: with `onPickSet`, matching outfit sets are offered too;
+// their sizes/colours are chosen next (components/sets/set-chooser-dialog).
+export function OrderItemPicker({ onPick, onPickSet }: { onPick: (variant: PickedVariant) => void; onPickSet?: (set: SetListItem) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ProductSearchResult[]>([]);
+  const [sets, setSets] = useState<SetListItem[]>([]);
+  const wantSets = Boolean(onPickSet);
   const [open, setOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,12 +38,14 @@ export function OrderItemPicker({ onPick }: { onPick: (variant: PickedVariant) =
     const timer = setTimeout(() => {
       if (query.trim().length < 2) {
         setResults([]);
+        setSets([]);
         return;
       }
       setSearching(true);
-      fetchJson<{ products: ProductSearchResult[] }>(`/api/catalog/products/search?q=${encodeURIComponent(query.trim())}`)
+      fetchJson<{ products: ProductSearchResult[]; sets: SetListItem[] }>(`/api/catalog/products/search?q=${encodeURIComponent(query.trim())}`)
         .then((data) => {
           setResults(data.products);
+          setSets(wantSets ? data.sets : []);
           setOpen(true);
           setError(null);
         })
@@ -47,7 +53,7 @@ export function OrderItemPicker({ onPick }: { onPick: (variant: PickedVariant) =
         .finally(() => setSearching(false));
     }, 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, wantSets]);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -90,8 +96,35 @@ export function OrderItemPicker({ onPick }: { onPick: (variant: PickedVariant) =
 
       {error ? <p className="pt-1 text-xs text-destructive">{error}</p> : null}
 
-      {open && results.length > 0 ? (
+      {open && results.length + sets.length > 0 ? (
         <div className="absolute z-20 mt-1 max-h-80 w-full min-w-md overflow-y-auto rounded-lg border bg-popover p-1 shadow-md">
+          {sets.map((set) => (
+            <button
+              key={set.id}
+              type="button"
+              onClick={() => {
+                onPickSet?.(set);
+                setQuery("");
+                setResults([]);
+                setSets([]);
+                setOpen(false);
+              }}
+              className="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Layers className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="font-medium">{set.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">Outfit set · {set.components.map((c) => `${c.qty > 1 ? `${c.qty} × ` : ""}${c.productName}`).join(" + ")}</span>
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2 text-xs">
+                {formatBDT(set.price)}
+                <span className={set.availableSets <= 0 ? "text-destructive" : "text-muted-foreground"}>{set.availableSets > 0 ? `${set.availableSets} available` : "out of stock"}</span>
+                <Plus className="size-3.5" />
+              </span>
+            </button>
+          ))}
           {results.map((product) => (
             <div key={product.id} className="p-1.5">
               <div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
@@ -128,7 +161,7 @@ export function OrderItemPicker({ onPick }: { onPick: (variant: PickedVariant) =
         </div>
       ) : null}
 
-      {open && !searching && query.trim().length >= 2 && results.length === 0 ? (
+      {open && !searching && query.trim().length >= 2 && results.length + sets.length === 0 ? (
         <div className="absolute z-20 mt-1 w-full rounded-lg border bg-popover p-3 text-center text-sm text-muted-foreground shadow-md">
           No matching products
         </div>

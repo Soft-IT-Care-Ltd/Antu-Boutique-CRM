@@ -18,6 +18,9 @@ import type { PosTenderMethod } from "@/lib/pos/constants";
 import { lockOpenDrawerForSale } from "@/lib/pos/drawer";
 import type { PosSaleResult } from "@/lib/pos/types";
 import { spendStoreCredit } from "@/lib/store-credit/ledger";
+import { consumePackaging } from "@/lib/packaging/consume";
+import { resolveSetLines, writeSetLines } from "@/lib/sets/order-lines";
+import type { SetLineInput } from "@/lib/sets/types";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // PRD §4.7 — a showroom sale, start to finish, in ONE transaction:
@@ -50,6 +53,8 @@ export type PosTenderInput = { method: PosTenderMethod; amount: number; tendered
 
 export type PosSaleInput = {
   items: PosSaleItemInput[];
+  /** P3.3 — outfit sets, each with a size/colour chosen per component. */
+  sets?: SetLineInput[];
   cartDiscount: number;
   customer?: { phone: string; name?: string | null } | null;
   tenders: PosTenderInput[];
@@ -93,12 +98,18 @@ export async function resolveCounterCustomer(
 }
 
 export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput): Promise<PosSaleResult> {
-  if (input.items.length === 0) throw new PosSaleError("The cart is empty.");
+  const sets = input.sets ?? [];
+  if (input.items.length === 0 && sets.length === 0) throw new PosSaleError("The cart is empty.");
 
+  // Items and sets are priced together, so a whole-sale discount spreads
+  // over both; each set's share is then split over its components.
   let priced;
   try {
     priced = priceCart(
-      input.items.map((item, index) => ({ key: String(index), qty: item.qty, unitPrice: item.unitPrice, lineDiscount: item.lineDiscount })),
+      [
+        ...input.items.map((item, index) => ({ key: `i${index}`, qty: item.qty, unitPrice: item.unitPrice, lineDiscount: item.lineDiscount })),
+        ...sets.map((set, index) => ({ key: `s${index}`, qty: set.qty, unitPrice: set.unitPrice, lineDiscount: set.lineDiscount })),
+      ],
       input.cartDiscount,
     );
   } catch (error) {
@@ -123,26 +134,37 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     // can't count the drawer while this sale's cash is on its way in.
     const drawer = takesCash ? await lockOpenDrawerForSale(tx, ctx.cashWalletId) : null;
 
+    // P3.3 — each set, checked as it stands now and exploded into its
+    // component lines (the chosen size/colour, a share of the set's price).
+    const pricedSets = sets.map((set, index) => {
+      const line = priced.lines[input.items.length + index];
+      return { ...set, unitPrice: line.unitPricePaisa / 100, lineDiscount: line.discountPaisa / 100 };
+    });
+    const resolvedSets = await resolveSetLines(tx, pricedSets, { hasCostAccess: ctx.hasCostAccess });
+    const setChildren = resolvedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason })));
+
     // Lock every variant (in id order, so two tills can't deadlock) before
     // reading stock and cost — nothing can move them between check and write.
-    const variantIds = [...new Set(input.items.map((i) => i.variantId))].sort();
+    const variantIds = [...new Set([...input.items.map((i) => i.variantId), ...setChildren.map((c) => c.variantId)])].sort();
     for (const id of variantIds) {
       if (!(await lockVariant(tx, id))) throw new PosSaleError("One of the items is no longer in the catalog.");
     }
     const variants = await tx.productVariant.findMany({
       where: { id: { in: variantIds } },
-      select: { id: true, sku: true, stockQty: true, reservedQty: true, weightedAvgCost: true, isActive: true, product: { select: { name: true, isActive: true, deletedAt: true } } },
+      select: { id: true, sku: true, stockQty: true, reservedQty: true, weightedAvgCost: true, isActive: true, product: { select: { name: true, isActive: true, deletedAt: true, kind: true } } },
     });
     const variantById = new Map(variants.map((v) => [v.id, v]));
 
     const wanted = new Map<string, number>();
-    for (const item of input.items) wanted.set(item.variantId, (wanted.get(item.variantId) ?? 0) + item.qty);
+    for (const item of [...input.items, ...setChildren]) wanted.set(item.variantId, (wanted.get(item.variantId) ?? 0) + item.qty);
 
     const overrideByVariant = new Map<string, string>();
-    for (const item of input.items) {
+    for (const item of [...input.items, ...setChildren]) {
       const v = variantById.get(item.variantId);
-      if (!v || !v.isActive || !v.product.isActive || v.product.deletedAt) throw new PosSaleError(`${v?.sku ?? "An item"} is no longer for sale.`);
-      if (isPriceBelowFloor(item.unitPrice, toNumber(v.weightedAvgCost), ctx.hasCostAccess)) {
+      // Packaging material (P3.3) is never sold on its own.
+      if (!v || !v.isActive || !v.product.isActive || v.product.deletedAt || v.product.kind !== "SELLABLE") throw new PosSaleError(`${v?.sku ?? "An item"} is no longer for sale.`);
+      // A set's floor is checked on the set as a whole (lib/sets/order-lines.ts).
+      if (!("productId" in item) && isPriceBelowFloor(item.unitPrice, toNumber(v.weightedAvgCost), ctx.hasCostAccess)) {
         throw new PosSaleError(`The price for ${v.sku} is below the minimum allowed. Raise it, or ask a Manager/Admin.`);
       }
       // PRD §6 rule 7: selling below available stock needs an Admin/Manager
@@ -177,6 +199,23 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     });
 
     const lineAudit: unknown[] = [];
+    // P3.3 — set lines first, their components frozen at today's cost and
+    // out of stock like any line.
+    const setItems = await writeSetLines(tx, order.id, resolvedSets, { costByVariant: new Map(variants.map((v) => [v.id, v.weightedAvgCost])), overrideByVariant });
+    for (const child of setItems) {
+      const v = variantById.get(child.variantId)!;
+      await recordStockMovement(tx, {
+        variantId: v.id,
+        type: "POS_SALE_OUT",
+        qty: -child.qty,
+        unitCost: v.weightedAvgCost,
+        referenceType: "ORDER",
+        referenceId: order.id,
+        actorId: ctx.user.id,
+        note: overrideByVariant.has(v.id) ? `Sold beyond available stock: ${overrideByVariant.get(v.id)}` : "Part of an outfit set",
+      });
+    }
+    for (const s of resolvedSets) lineAudit.push({ set: s.name, qty: s.qty, unitPrice: s.unitPrice, lineDiscount: s.lineDiscount, components: s.children.map((c) => ({ sku: c.sku, qty: c.qty })) });
     for (const [index, item] of input.items.entries()) {
       const v = variantById.get(item.variantId)!;
       const line = priced.lines[index];
@@ -235,6 +274,9 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
 
     const due = await recomputeOrderDueAmount(tx, order.id);
     if (toPaisa(due) !== 0) throw new PosSaleError("The payments don't add up to the total.");
+
+    // P3.3 — the shopping bag, tissue and tags this sale uses.
+    await consumePackaging(tx, { orderId: order.id, orderNo, scope: "POS_SALE", actorId: ctx.user.id });
 
     await tx.orderStatusHistory.create({
       data: { orderId: order.id, fromStatus: null, toStatus: "COMPLETED", changedById: ctx.user.id, note: "Showroom sale (POS) — paid in full at the counter" },

@@ -17,7 +17,8 @@ import type { PosRecentSale, PosVariantHit } from "@/lib/pos/types";
 
 const sellableVariant = {
   isActive: true,
-  product: { isActive: true, deletedAt: null },
+  // P3.3 — packaging material is never sold on its own.
+  product: { isActive: true, deletedAt: null, kind: "SELLABLE" },
 } satisfies Prisma.ProductVariantWhereInput;
 
 const hitSelect = {

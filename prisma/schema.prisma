@@ -213,6 +213,7 @@ model User {
   decidedReturnCases        ReturnCase[]             @relation("ReturnCaseDecidedBy")
   cancelledReturnCases      ReturnCase[]             @relation("ReturnCaseCancelledBy")
   storeCreditEntries        StoreCreditEntry[]       @relation("StoreCreditEntryCreatedBy")
+  createdOutfitSets         OutfitSet[]              @relation("OutfitSetCreatedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -270,20 +271,28 @@ model Category {
 // PRD §4.2 — the garment. Cost never lives here (only on the variant, via
 // weighted_avg_cost) so stripCostFieldsForUser only ever has to scrub one level.
 model Product {
-  id          String    @id @default(cuid())
-  code        String    @unique
+  id          String      @id @default(cuid())
+  code        String      @unique
   name        String
   categoryId  String?
-  category    Category? @relation(fields: [categoryId], references: [id])
+  category    Category?   @relation(fields: [categoryId], references: [id])
   brand       String?
   description String?
   fabric      String?
-  basePrice   Decimal   @db.Decimal(12, 2)
-  tags        String[]  @default([])
-  isActive    Boolean   @default(true)
+  basePrice   Decimal     @db.Decimal(12, 2)
+  tags        String[]    @default([])
+  isActive    Boolean     @default(true)
+  // P3.3 — COMPONENT_ONLY: packaging material (branded bag, box, tissue,
+  // tag). Stocked and costed like any product, never sold on its own, no
+  // selling price (DB CHECK), hidden from order and POS search.
+  kind        ProductKind @default(SELLABLE)
 
-  images   ProductImage[]
-  variants ProductVariant[]
+  images        ProductImage[]
+  variants      ProductVariant[]
+  // P3.3 — sets this product is a component of, and the packaging each
+  // unit of it uses.
+  setComponents OutfitSetComponent[]
+  packaging     PackagingComponent[] @relation("ProductPackaging")
 
   createdById String?
   createdBy   User?   @relation("ProductCreatedBy", fields: [createdById], references: [id])
@@ -348,6 +357,8 @@ model ProductVariant {
 
   orderItems     OrderItem[]
   stockMovements StockMovement[]
+  // P3.3 — where this variant (of a COMPONENT_ONLY product) is used as packaging.
+  packagingUses  PackagingComponent[] @relation("PackagingMaterial")
   purchaseItems  PurchaseItem[]
   // P3.2 — exchange lines that swap an item for this variant.
   exchangeLines  ReturnCaseLine[]
@@ -531,6 +542,10 @@ model Order {
   statementLines     CourierStatementLine[]
   returnCases        ReturnCase[]           @relation("ReturnCaseOrder")
   storeCreditEntries StoreCreditEntry[]
+  // P3.3 — outfit sets on this order (their components are ordinary items).
+  setLines           OrderSetLine[]
+  // P3.3 — the one "Packaging used" expense this order posted.
+  packagingExpense   Expense?               @relation("PackagingExpense")
   replacementFor     ReturnCase?            @relation("ReturnCaseReplacement")
 
   // CLAUDE.md rule 8: soft delete only.
@@ -573,6 +588,12 @@ model OrderItem {
   // (lib/courier/partial-delivery.ts); qty itself never changes.
   returnedQty Int @default(0)
 
+  // P3.3 — set when this line is one component of an outfit set on the
+  // order: the chosen size/colour of that component, with its share of the
+  // set's price. Stock, cost, packing and returns treat it like any line.
+  setLineId String?
+  setLine   OrderSetLine? @relation(fields: [setLineId], references: [id], onDelete: Cascade)
+
   images                OrderImage[]
   returnInspectionLines ReturnInspectionLine[]
   returnCaseLines       ReturnCaseLine[]
@@ -582,6 +603,7 @@ model OrderItem {
 
   @@index([orderId])
   @@index([variantId])
+  @@index([setLineId])
   @@map("order_items")
 }
 
@@ -774,6 +796,8 @@ enum StockMovementType {
   DAMAGE_OUT
   ADJUSTMENT
   POS_SALE_OUT
+  // P3.3 — packaging material used when an order was packed or sold at the counter.
+  PACKAGING_OUT
 }
 
 // What a ledger row points back to (`referenceId` is that entity's id, or
@@ -973,6 +997,10 @@ model Expense {
   returnChargeInspection   ReturnInspection? @relation("ReturnChargeExpense", fields: [returnChargeInspectionId], references: [id], onDelete: Restrict)
   // P3.2 — an online exchange's replacement parcel, when the company bears
   // its courier charge: posted once, under "Exchange / return cost".
+  // P3.3 — the packaging an order used (bags, boxes, tissue, tags), at
+  // cost, posted once when it's packed or sold at the counter.
+  packagingOrderId         String?           @unique
+  packagingOrder           Order?            @relation("PackagingExpense", fields: [packagingOrderId], references: [id], onDelete: Restrict)
   exchangeCourierCaseId    String?           @unique
   exchangeCourierCase      ReturnCase?       @relation("ExchangeCourierCostExpense", fields: [exchangeCourierCaseId], references: [id], onDelete: Restrict)
   statementDeliveryCharge  CourierStatement? @relation("StatementDeliveryChargeExpense")
@@ -1742,4 +1770,107 @@ model StoreCreditEntry {
   @@index([createdAt])
   @@index([orderId])
   @@map("store_credit_entries")
+}
+
+// ============ Outfit sets and packaging (P3.3) ============
+// PRD §4.2. A set is built from PRODUCTS, not fixed variants: "Kurti +
+// Dupatta + Plazo" is one set, and the size and colour of each component
+// is chosen when it is sold.
+
+enum ProductKind {
+  SELLABLE
+  COMPONENT_ONLY
+}
+
+model OutfitSet {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  // Set independently of the components' prices.
+  price       Decimal @db.Decimal(12, 2)
+  isActive    Boolean @default(true)
+
+  components OutfitSetComponent[]
+  packaging  PackagingComponent[] @relation("OutfitSetPackaging")
+  orderLines OrderSetLine[]
+
+  createdById String?
+  createdBy   User?   @relation("OutfitSetCreatedBy", fields: [createdById], references: [id])
+
+  // CLAUDE.md rule 8: soft delete only.
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([deletedAt])
+  @@map("outfit_sets")
+}
+
+model OutfitSetComponent {
+  id        String    @id @default(cuid())
+  setId     String
+  set       OutfitSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  // Units of this product in one set: drives cost, stock and availability.
+  qty       Int
+  sortOrder Int       @default(0)
+
+  @@unique([setId, productId])
+  @@index([productId])
+  @@map("outfit_set_components")
+}
+
+enum PackagingScope {
+  // Every online parcel, whatever is in it (a mailer bag).
+  ONLINE_PARCEL
+  // Every showroom sale (a shopping bag).
+  POS_SALE
+}
+
+// Packaging a unit of a product or set uses, or every parcel / counter sale
+// uses. Exactly one owner (DB CHECK). The material is a variant of a
+// COMPONENT_ONLY product.
+model PackagingComponent {
+  id                String          @id @default(cuid())
+  productId         String?
+  product           Product?        @relation("ProductPackaging", fields: [productId], references: [id], onDelete: Cascade)
+  outfitSetId       String?
+  outfitSet         OutfitSet?      @relation("OutfitSetPackaging", fields: [outfitSetId], references: [id], onDelete: Cascade)
+  scope             PackagingScope?
+  materialVariantId String
+  materialVariant   ProductVariant  @relation("PackagingMaterial", fields: [materialVariantId], references: [id], onDelete: Restrict)
+  qty               Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, materialVariantId])
+  @@unique([outfitSetId, materialVariantId])
+  @@unique([scope, materialVariantId])
+  @@index([materialVariantId])
+  @@map("packaging_components")
+}
+
+// An outfit set sold on an order. Its components are ordinary order_items
+// (setLineId), each the chosen size/colour with its share of the price, so
+// the order total is still the sum of order_items.
+model OrderSetLine {
+  id           String    @id @default(cuid())
+  orderId      String
+  order        Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  outfitSetId  String
+  outfitSet    OutfitSet @relation(fields: [outfitSetId], references: [id], onDelete: Restrict)
+  // The set's name when sold (printed on the invoice even if renamed later).
+  name         String
+  qty          Int
+  unitPrice    Decimal   @db.Decimal(12, 2)
+  lineDiscount Decimal   @default(0) @db.Decimal(12, 2)
+
+  items OrderItem[]
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([outfitSetId])
+  @@map("order_set_lines")
 }

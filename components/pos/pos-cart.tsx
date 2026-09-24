@@ -32,7 +32,10 @@ export function PosCart({
   onSelect,
   onChange,
   onRemove,
+  hasOtherLines = false,
 }: {
+  /** P3.3 — outfit sets are in the cart (listed separately): no empty state. */
+  hasOtherLines?: boolean;
   lines: CartLine[];
   priced: Map<string, PricedCartLine> | null;
   selectedVariantId: string | null;
@@ -42,6 +45,7 @@ export function PosCart({
   onRemove: (key: string) => void;
 }) {
   if (lines.length === 0) {
+    if (hasOtherLines) return null;
     return (
       <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-12 text-center">
         <ShoppingBasket className="size-8 text-muted-foreground" />

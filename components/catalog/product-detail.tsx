@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProductForm } from "@/components/catalog/product-form";
 import { ProductImages } from "@/components/catalog/product-images";
+import { ProductPackaging } from "@/components/catalog/product-packaging";
 import { VariantMatrix } from "@/components/catalog/variant-matrix";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
@@ -95,6 +96,7 @@ export function ProductDetail({
                 {product.code}
               </Badge>
               {!product.isActive ? <Badge variant="secondary">Inactive</Badge> : null}
+              {product.kind === "COMPONENT_ONLY" ? <Badge variant="secondary">Packaging material</Badge> : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {product.category?.name ?? "Uncategorised"}
@@ -200,6 +202,7 @@ export function ProductDetail({
           />
         </CardContent>
       </Card>
+      {product.kind === "SELLABLE" ? <ProductPackaging productId={product.id} canEdit={canEdit} /> : null}
     </div>
   );
 }

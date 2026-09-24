@@ -8,7 +8,8 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { toNumber } from "@/lib/money";
-import { applyValidatedOrderEdit, OrderEditConflictError, validateOrderEdit, type OrderEditInput } from "@/lib/orders/apply-edit";
+import { applyValidatedOrderEdit, existingSetInputs, OrderEditConflictError, validateOrderEdit, type OrderEditInput } from "@/lib/orders/apply-edit";
+import { setLineSchema } from "@/lib/sets/validation";
 import { editTouchesGatedFields, isWithinEditWindow } from "@/lib/orders/edit-window";
 import { generateOrderInvoice } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
@@ -42,7 +43,9 @@ const orderItemSchema = z.object({
 });
 
 const updateOrderSchema = z.object({
-  items: z.array(orderItemSchema).min(1).max(50).optional(),
+  items: z.array(orderItemSchema).max(50).optional(),
+  // P3.3 — the order's outfit sets (lib/orders/apply-edit.ts).
+  sets: z.array(setLineSchema).max(20).optional(),
   courierId: z.string().cuid().nullish(),
   courierZoneId: z.string().cuid().nullish(),
   deliveryCharge: z.coerce.number().min(0).optional(),
@@ -58,7 +61,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params;
   const existing = await prisma.order.findFirst({
     where: scopedWhere({ id, deletedAt: null }, guard.user),
-    include: { items: true },
+    include: { items: true, setLines: { include: { items: { select: { variantId: true, variant: { select: { productId: true } } } } } } },
   });
   if (!existing) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
@@ -91,8 +94,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const windowMinutes = await getOrderEditWindowMinutes();
   const withinWindow = isWithinEditWindow(existing.createdAt, windowMinutes);
   const gated = editTouchesGatedFields(
-    { items: existing.items.map((i) => ({ variantId: i.variantId, qty: i.qty, unitPrice: toNumber(i.unitPrice), lineDiscount: toNumber(i.lineDiscount) })), deliveryCharge: toNumber(existing.deliveryCharge) },
-    { items: input.items, deliveryCharge: input.deliveryCharge },
+    {
+      items: existing.items.filter((i) => i.setLineId === null).map((i) => ({ variantId: i.variantId, qty: i.qty, unitPrice: toNumber(i.unitPrice), lineDiscount: toNumber(i.lineDiscount) })),
+      sets: existingSetInputs(existing.setLines),
+      deliveryCharge: toNumber(existing.deliveryCharge),
+    },
+    { items: input.items, sets: input.sets, deliveryCharge: input.deliveryCharge },
   );
   const canBypassWindow = await can(guard.user, "order.edit_after_window");
 

@@ -212,7 +212,9 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
                   <div key={item.orderItemId} className="flex flex-col gap-2 rounded-md border p-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span>
-                        {item.product} <b>{item.size} / {item.color}</b> <span className="text-xs text-muted-foreground">· paid {formatBDT(item.paidPerUnit)} each</span>
+                        {item.product} <b>{item.size} / {item.color}</b>
+                        {item.setName ? <span className="text-xs text-muted-foreground"> · from set {item.setName}</span> : null}{" "}
+                        <span className="text-xs text-muted-foreground">· paid {formatBDT(item.paidPerUnit)} each</span>
                       </span>
                       <div className="flex items-center gap-2">
                         <Label htmlFor={`cx-q-${item.orderItemId}`} className="text-xs text-muted-foreground">

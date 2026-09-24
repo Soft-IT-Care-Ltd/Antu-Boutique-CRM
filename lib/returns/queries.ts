@@ -156,6 +156,8 @@ const ITEMS_FOR_RETURN = {
     unitPrice: true,
     lineDiscount: true,
     variantId: true,
+    // P3.3 — one piece of an outfit set can come back on its own.
+    setLine: { select: { name: true } },
     variant: { select: { sku: true, productId: true, product: { select: { name: true } }, size: { select: { name: true } }, color: { select: { name: true, hexCode: true } } } },
   },
 } satisfies Prisma.Order$itemsArgs;
@@ -177,6 +179,7 @@ async function returnableItems(db: Db, orderId: string, items: Prisma.OrderItemG
     unitPrice: i.unitPrice.toString(),
     paidPerUnit: fromPaisa(Math.round((toPaisa(i.unitPrice) * i.qty - toPaisa(i.lineDiscount)) / i.qty)),
     returnable: Math.max(0, i.qty - i.returnedQty - (pending.get(i.id) ?? 0)),
+    setName: i.setLine?.name ?? null,
   }));
 }
 

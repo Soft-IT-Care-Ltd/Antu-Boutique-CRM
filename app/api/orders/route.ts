@@ -20,6 +20,9 @@ import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
 import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
+import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
+import { SetError } from "@/lib/sets/service";
+import { setLineSchema } from "@/lib/sets/validation";
 import { spendStoreCredit, StoreCreditError } from "@/lib/store-credit/ledger";
 import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
@@ -117,7 +120,9 @@ const createOrderSchema = z
   .object({
     customerId: z.string().cuid().optional(),
     customer: newCustomerSchema.optional(),
-    items: z.array(orderItemSchema).min(1).max(50),
+    items: z.array(orderItemSchema).max(50).default([]),
+    // P3.3 — outfit sets, each with a size/colour picked per component.
+    sets: z.array(setLineSchema).max(20).default([]),
     courierId: z.string().cuid().nullish(),
     courierZoneId: z.string().cuid().nullish(),
     deliveryCharge: z.coerce.number().min(0).default(0),
@@ -129,7 +134,8 @@ const createOrderSchema = z
   .refine((data) => Boolean(data.customerId) !== Boolean(data.customer), {
     message: "Provide either an existing customerId or new customer details, not both",
     path: ["customerId"],
-  });
+  })
+  .refine((data) => data.items.length + data.sets.length > 0, { message: "Add at least one item", path: ["items"] });
 
 export async function POST(request: NextRequest) {
   const guard = await requirePermission("order.create");
@@ -139,7 +145,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { customerId, customer: newCustomerInput, items, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote, deliveryNote } =
+  const { customerId, customer: newCustomerInput, items, sets, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote, deliveryNote } =
     parsed.data;
 
   // Section 1 — resolve the one person on this order. Existing customer
@@ -190,29 +196,43 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Section 2 — items. Validate every variant, the PRD §4.6 price floor and
-  // the stock-override rule before writing anything.
-  const variantIds = [...new Set(items.map((i) => i.variantId))];
-  const variants = await prisma.productVariant.findMany({
-    where: { id: { in: variantIds } },
-    include: { product: { select: { name: true, isActive: true, deletedAt: true } } },
-  });
-  const variantById = new Map(variants.map((v) => [v.id, v]));
-
   const hasCostAccess = await can(guard.user, "product.cost.view");
   const hasStockOverride = await can(guard.user, "order.stock_override");
+
+  // P3.3 — outfit sets, checked against the set as it is now and exploded
+  // into one ordinary line per component (lib/sets/order-lines.ts). Their
+  // lines go through the same stock checks as any item below.
+  let resolvedSets: ResolvedSetLine[];
+  try {
+    resolvedSets = await resolveSetLines(prisma, sets, { hasCostAccess });
+  } catch (error) {
+    if (error instanceof SetError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
+  const setChildren = resolvedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason ?? undefined, fromSet: true })));
+
+  // Section 2 — items. Validate every variant, the PRD §4.6 price floor and
+  // the stock-override rule before writing anything.
+  const variantIds = [...new Set([...items.map((i) => i.variantId), ...setChildren.map((c) => c.variantId)])];
+  const variants = await prisma.productVariant.findMany({
+    where: { id: { in: variantIds } },
+    include: { product: { select: { name: true, isActive: true, deletedAt: true, kind: true } } },
+  });
+  const variantById = new Map(variants.map((v) => [v.id, v]));
 
   // Multiple lines can reference the same variant — track cumulative
   // committed qty per variant so the stock check sees the true total.
   const committedQtyByVariant = new Map<string, number>();
 
-  for (const item of items) {
+  for (const item of [...items.map((i) => ({ ...i, fromSet: false })), ...setChildren]) {
     const variant = variantById.get(item.variantId);
-    if (!variant || !variant.isActive || !variant.product || variant.product.deletedAt) {
+    // Packaging material (P3.3) is never sold on its own.
+    if (!variant || !variant.isActive || !variant.product || variant.product.deletedAt || variant.product.kind !== "SELLABLE") {
       return NextResponse.json({ error: "One of the selected items is no longer available" }, { status: 400 });
     }
 
-    if (isPriceBelowFloor(item.unitPrice, toNumber(variant.weightedAvgCost), hasCostAccess)) {
+    // A set's floor is checked on the set as a whole.
+    if (!item.fromSet && isPriceBelowFloor(item.unitPrice, toNumber(variant.weightedAvgCost), hasCostAccess)) {
       return NextResponse.json(
         { error: `Unit price for ${variant.sku} is below the minimum allowed. Increase the price or ask a Manager/Admin.` },
         { status: 400 },
@@ -248,7 +268,7 @@ export async function POST(request: NextRequest) {
   }
 
   const totals = computeOrderTotals(
-    items.map((i) => ({ qty: i.qty, unitPrice: i.unitPrice, lineDiscount: i.lineDiscount })),
+    [...items, ...setChildren].map((i) => ({ qty: i.qty, unitPrice: i.unitPrice, lineDiscount: i.lineDiscount })),
     deliveryCharge,
   );
   const dueAmount = computeDueAmount(totals.total, advancePayment?.amount ?? 0);
@@ -305,6 +325,19 @@ export async function POST(request: NextRequest) {
         // reservedQty bump isn't a stock_movements event (see the comment
         // in lib/orders/stock.ts), so no ledger row here.
         await reserveVariantStock(tx, item.variantId, item.qty);
+      }
+
+      // P3.3 — the sets' component lines, reserved like any line.
+      const overrideByVariant = new Map<string, string>();
+      for (const s of resolvedSets) {
+        for (const c of s.children) {
+          const variant = variantById.get(c.variantId)!;
+          if ((committedQtyByVariant.get(c.variantId) ?? 0) > variant.stockQty - variant.reservedQty && s.stockOverrideReason) overrideByVariant.set(c.variantId, s.stockOverrideReason);
+        }
+      }
+      for (const child of await writeSetLines(tx, created.id, resolvedSets, { overrideByVariant })) {
+        itemIds.push(child.id);
+        await reserveVariantStock(tx, child.variantId, child.qty);
       }
 
       await tx.orderStatusHistory.create({

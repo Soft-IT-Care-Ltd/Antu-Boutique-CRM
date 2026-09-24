@@ -56,6 +56,8 @@ export type ProductListItem = {
   brand: string | null;
   basePrice: string;
   isActive: boolean;
+  /** P3.3 — COMPONENT_ONLY = packaging material, never sold on its own. */
+  kind: "SELLABLE" | "COMPONENT_ONLY";
   category: { id: string; name: string } | null;
   images: ProductImage[];
   _count: { variants: number };
@@ -93,6 +95,7 @@ export type ProductDetail = {
   basePrice: string;
   tags: string[];
   isActive: boolean;
+  kind: "SELLABLE" | "COMPONENT_ONLY";
   images: ProductImage[];
   variants: ProductVariant[];
   stockAvailable: number;

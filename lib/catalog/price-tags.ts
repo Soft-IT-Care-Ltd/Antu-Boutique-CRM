@@ -61,7 +61,7 @@ const variantOrder = [{ product: { name: "asc" } }, { size: { sortOrder: "asc" }
 
 /** Every active size/colour of a product, one tag per unit on hand by default. */
 export async function tagsForProduct(db: Db, productId: string): Promise<TagSourceItem[]> {
-  const rows = await db.productVariant.findMany({ where: { productId, isActive: true, product: { deletedAt: null } }, select: variantSelect, orderBy: variantOrder });
+  const rows = await db.productVariant.findMany({ where: { productId, isActive: true, product: { deletedAt: null, kind: "SELLABLE" } }, select: variantSelect, orderBy: variantOrder });
   return rows.map((v) => toItem(v, Math.max(0, v.stockQty)));
 }
 
@@ -86,7 +86,7 @@ export async function searchTagVariants(db: Db, q: string): Promise<TagSourceIte
   const rows = await db.productVariant.findMany({
     where: {
       isActive: true,
-      product: { deletedAt: null },
+      product: { deletedAt: null, kind: "SELLABLE" },
       OR: [{ sku: { contains: q, mode: "insensitive" } }, { product: { name: { contains: q, mode: "insensitive" } } }, { product: { code: { contains: q, mode: "insensitive" } } }],
     },
     select: variantSelect,

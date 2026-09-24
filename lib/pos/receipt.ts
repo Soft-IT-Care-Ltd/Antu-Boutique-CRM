@@ -34,9 +34,12 @@ export async function loadReceiptOrder(db: Db, orderId: string) {
           qty: true,
           unitPrice: true,
           lineDiscount: true,
+          setLineId: true,
           variant: { select: { sku: true, product: { select: { name: true } }, size: { select: { name: true } }, color: { select: { name: true } } } },
         },
       },
+      // P3.3 — outfit sets print as the set, with what's in it.
+      setLines: { orderBy: { createdAt: "asc" }, select: { id: true, name: true, qty: true, unitPrice: true, lineDiscount: true } },
       // P3.2 — store credit spent at the counter prints like any payment.
       payments: { where: { OR: [{ kind: "PAYMENT" }, { kind: "STORE_CREDIT", amount: { gt: 0 } }] }, orderBy: { createdAt: "asc" }, select: { method: true, amount: true, cashTendered: true, transactionId: true } },
     },
@@ -53,7 +56,25 @@ function maskPhone(phone: string): string {
 const row = (left: string, right: string, cls = "") => `<div class="row ${cls}"><span>${left}</span><span>${right}</span></div>`;
 
 export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): string {
+  const setsHtml = order.setLines
+    .map((set) => {
+      const gross = set.qty * toPaisa(set.unitPrice);
+      const discount = toPaisa(set.lineDiscount);
+      const inside = order.items
+        .filter((i) => i.setLineId === set.id)
+        .map((i) => `<div class="muted">↳ ${i.qty} × ${escapeHtml(i.variant.product.name)} · ${escapeHtml(i.variant.size.name)} · ${escapeHtml(i.variant.color.name)}</div>`)
+        .join("");
+      return `
+      <div class="item">
+        <div class="name">${escapeHtml(set.name)}</div>
+        ${inside}
+        ${row(`${set.qty} × ${formatBDT(set.unitPrice)}`, formatBDT(fromPaisa(gross)))}
+        ${discount > 0 ? row("Discount", `− ${formatBDT(fromPaisa(discount))}`, "muted") : ""}
+      </div>`;
+    })
+    .join("");
   const items = order.items
+    .filter((item) => item.setLineId === null)
     .map((item) => {
       const gross = item.qty * toPaisa(item.unitPrice);
       const discount = toPaisa(item.lineDiscount);
@@ -65,7 +86,7 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
         ${discount > 0 ? row("Discount", `− ${formatBDT(fromPaisa(discount))}`, "muted") : ""}
       </div>`;
     })
-    .join("");
+    .join("") + setsHtml;
 
   let change = 0;
   const payments = order.payments

@@ -8,6 +8,7 @@ import { ExpenseError } from "@/lib/expenses/service";
 import { monthStartInDhaka } from "@/lib/finance/dates";
 import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
 import { RefundError } from "@/lib/payments/refunds";
+import { SetError } from "@/lib/sets/service";
 import { StoreCreditError } from "@/lib/store-credit/ledger";
 import { WalletError } from "@/lib/wallets/service";
 
@@ -39,7 +40,7 @@ export function badRequest(error: z.ZodError) {
 
 /** Maps the P2.3 domain errors and a reused transaction ID to a JSON response; rethrows anything else. */
 export function financeErrorResponse(error: unknown): NextResponse {
-  if (error instanceof WalletError || error instanceof ExpenseError || error instanceof RefundError || error instanceof StoreCreditError) {
+  if (error instanceof WalletError || error instanceof ExpenseError || error instanceof RefundError || error instanceof StoreCreditError || error instanceof SetError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

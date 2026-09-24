@@ -27,22 +27,29 @@ async function inlineThumbnail(relativePath: string): Promise<string | null> {
   }
 }
 
-async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: string): Promise<string> {
+export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: string): Promise<string> {
   const address = [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
     .filter(Boolean)
     .join(", ");
 
-  const itemRows = order.items
-    .map(
-      (item) => `
-      <tr>
-        <td>${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
+  // P3.3 (Gift Valy Round 2 §2.2) — an outfit set is never just its name:
+  // every component is its own pick line, with its chosen size and colour.
+  const itemRow = (item: PackingOrderDetail["items"][number]) => `
+      <tr${item.set ? ' class="component"' : ""}>
+        <td>${item.set ? "↳ " : ""}${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
         <td><strong>${escapeHtml(item.sizeName)}</strong></td>
         <td><strong>${escapeHtml(item.colorName)}</strong></td>
         <td class="num">${item.qty}</td>
-      </tr>`,
-    )
-    .join("");
+      </tr>`;
+  const sets = [...new Map(order.items.filter((i) => i.set).map((i) => [i.set!.id, i.set!])).values()];
+  const itemRows =
+    order.items.filter((i) => !i.set).map(itemRow).join("") +
+    sets
+      .map((set) => `<tr><td colspan="4"><strong>${escapeHtml(set.name)}</strong> <span class="muted">× ${set.qty} — outfit set, pack every piece below</span></td></tr>${order.items.filter((i) => i.set?.id === set.id).map(itemRow).join("")}`)
+      .join("");
+  const packagingHtml = order.packaging.length
+    ? `<div class="note"><h2>Packaging</h2><p>${order.packaging.map((p) => `${p.qty} × ${escapeHtml(p.label)}`).join(" · ")}</p></div>`
+    : "";
 
   const thumbnails = await Promise.all(order.images.map((image) => inlineThumbnail(image.thumbPath)));
   const imagesHtml = thumbnails.some(Boolean)
@@ -60,6 +67,7 @@ async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: str
   ${fontFaceCss}
   * { box-sizing: border-box; }
   body { font-family: 'Invoice Sans', sans-serif; font-size: 12px; color: #111; margin: 0; padding: 32px; }
+  tr.component td:first-child { padding-left: 18px; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
   .business { font-size: 20px; font-weight: 700; }
   .tag { color: #555; }
@@ -119,6 +127,7 @@ async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: str
     </tbody>
   </table>
 
+  ${packagingHtml}
   ${order.internalNote ? `<div class="note"><h2>Internal note</h2><p>${escapeHtml(order.internalNote)}</p></div>` : ""}
 
   <div class="checklist">

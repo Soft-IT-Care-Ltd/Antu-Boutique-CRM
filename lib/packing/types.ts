@@ -29,6 +29,8 @@ export type PackingItemView = {
   colorName: string;
   colorHex: string;
   qty: number;
+  /** P3.3 — the outfit set this line belongs to (its components are listed one by one). */
+  set: { id: string; name: string; qty: number } | null;
 };
 
 export type PackingQueueItem = {
@@ -54,6 +56,8 @@ export type PackingOrderDetail = PackingQueueItem & {
   };
   packedAt: string | null;
   packedBy: { id: string; name: string } | null;
+  /** P3.3 — bags, boxes, tissue and tags: used (once packed) or to use. */
+  packaging: { label: string; sku: string; qty: number }[];
 };
 
 export function packingUploadUrl(relativePath: string): string {

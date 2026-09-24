@@ -1,4 +1,5 @@
 import type { DeliveryZoneValue, OrderEditRequestStatusValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
+import type { OrderSetLineView } from "@/lib/sets/types";
 
 // Client-side shapes mirroring the JSON /api/orders/* returns.
 // unitCostSnapshot is optional because stripCostFieldsForUser removes it
@@ -45,6 +46,8 @@ export type OrderItemView = {
   stockOverride: boolean;
   stockOverrideReason: string | null;
   returnedQty: number;
+  /** P3.3 — the outfit set this line is a component of, if any. */
+  setLineId: string | null;
 };
 
 export type PaymentView = {
@@ -130,6 +133,8 @@ export type OrderDetail = {
   internalNote: string | null;
   deliveryNote: string | null;
   items: OrderItemView[];
+  /** P3.3 — outfit sets on the order; their components are in `items`. */
+  setLines: OrderSetLineView[];
   images: OrderImageView[];
   payments: PaymentView[];
   statusHistory: OrderStatusHistoryEntry[];

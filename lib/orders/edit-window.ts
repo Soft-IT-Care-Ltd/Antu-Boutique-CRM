@@ -29,11 +29,23 @@ function normalizeItems(items: GatedEditItem[]): string {
  * current state — not merely whether those keys were present in the
  * request body, since the order form always resubmits the full item list.
  */
+export type GatedSetLine = { setId: string; qty: number; unitPrice: number; lineDiscount: number; choices: { productId: string; variantId: string }[] };
+
+function normalizeSets(sets: GatedSetLine[]): string {
+  return JSON.stringify(
+    sets
+      .map((s) => ({ setId: s.setId, qty: s.qty, unitPrice: s.unitPrice, lineDiscount: s.lineDiscount, choices: [...s.choices].map((c) => `${c.productId}:${c.variantId}`).sort() }))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+}
+
 export function editTouchesGatedFields(
-  existing: { items: GatedEditItem[]; deliveryCharge: number },
-  proposed: { items?: GatedEditItem[]; deliveryCharge?: number },
+  existing: { items: GatedEditItem[]; sets?: GatedSetLine[]; deliveryCharge: number },
+  proposed: { items?: GatedEditItem[]; sets?: GatedSetLine[]; deliveryCharge?: number },
 ): boolean {
   if (proposed.items && normalizeItems(proposed.items) !== normalizeItems(existing.items)) return true;
+  // P3.3 — an outfit set's quantity, price, discount or chosen sizes are lines too.
+  if (proposed.sets && normalizeSets(proposed.sets) !== normalizeSets(existing.sets ?? [])) return true;
   if (proposed.deliveryCharge !== undefined && proposed.deliveryCharge !== existing.deliveryCharge) return true;
   return false;
 }

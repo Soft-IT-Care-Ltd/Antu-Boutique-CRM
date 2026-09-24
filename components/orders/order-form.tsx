@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Trash2, UserCheck } from "lucide-react";
+import { Layers, Loader2, Pencil, Trash2, UserCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { OrderImagesField, type StagedImage } from "@/components/orders/order-images-field";
 import { OrderItemPicker, type PickedVariant } from "@/components/orders/order-item-picker";
+import { SetChooserDialog, type ChosenSet } from "@/components/sets/set-chooser-dialog";
 import { WalletSelect } from "@/components/wallets/wallet-select";
 import { newLocalId } from "@/lib/browser/local-id";
 import { isValidBdPhone } from "@/lib/customers/phone";
@@ -52,6 +53,41 @@ type ItemRow = {
   stockOverrideReason: string;
 };
 
+// P3.3 — an outfit set on the order: its price, qty and discount, and the
+// size/colour chosen for each component. The server splits it into one
+// line per component.
+type SetRow = {
+  localId: string;
+  setId: string;
+  name: string;
+  qty: number;
+  unitPrice: string;
+  lineDiscount: string;
+  choices: { productId: string; variantId: string }[];
+  parts: { label: string; sku: string; qtyPerSet: number }[];
+  /** Sets this combination can fill (null for a set already on the order — the server re-checks). */
+  available: number | null;
+  stockOverrideReason: string;
+};
+
+function setRowsFromOrder(order: OrderDetail): SetRow[] {
+  return order.setLines.map((s) => {
+    const components = order.items.filter((i) => i.setLineId === s.id);
+    return {
+      localId: s.id,
+      setId: s.setId,
+      name: s.name,
+      qty: s.qty,
+      unitPrice: s.unitPrice,
+      lineDiscount: s.lineDiscount,
+      choices: components.map((i) => ({ productId: i.productId, variantId: i.variantId })),
+      parts: components.map((i) => ({ label: `${i.productName} · ${i.sizeName} / ${i.colorName}`, sku: i.sku, qtyPerSet: Math.round(i.qty / s.qty) })),
+      available: null,
+      stockOverrideReason: "",
+    };
+  });
+}
+
 type CustomerFormState = {
   customerId: string | null;
   name: string;
@@ -64,7 +100,7 @@ type CustomerFormState = {
 };
 
 function itemsFromOrder(order: OrderDetail): ItemRow[] {
-  return order.items.map((item) => ({
+  return order.items.filter((item) => item.setLineId === null).map((item) => ({
     localId: item.id,
     variantId: item.variantId,
     productName: item.productName,
@@ -116,6 +152,9 @@ export function OrderForm({
   const [customerSearching, setCustomerSearching] = useState(false);
 
   const [items, setItems] = useState<ItemRow[]>(() => (order ? itemsFromOrder(order) : []));
+  const [setRows, setSetRows] = useState<SetRow[]>(() => (order ? setRowsFromOrder(order) : []));
+  // The set being chosen (added, or re-chosen for a row already on the order).
+  const [choosing, setChoosing] = useState<{ setId: string; rowId?: string; initial?: SetRow["choices"] } | null>(null);
 
   const [courierId, setCourierId] = useState<string | null>(order?.courier?.id ?? null);
   const [courierZoneId, setCourierZoneId] = useState<string | null>(order?.courierZoneId ?? null);
@@ -215,6 +254,17 @@ export function OrderForm({
     ]);
   }
 
+  function chooseSet(chosen: ChosenSet) {
+    const row = { setId: chosen.setId, name: chosen.name, choices: chosen.choices, parts: chosen.parts, available: chosen.available };
+    if (choosing?.rowId) setSetRows((prev) => prev.map((r) => (r.localId === choosing.rowId ? { ...r, ...row } : r)));
+    else setSetRows((prev) => [...prev, { localId: newLocalId(), qty: 1, unitPrice: chosen.price, lineDiscount: "0", stockOverrideReason: "", ...row }]);
+    setChoosing(null);
+  }
+
+  function updateSetRow(localId: string, patch: Partial<SetRow>) {
+    setSetRows((prev) => prev.map((r) => (r.localId === localId ? { ...r, ...patch } : r)));
+  }
+
   function updateItem(localId: string, patch: Partial<ItemRow>) {
     setItems((prev) => prev.map((i) => (i.localId === localId ? { ...i, ...patch } : i)));
   }
@@ -231,18 +281,18 @@ export function OrderForm({
 
   const selectedCourier = couriers.find((c) => c.id === courierId) ?? null;
 
-  const subtotal = items.reduce((sum, i) => sum + i.qty * (Number(i.unitPrice) || 0), 0);
-  const discountTotal = items.reduce((sum, i) => sum + (Number(i.lineDiscount) || 0), 0);
+  const subtotal = [...items, ...setRows].reduce((sum, i) => sum + i.qty * (Number(i.unitPrice) || 0), 0);
+  const discountTotal = [...items, ...setRows].reduce((sum, i) => sum + (Number(i.lineDiscount) || 0), 0);
   const total = subtotal - discountTotal + (Number(deliveryCharge) || 0);
   const advanceAmountNum = advanceEnabled ? Number(advanceAmount) || 0 : 0;
   const dueAfterAdvance = total - advanceAmountNum;
 
-  const overStockRows = items.filter((i) => i.available !== null && i.qty > i.available);
+  const overStockRows = [...items, ...setRows].filter((i) => i.available !== null && i.qty > i.available);
   const blockedByStock = overStockRows.some((i) => !canStockOverride || !i.stockOverrideReason.trim());
 
   const creditAdvanceInvalid = advanceEnabled && advanceMethod === "STORE_CREDIT" && (advanceAmountNum > creditBalance || advanceAmountNum > total);
   const canSubmit =
-    items.length > 0 &&
+    items.length + setRows.length > 0 &&
     (customer.customerId || (customer.name.trim() && isValidBdPhone(customer.phone))) &&
     !blockedByStock &&
     !creditAdvanceInvalid;
@@ -263,12 +313,22 @@ export function OrderForm({
         : {}),
     }));
 
+    const setsPayload = setRows.map((s) => ({
+      setId: s.setId,
+      qty: s.qty,
+      unitPrice: Number(s.unitPrice) || 0,
+      lineDiscount: Number(s.lineDiscount) || 0,
+      choices: s.choices,
+      ...(s.available !== null && s.qty > s.available && s.stockOverrideReason.trim() ? { stockOverrideReason: s.stockOverrideReason.trim() } : {}),
+    }));
+
     try {
       if (isEdit && order) {
         await fetchJson(`/api/orders/${order.id}`, {
           method: "PATCH",
           body: JSON.stringify({
             items: itemsPayload,
+            sets: setsPayload,
             courierId: courierId || null,
             courierZoneId: courierZoneId || null,
             deliveryCharge: Number(deliveryCharge) || 0,
@@ -283,6 +343,7 @@ export function OrderForm({
 
       const payload: Record<string, unknown> = {
         items: itemsPayload,
+        sets: setsPayload,
         courierId: courierId || null,
         courierZoneId: courierZoneId || null,
         deliveryCharge: Number(deliveryCharge) || 0,
@@ -482,12 +543,12 @@ export function OrderForm({
       <Card>
         <CardHeader>
           <CardTitle>2. Items</CardTitle>
-          <CardDescription>Search by product name or SKU, then pick the size + colour variant.</CardDescription>
+          <CardDescription>Search by product name or SKU, then pick the size + colour variant. Outfit sets come up by name.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <OrderItemPicker onPick={addItem} />
+          <OrderItemPicker onPick={addItem} onPickSet={(s) => setChoosing({ setId: s.id })} />
 
-          {items.length === 0 ? (
+          {items.length + setRows.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">No items added yet.</p>
           ) : (
             <Table>
@@ -582,9 +643,67 @@ export function OrderForm({
                     </TableRow>
                   );
                 })}
+                {setRows.map((row) => {
+                  const isOver = row.available !== null && row.qty > row.available;
+                  const lineTotal = row.qty * (Number(row.unitPrice) || 0) - (Number(row.lineDiscount) || 0);
+                  return (
+                    <TableRow key={row.localId}>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <Layers className="size-3.5 shrink-0 text-muted-foreground" />
+                          {row.name}
+                        </div>
+                        <ul className="mt-0.5 text-xs text-muted-foreground">
+                          {row.parts.map((p) => (
+                            <li key={p.sku}>
+                              ↳ {p.qtyPerSet > 1 ? `${p.qtyPerSet} × ` : ""}
+                              {p.label} · <span className="font-mono">{p.sku}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {isOver ? (
+                          <div className="mt-1 flex flex-col gap-1">
+                            <Badge variant="destructive" className="w-fit">
+                              Only {row.available} set{row.available === 1 ? "" : "s"} available
+                            </Badge>
+                            {canStockOverride ? (
+                              <Input value={row.stockOverrideReason} onChange={(e) => updateSetRow(row.localId, { stockOverrideReason: e.target.value })} placeholder="Reason to override (required)" className="h-7 text-xs" />
+                            ) : (
+                              <p className="text-xs text-destructive">Only Admin/Manager can sell below available stock.</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <Input type="number" min={1} value={row.qty} onChange={(e) => updateSetRow(row.localId, { qty: Math.max(1, Number(e.target.value) || 1) })} className="h-8 w-16" />
+                      </TableCell>
+                      <TableCell>
+                        <Input type="number" min={0} step="0.01" value={row.unitPrice} onChange={(e) => updateSetRow(row.localId, { unitPrice: e.target.value })} className="h-8 w-24" />
+                      </TableCell>
+                      <TableCell>
+                        <Input type="number" min={0} step="0.01" value={row.lineDiscount} onChange={(e) => updateSetRow(row.localId, { lineDiscount: e.target.value })} className="h-8 w-24" />
+                      </TableCell>
+                      <TableCell>
+                        {row.available === null ? <span className="text-xs text-muted-foreground">—</span> : <Badge variant={isOver ? "destructive" : "secondary"}>{row.available}</Badge>}
+                      </TableCell>
+                      <TableCell className="font-medium">{formatBDT(lineTotal)}</TableCell>
+                      <TableCell>
+                        <div className="flex">
+                          <Button type="button" variant="ghost" size="icon-sm" title="Change sizes / colours" onClick={() => setChoosing({ setId: row.setId, rowId: row.localId, initial: row.choices })}>
+                            <Pencil />
+                          </Button>
+                          <Button type="button" variant="ghost" size="icon-sm" onClick={() => setSetRows((prev) => prev.filter((r) => r.localId !== row.localId))}>
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
+          {choosing ? <SetChooserDialog setId={choosing.setId} initial={choosing.initial} onClose={() => setChoosing(null)} onChoose={chooseSet} /> : null}
         </CardContent>
       </Card>
 

@@ -49,6 +49,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
   const { categoryId, code, ...rest } = parsed.data;
+  if (existing.kind === "COMPONENT_ONLY" && rest.basePrice !== undefined && rest.basePrice !== 0) {
+    return NextResponse.json({ error: "Packaging material has no selling price — it's never sold on its own." }, { status: 400 });
+  }
 
   const codeChanges = Boolean(code && code !== existing.code);
   if (codeChanges) {

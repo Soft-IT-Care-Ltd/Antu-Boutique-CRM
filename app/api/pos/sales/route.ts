@@ -6,6 +6,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { badRequest, idString } from "@/lib/finance/http";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
+import { setLineSchema } from "@/lib/sets/validation";
 import { POS_TENDER_METHODS } from "@/lib/pos/constants";
 import { getPosCashWalletId } from "@/lib/pos/drawer";
 import { posErrorResponse } from "@/lib/pos/http";
@@ -31,12 +32,15 @@ const saleSchema = z.object({
         stockOverrideReason: z.string().trim().max(300).nullish(),
       }),
     )
-    .min(1, "The cart is empty")
-    .max(100),
+    .max(100)
+    .default([]),
   cartDiscount: amount.default(0),
   customer: z
     .object({ phone: z.string().trim().max(20), name: z.string().trim().max(150).nullish() })
     .nullish(),
+  // P3.3 — outfit sets: the set, how many, and the size/colour picked for
+  // each of its component products. Priced and exploded server-side.
+  sets: z.array(setLineSchema).max(50).default([]),
   tenders: z
     .array(
       z.object({

@@ -22,7 +22,7 @@ import type { OrderDetail } from "@/lib/orders/types";
 // The font-loading/browser plumbing itself lives in lib/pdf/render.ts,
 // shared with lib/packing/slip.ts's packing slip.
 
-async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
+export async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
   // Same rule as due_amount: a refund only counts once approved.
   const paid = order.payments.filter((p) => p.kind === "PAYMENT" || p.refundStatus === "APPROVED").reduce((sum, p) => sum + Number(p.amount), 0);
   // P3.1 — a showroom sale: no delivery address, maybe no customer at all.
@@ -45,7 +45,8 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
 
   // After a partial delivery (P2.2) the invoice bills what the customer
   // kept: kept quantity, pro-rated discount, with the returned units noted.
-  const rows = order.items
+  const plainRows = order.items
+    .filter((item) => item.setLineId === null)
     .map((item) => {
       const line = keptLine({ qty: item.qty, returnedQty: item.returnedQty, unitPrice: Number(item.unitPrice), lineDiscount: Number(item.lineDiscount) });
       const returnedNote = item.returnedQty > 0 ? `<div class="muted">${item.qty} sent, ${item.returnedQty} returned</div>` : "";
@@ -61,6 +62,39 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
       </tr>`;
     })
     .join("");
+  // P3.3 (Gift Valy Round 2 §2.2) — an outfit set prints as the set, with an
+  // indented list of what's in it: names, size, colour and quantity only,
+  // never the components' prices or costs.
+  const setRows = order.setLines
+    .map((set) => {
+      const components = order.items.filter((i) => i.setLineId === set.id);
+      const total = components.reduce((sum, i) => sum + Math.round(Number(i.lineTotal) * 100), 0) / 100;
+      const returned = components.some((i) => i.returnedQty > 0);
+      const inside = components
+        .map(
+          (i) => `
+      <tr class="component">
+        <td>↳ ${escapeHtml(i.productName)}<div class="muted">${escapeHtml(i.sku)}${i.returnedQty > 0 ? ` · ${i.returnedQty} returned` : ""}</div></td>
+        <td>${escapeHtml(i.sizeName)}</td>
+        <td>${escapeHtml(i.colorName)}</td>
+        <td class="num">${i.qty - i.returnedQty}</td>
+        <td colspan="3"></td>
+      </tr>`,
+        )
+        .join("");
+      return `
+      <tr>
+        <td><strong>${escapeHtml(set.name)}</strong><div class="muted">Outfit set${returned ? " · part returned" : ""}</div></td>
+        <td></td>
+        <td></td>
+        <td class="num">${set.qty}</td>
+        <td class="num">${formatBDT(set.unitPrice)}</td>
+        <td class="num">${formatBDT(set.lineDiscount)}</td>
+        <td class="num">${formatBDT(total)}</td>
+      </tr>${inside}`;
+    })
+    .join("");
+  const rows = plainRows + setRows;
 
   return `<!doctype html>
 <html lang="bn">
@@ -70,6 +104,7 @@ async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCs
   ${fontFaceCss}
   * { box-sizing: border-box; }
   body { font-family: 'Invoice Sans', sans-serif; font-size: 12px; color: #111; margin: 0; padding: 32px; }
+  tr.component td { padding-left: 18px; font-size: 11px; border-top: none; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
   .business { font-size: 20px; font-weight: 700; }
   .tag { color: #555; }

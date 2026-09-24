@@ -57,8 +57,15 @@ export function PackingQueueCard({ order }: { order: PackingQueueItem }) {
           <Link href={`/packing/${order.id}`} className="flex flex-col gap-1.5">
             <p className="text-xs font-medium text-muted-foreground">{order.customer.name}</p>
             <ul className="flex flex-col gap-0.5 text-sm">
-              {order.items.map((item) => (
-                <li key={item.id}>
+              {order.items.map((item, i) => (
+                <li key={item.id} className={item.set ? "pl-3" : undefined}>
+                  {/* P3.3 — a set is never just its name: every piece is its own line. */}
+                  {item.set && order.items[i - 1]?.set?.id !== item.set.id ? (
+                    <span className="-ml-3 block text-xs font-medium text-muted-foreground">
+                      {item.set.name} × {item.set.qty} (outfit set)
+                    </span>
+                  ) : null}
+                  {item.set ? "↳ " : ""}
                   {item.productName} — <strong>{item.sizeName}</strong> / <strong>{item.colorName}</strong> · Qty {item.qty}
                 </li>
               ))}

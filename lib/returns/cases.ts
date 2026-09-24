@@ -17,6 +17,7 @@ import { settleTenders } from "@/lib/pos/cart";
 import type { PosTenderMethod } from "@/lib/pos/constants";
 import { lockOpenDrawerForSale } from "@/lib/pos/drawer";
 import { resolveCounterCustomer } from "@/lib/pos/sale";
+import { consumePackaging } from "@/lib/packaging/consume";
 import { getStoreCreditBalance, issueStoreCredit, spendStoreCredit } from "@/lib/store-credit/ledger";
 import type { ReturnSettlementValue } from "@/lib/store-credit/constants";
 import { completeConditionCheck, openReturnInspection } from "@/lib/returns/condition-check";
@@ -176,13 +177,13 @@ async function lockReplacements(tx: Prisma.TransactionClient, order: OrderForCas
       isActive: true,
       size: { select: { name: true } },
       color: { select: { name: true } },
-      product: { select: { name: true, basePrice: true, isActive: true, deletedAt: true } },
+      product: { select: { name: true, basePrice: true, isActive: true, deletedAt: true, kind: true } },
     },
   });
   const byId = new Map<string, ReplacementVariant>();
   for (const v of variants) {
     const label = `${v.product.name} (${v.size.name}, ${v.color.name})`;
-    if (!v.isActive || !v.product.isActive || v.product.deletedAt) throw new ReturnCaseError(`${label} is no longer for sale.`);
+    if (!v.isActive || !v.product.isActive || v.product.deletedAt || v.product.kind !== "SELLABLE") throw new ReturnCaseError(`${label} is no longer for sale.`);
     const available = v.stockQty - v.reservedQty;
     const qty = wanted.get(v.id)!;
     if (qty > available) throw new ReturnCaseError(`Only ${Math.max(0, available)} of ${label} available (${qty} needed for this exchange).`, 409);
@@ -751,6 +752,8 @@ export async function createCounterExchange(
     await tx.orderStatusHistory.create({
       data: { orderId: replacement.id, fromStatus: null, toStatus: "COMPLETED", changedById: ctx.user.id, note: `Counter exchange for ${order.orderNo} — settled at the counter` },
     });
+    // P3.3 — the replacement goes out in a bag, like any counter sale.
+    await consumePackaging(tx, { orderId: replacement.id, orderNo: replacement.orderNo, scope: "POS_SALE", actorId: ctx.user.id });
     await tx.returnCase.update({ where: { id: rc.id }, data: { replacementOrderId: replacement.id } });
 
     await transferExchangeCredit(tx, { caseId: rc.id, original: order, replacement, valuePaisa, actorId: ctx.user.id });

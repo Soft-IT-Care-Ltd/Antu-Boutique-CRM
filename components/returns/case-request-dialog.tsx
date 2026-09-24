@@ -100,7 +100,10 @@ export function CaseRequestDialog({
             <div key={item.orderItemId} className="flex flex-col gap-2 rounded-md border p-2.5">
               <div className="flex items-center justify-between gap-3">
                 <Label htmlFor={`rq-${item.orderItemId}`} className="flex-col items-start gap-0">
-                  <span>{item.product}</span>
+                  <span>
+                    {item.product}
+                    {item.setName ? <span className="font-normal text-muted-foreground"> · from set {item.setName}</span> : null}
+                  </span>
                   <span className="text-xs font-semibold">
                     {item.size} / {item.color} · <span className="font-mono font-normal">{item.sku}</span>
                   </span>

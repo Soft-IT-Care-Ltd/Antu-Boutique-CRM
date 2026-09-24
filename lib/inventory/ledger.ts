@@ -21,6 +21,8 @@ export const MOVEMENT_DIRECTION: Record<StockMovementType, 1 | -1 | 0> = {
   EXCHANGE_OUT: -1,
   DAMAGE_OUT: -1,
   POS_SALE_OUT: -1,
+  // P3.3 — bags, boxes, tissue and tags used packing an order or at the counter.
+  PACKAGING_OUT: -1,
   ADJUSTMENT: 0,
 };
 

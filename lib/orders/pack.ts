@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { IllegalTransitionError, moveOrderStatus } from "@/lib/orders/lifecycle";
 import { deductVariantStockAtPack } from "@/lib/orders/stock";
 import { isTransitionAllowed } from "@/lib/orders/status-graph";
+import { consumePackaging } from "@/lib/packaging/consume";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 
 export { IllegalTransitionError };
@@ -27,7 +28,8 @@ type OrderForPacking = {
  * 10). For every line: freezes unit_cost_snapshot from the variant's
  * CURRENT weighted average cost (never touched again — rule 3) and deducts
  * real stock with a SALE_OUT ledger row (EXCHANGE_OUT for an exchange's
- * replacement) at that same cost (rules 2 + 10), then moves the order to PACKED via the same
+ * replacement) at that same cost (rules 2 + 10), takes its packaging out
+ * of stock (P3.3), then moves the order to PACKED via the same
  * status-history writer every other transition uses. All of it — item
  * updates, stock deduction, status move — runs in the caller's transaction,
  * so a failure anywhere rolls the whole pack back (rule 2).
@@ -42,7 +44,7 @@ export async function packOrder(
     throw new IllegalTransitionError(order.status, "PACKED");
   }
 
-  const { exchangedFromOrderId } = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { exchangedFromOrderId: true } });
+  const { exchangedFromOrderId, orderNo } = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { exchangedFromOrderId: true, orderNo: true } });
 
   for (const item of order.items) {
     const variant = await tx.productVariant.findUniqueOrThrow({
@@ -62,6 +64,10 @@ export async function packOrder(
       isExchange: exchangedFromOrderId !== null,
     });
   }
+
+  // P3.3 — the bags, boxes, tissue and tags this parcel uses leave stock
+  // now too, and their cost posts once (lib/packaging/consume.ts).
+  await consumePackaging(tx, { orderId: order.id, orderNo, scope: "ONLINE_PARCEL", actorId: packerId });
 
   await moveOrderStatus(
     tx,

@@ -7,6 +7,8 @@ import { AlertTriangle, Banknote, CheckCircle2, Printer, ReceiptText, Repeat2 } 
 import { PosCart, type CartLine } from "@/components/pos/pos-cart";
 import { PosCheckout, type CustomerInput, type Tender } from "@/components/pos/pos-checkout";
 import { PosSearch, type PosSearchHandle } from "@/components/pos/pos-search";
+import { PosSetLines, type CartSetLine } from "@/components/pos/pos-set-lines";
+import { SetChooserDialog, type ChosenSet } from "@/components/sets/set-chooser-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -71,6 +73,9 @@ export function PosScreen({
   const checkoutRef = useRef<HTMLDivElement>(null);
 
   const [lines, setLines] = useState<CartLine[]>([]);
+  // P3.3 — outfit sets in the cart, and the one being chosen.
+  const [outfitLines, setOutfitLines] = useState<CartSetLine[]>([]);
+  const [choosing, setChoosing] = useState<{ setId: string; key?: string; initial?: CartSetLine["choices"] } | null>(null);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const [cartDiscount, setCartDiscount] = useState("");
   const [cartDiscountMode, setCartDiscountMode] = useState<"AMOUNT" | "PERCENT">("AMOUNT");
@@ -108,7 +113,7 @@ export function PosScreen({
 
   // Line discounts first, then the whole-sale discount (৳ or % of what's left).
   const { priced, cartError } = useMemo((): { priced: PricedCart | null; cartError: string | null } => {
-    const inputs = lines.map((l) => ({ key: l.key, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0 }));
+    const inputs = [...lines, ...outfitLines].map((l) => ({ key: l.key, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0 }));
     try {
       const base = priceCart(inputs, 0);
       const raw = Number(cartDiscount) || 0;
@@ -117,17 +122,17 @@ export function PosScreen({
     } catch (err) {
       return { priced: null, cartError: err instanceof CartError ? err.message : "Check the prices and discounts." };
     }
-  }, [lines, cartDiscount, cartDiscountMode]);
+  }, [lines, outfitLines, cartDiscount, cartDiscountMode]);
   const pricedByKey = useMemo(() => (priced ? new Map(priced.lines.map((l) => [l.key, l])) : null), [priced]);
   const totalPaisa = priced?.totalPaisa ?? 0;
-  const cartDiscountAmount = priced ? fromPaisa(priced.discountPaisa - lines.reduce((a, l) => a + toPaisa(Number(l.lineDiscount) || 0), 0)) : "0";
+  const cartDiscountAmount = priced ? fromPaisa(priced.discountPaisa - [...lines, ...outfitLines].reduce((a, l) => a + toPaisa(Number(l.lineDiscount) || 0), 0)) : "0";
 
   const paidPaisa = tenders.reduce((a, t) => a + toPaisa(Number(t.amount) || 0), 0);
   const tendersValid = tenders.every((t) => toPaisa(Number(t.amount) || 0) > 0 && (t.method !== "CASH" || !t.tendered || toPaisa(Number(t.tendered) || 0) >= toPaisa(Number(t.amount) || 0)));
-  const stockOk = lines.every((l) => l.qty <= l.available || (canSellOutOfStock && l.overrideReason.trim()));
+  const stockOk = [...lines, ...outfitLines].every((l) => l.qty <= l.available || (canSellOutOfStock && l.overrideReason.trim()));
   // Store credit belongs to a customer: it needs their phone number.
   const creditNeedsPhone = tenders.some((t) => t.method === "STORE_CREDIT") && !customer.phone.trim();
-  const canComplete = lines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && stockOk && !creditNeedsPhone && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
+  const canComplete = lines.length + outfitLines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && stockOk && !creditNeedsPhone && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
 
   function addHit(hit: PosVariantHit) {
     setError(null);
@@ -167,8 +172,16 @@ export function PosScreen({
     setTenders((prev) => [...prev, { key: newLocalId(), method, amount: fromPaisa(amount), tendered: "", walletId: method === "CASH" ? "" : (wallet?.id ?? ""), transactionId: "" }]);
   }
 
+  function chooseSet(chosen: ChosenSet) {
+    const patch = { setId: chosen.setId, name: chosen.name, parts: chosen.parts, choices: chosen.choices, available: chosen.available };
+    if (choosing?.key) setOutfitLines((prev) => prev.map((l) => (l.key === choosing.key ? { ...l, ...patch } : l)));
+    else setOutfitLines((prev) => [...prev, { key: newLocalId(), qty: 1, unitPrice: String(Number(chosen.price)), lineDiscount: "", overrideReason: "", ...patch }]);
+    setChoosing(null);
+  }
+
   function reset() {
     setLines([]);
+    setOutfitLines([]);
     setSelectedVariantId(null);
     setCartDiscount("");
     setCartDiscountMode("AMOUNT");
@@ -187,6 +200,7 @@ export function PosScreen({
         method: "POST",
         body: JSON.stringify({
           items: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0, stockOverrideReason: l.overrideReason.trim() || null })),
+          sets: outfitLines.map((l) => ({ setId: l.setId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0, choices: l.choices, stockOverrideReason: l.overrideReason.trim() || null })),
           cartDiscount: Number(cartDiscountAmount),
           customer: customer.phone.trim() ? { phone: customer.phone.trim(), name: customer.name.trim() || null } : null,
           tenders: tenders.map((t) => ({
@@ -249,7 +263,7 @@ export function PosScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, [done]);
 
-  const itemCount = lines.reduce((a, l) => a + l.qty, 0);
+  const itemCount = lines.reduce((a, l) => a + l.qty, 0) + outfitLines.reduce((a, l) => a + l.qty, 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -285,8 +299,9 @@ export function PosScreen({
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-3">
-          <PosSearch ref={searchRef} onAdd={addHit} canSellOutOfStock={canSellOutOfStock} />
+          <PosSearch ref={searchRef} onAdd={addHit} onAddSet={(s) => setChoosing({ setId: s.id })} canSellOutOfStock={canSellOutOfStock} />
           <PosCart
+            hasOtherLines={outfitLines.length > 0}
             lines={lines}
             priced={pricedByKey}
             selectedVariantId={selectedVariantId}
@@ -295,7 +310,16 @@ export function PosScreen({
             onChange={(key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))}
             onRemove={(key) => setLines((prev) => prev.filter((l) => l.key !== key))}
           />
-          {lines.length > 0 ? (
+          <PosSetLines
+            lines={outfitLines}
+            priced={pricedByKey}
+            canSellOutOfStock={canSellOutOfStock}
+            onChange={(key, patch) => setOutfitLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))}
+            onRemove={(key) => setOutfitLines((prev) => prev.filter((l) => l.key !== key))}
+            onRechoose={(l) => setChoosing({ setId: l.setId, key: l.key, initial: l.choices })}
+          />
+          {choosing ? <SetChooserDialog setId={choosing.setId} initial={choosing.initial} onClose={() => setChoosing(null)} onChoose={chooseSet} /> : null}
+          {lines.length + outfitLines.length > 0 ? (
             <Button type="button" variant="ghost" className="self-start text-muted-foreground" onClick={reset}>
               Clear the sale
             </Button>

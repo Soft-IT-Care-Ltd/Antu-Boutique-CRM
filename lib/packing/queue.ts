@@ -7,6 +7,7 @@ import { hoursSince, isOverdue } from "@/lib/packing/sla";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import type { PackingOrderDetail, PackingQueueItem } from "@/lib/packing/types";
 import { onlineOrderCustomer } from "@/lib/orders/customer";
+import { packagingForDisplay, type PackagingNeed } from "@/lib/packaging/consume";
 
 // PRD §4.8 "must not see customer money data": this include is the money
 // boundary, not just serializePacking*'s output shape — subtotal, total,
@@ -19,6 +20,9 @@ const packingOrderInclude = {
   },
   items: {
     include: {
+      // P3.3 — the outfit set a line is a component of: packing sees the
+      // full explosion, every component with its chosen size and colour.
+      setLine: { select: { id: true, name: true, qty: true } },
       variant: {
         select: {
           sku: true,
@@ -58,6 +62,7 @@ function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueue
       colorName: item.variant.color.name,
       colorHex: item.variant.color.hexCode,
       qty: item.qty,
+      set: item.setLine ? { id: item.setLine.id, name: item.setLine.name, qty: item.setLine.qty } : null,
     })),
     images: order.images.map((image) => ({
       id: image.id,
@@ -75,7 +80,7 @@ export function serializePackingQueueItem(order: PackingOrderRow, slaHours: numb
   return serializeCommon(order, slaHours);
 }
 
-export function serializePackingOrderDetail(order: PackingOrderRow, slaHours: number): PackingOrderDetail {
+export function serializePackingOrderDetail(order: PackingOrderRow & { packaging?: PackagingNeed[] }, slaHours: number): PackingOrderDetail {
   const packedEntry = order.statusHistory[0] ?? null;
   const customer = onlineOrderCustomer(order);
   return {
@@ -92,6 +97,7 @@ export function serializePackingOrderDetail(order: PackingOrderRow, slaHours: nu
     },
     packedAt: packedEntry?.createdAt.toISOString() ?? null,
     packedBy: packedEntry?.changedBy ?? null,
+    packaging: (order.packaging ?? []).map((p) => ({ label: p.label, sku: p.sku, qty: p.qty })),
   };
 }
 
@@ -132,10 +138,16 @@ export async function loadPackingQueuePage(params: PackingQueuePageParams) {
   return { total, orders };
 }
 
-/** Any non-deleted order, any status — used by the packing detail screen (pre- or post-PACKED, for reprinting the slip). */
-export async function loadPackingOrder(orderId: string): Promise<PackingOrderRow | null> {
-  return prisma.order.findFirst({
+/**
+ * Any non-deleted order, any status — used by the packing detail screen
+ * (pre- or post-PACKED, for reprinting the slip). With the packaging the
+ * parcel takes (P3.3): what was used once packed, what will be before.
+ */
+export async function loadPackingOrder(orderId: string, db: Prisma.TransactionClient = prisma): Promise<(PackingOrderRow & { packaging: PackagingNeed[] }) | null> {
+  const order = await db.order.findFirst({
     where: { id: orderId, deletedAt: null },
     include: packingOrderInclude,
   });
+  if (!order) return null;
+  return { ...order, packaging: await packagingForDisplay(db, order.id, order.channel === "WALK_IN" ? "POS_SALE" : "ONLINE_PARCEL") };
 }

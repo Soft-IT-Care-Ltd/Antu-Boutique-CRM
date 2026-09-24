@@ -68,6 +68,8 @@ export type ReturnableItem = {
   paidPerUnit: string;
   /** Units that can still come back (not returned, not in a pending request). */
   returnable: number;
+  /** P3.3 — the outfit set this piece was sold in; the rest of the set stays with the customer. */
+  setName: string | null;
 };
 
 export type OrderReturnInfo = {
