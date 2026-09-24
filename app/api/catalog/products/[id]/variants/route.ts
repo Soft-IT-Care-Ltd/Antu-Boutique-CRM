@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
+import { isUniqueViolation } from "@/lib/catalog/sku";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requirePermission("product.view");
@@ -82,32 +83,45 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   if (parsed.data.edits.some((e) => e.sku)) {
     const requestedSkus = parsed.data.edits.filter((e) => e.sku).map((e) => e.sku!);
+    // What each edited variant's SKU will be after this save — no two alike.
+    const finalSkus = parsed.data.edits.map((e) => e.sku ?? existingById.get(e.variantId)!.sku);
+    const twice = finalSkus.find((sku, i) => finalSkus.indexOf(sku) !== i);
+    if (twice) return NextResponse.json({ error: `Two variants would both have SKU ${twice} — each SKU must be different` }, { status: 409 });
     const clashes = await prisma.productVariant.findMany({
       where: { sku: { in: requestedSkus }, id: { notIn: variantIds } },
-      select: { sku: true },
+      select: { sku: true, product: { select: { name: true } } },
     });
     if (clashes.length > 0) {
-      return NextResponse.json({ error: `SKU already in use: ${clashes[0].sku}` }, { status: 409 });
+      return NextResponse.json({ error: `SKU ${clashes[0].sku} is already used by ${clashes[0].product.name}` }, { status: 409 });
     }
   }
 
-  const updated = await prisma.$transaction(
-    parsed.data.edits.map((edit) => {
-      const current = existingById.get(edit.variantId)!;
-      const data: Record<string, unknown> = {};
-      if (edit.sku !== undefined && edit.sku !== current.sku) data.sku = edit.sku;
-      if (edit.priceOverride !== undefined) data.priceOverride = edit.priceOverride;
-      if (edit.lowStockThreshold !== undefined) data.lowStockThreshold = edit.lowStockThreshold;
-      if (edit.weightGrams !== undefined) data.weightGrams = edit.weightGrams;
-      if (edit.isActive !== undefined) data.isActive = edit.isActive;
+  let updated;
+  try {
+    updated = await prisma.$transaction(
+      parsed.data.edits.map((edit) => {
+        const current = existingById.get(edit.variantId)!;
+        const data: Record<string, unknown> = {};
+        if (edit.sku !== undefined && edit.sku !== current.sku) data.sku = edit.sku;
+        if (edit.priceOverride !== undefined) data.priceOverride = edit.priceOverride;
+        if (edit.lowStockThreshold !== undefined) data.lowStockThreshold = edit.lowStockThreshold;
+        if (edit.weightGrams !== undefined) data.weightGrams = edit.weightGrams;
+        if (edit.isActive !== undefined) data.isActive = edit.isActive;
 
-      return prisma.productVariant.update({
-        where: { id: edit.variantId },
-        data,
-        include: { size: true, color: true },
-      });
-    }),
-  );
+        return prisma.productVariant.update({
+          where: { id: edit.variantId },
+          data,
+          include: { size: true, color: true },
+        });
+      }),
+    );
+  } catch (error) {
+    // A save racing this one, or two variants swapping SKUs in one go: the unique index refused it.
+    if (isUniqueViolation(error)) {
+      return NextResponse.json({ error: "One of these SKUs is already in use (it may have just changed elsewhere). Nothing was saved — reload and try again." }, { status: 409 });
+    }
+    throw error;
+  }
 
   await writeAuditLog({
     actorId: guard.user.id,

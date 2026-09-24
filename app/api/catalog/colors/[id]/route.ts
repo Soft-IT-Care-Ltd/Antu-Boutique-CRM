@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { COLOR_CODE_MESSAGE, COLOR_CODE_PATTERN } from "@/lib/catalog/codes";
-import { countLockedVariants, regenerateSkus, SkuError } from "@/lib/catalog/sku";
+import { countLockedVariants, isUniqueViolation, RACE_MESSAGE, regenerateSkus, SkuError } from "@/lib/catalog/sku";
 
 const updateSchema = z.object({
   code: z.string().trim().toUpperCase().regex(COLOR_CODE_PATTERN, COLOR_CODE_MESSAGE).optional(),
@@ -58,6 +58,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }));
   } catch (error) {
     if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (isUniqueViolation(error)) return NextResponse.json({ error: RACE_MESSAGE }, { status: 409 });
     throw error;
   }
 

@@ -7,7 +7,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { loadProductDetail, serializeProductDetail } from "@/lib/catalog/product-detail";
 import { PRODUCT_CODE_MESSAGE, PRODUCT_CODE_PATTERN } from "@/lib/catalog/codes";
-import { countLockedVariants, regenerateSkus, SkuError } from "@/lib/catalog/sku";
+import { countLockedVariants, isUniqueViolation, RACE_MESSAGE, regenerateSkus, SkuError } from "@/lib/catalog/sku";
 import { getProductStockSummaries, summaryFor } from "@/lib/catalog/stock-status";
 
 const updateSchema = z.object({
@@ -82,6 +82,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }));
   } catch (error) {
     if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (isUniqueViolation(error)) return NextResponse.json({ error: RACE_MESSAGE }, { status: 409 });
     throw error;
   }
 

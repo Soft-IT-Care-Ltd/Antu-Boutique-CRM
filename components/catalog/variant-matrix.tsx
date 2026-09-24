@@ -44,6 +44,7 @@ export function VariantMatrix({
   canEdit,
   hasCostView,
   onVariantsChange,
+  onProductCodeChange,
 }: {
   productId: string;
   basePrice: string;
@@ -54,6 +55,7 @@ export function VariantMatrix({
   canEdit: boolean;
   hasCostView: boolean;
   onVariantsChange?: (variants: ProductVariant[]) => void;
+  onProductCodeChange?: (code: string) => void;
 }) {
   const [variants, setVariants] = useState(initialVariants);
 
@@ -70,6 +72,8 @@ export function VariantMatrix({
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when generating moved the product to a new code to keep SKUs unique.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const dirtyCount = Object.keys(edits).length;
 
@@ -102,12 +106,15 @@ export function VariantMatrix({
     }
     setGenerating(true);
     setError(null);
+    setNotice(null);
     try {
-      const data = await fetchJson<{ variants: ProductVariant[] }>(`/api/catalog/products/${productId}/variants/generate`, {
-        method: "POST",
-        body: JSON.stringify({ sizeIds: Array.from(selectedSizes), colorIds: Array.from(selectedColors) }),
-      });
+      const data = await fetchJson<{ variants: ProductVariant[]; productCode: string; notice: string | null }>(
+        `/api/catalog/products/${productId}/variants/generate`,
+        { method: "POST", body: JSON.stringify({ sizeIds: Array.from(selectedSizes), colorIds: Array.from(selectedColors) }) },
+      );
       setVariants(data.variants);
+      setNotice(data.notice);
+      onProductCodeChange?.(data.productCode);
       setSelectedSizes(new Set());
       setSelectedColors(new Set());
     } catch (err) {
@@ -207,6 +214,11 @@ export function VariantMatrix({
       ) : null}
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {notice ? (
+        <p role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          {notice}
+        </p>
+      ) : null}
 
       {variants.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">

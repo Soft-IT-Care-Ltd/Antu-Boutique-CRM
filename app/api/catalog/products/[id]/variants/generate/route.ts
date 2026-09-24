@@ -1,11 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
-import { skuForNewVariant, SkuError } from "@/lib/catalog/sku";
+import { generateVariants, isUniqueViolation, RACE_MESSAGE, SkuError } from "@/lib/catalog/sku";
 
 // PRD §4.2 — the variant matrix screen: pick sizes × colours, generate every
 // combination at once. Only fills in combos that don't exist yet; existing
@@ -30,51 +29,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   const { sizeIds, colorIds } = parsed.data;
 
-  const [sizes, colors, existingVariants] = await Promise.all([
+  const [sizes, colors] = await Promise.all([
     prisma.size.findMany({ where: { id: { in: sizeIds } } }),
     prisma.color.findMany({ where: { id: { in: colorIds } } }),
-    prisma.productVariant.findMany({ where: { productId: id } }),
   ]);
 
   if (sizes.length !== sizeIds.length) return NextResponse.json({ error: "One or more sizes not found" }, { status: 400 });
   if (colors.length !== colorIds.length) return NextResponse.json({ error: "One or more colours not found" }, { status: 400 });
 
-  const existingPairs = new Set(existingVariants.map((v) => `${v.sizeId}:${v.colorId}`));
-
-  // SKU = product + size + colour code (PRD §4.2). Every combination is
-  // checked before any is created, so a clash leaves nothing half-made.
-  const toCreate: { sizeId: string; colorId: string; sku: string }[] = [];
+  // SKU = product + size + colour code (PRD §4.2). Every SKU is checked
+  // before any is written; a clash with another product's SKU moves this
+  // product to a free code (lib/catalog/sku.ts), so a clash never surfaces
+  // as a database error.
+  let result;
   try {
-    for (const size of sizes) {
-      for (const color of colors) {
-        if (existingPairs.has(`${size.id}:${color.id}`)) continue;
-        const sku = await skuForNewVariant(prisma, product.code, size.code, color.code);
-        toCreate.push({ sizeId: size.id, colorId: color.id, sku });
-      }
-    }
+    result = await generateVariants(prisma, { productId: id, sizes, colors, actorId: guard.user.id, request });
   } catch (error) {
     if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (isUniqueViolation(error)) return NextResponse.json({ error: RACE_MESSAGE }, { status: 409 });
     throw error;
-  }
-
-  if (toCreate.length > 0) {
-    await prisma.productVariant.createMany({
-      data: toCreate.map((entry) => ({
-        productId: id,
-        sizeId: entry.sizeId,
-        colorId: entry.colorId,
-        sku: entry.sku,
-      })),
-    });
-
-    await writeAuditLog({
-      actorId: guard.user.id,
-      action: "catalog.variant.generate",
-      entityType: "product",
-      entityId: id,
-      after: { created: toCreate.map((e) => e.sku) },
-      request,
-    });
   }
 
   const variants = await prisma.productVariant.findMany({
@@ -84,7 +57,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   });
 
   const body = {
-    createdCount: toCreate.length,
+    createdCount: result.created.length,
+    productCode: result.codeChange?.to ?? product.code,
+    notice: result.notice,
     variants: variants.map((v) => ({
       ...v,
       weightedAvgCost: v.weightedAvgCost.toString(),

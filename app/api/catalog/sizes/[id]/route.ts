@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { SIZE_CODE_MESSAGE, SIZE_CODE_PATTERN } from "@/lib/catalog/codes";
-import { countLockedVariants, regenerateSkus, SkuError } from "@/lib/catalog/sku";
+import { countLockedVariants, isUniqueViolation, RACE_MESSAGE, regenerateSkus, SkuError } from "@/lib/catalog/sku";
 
 const updateSchema = z.object({
   code: z.string().trim().toUpperCase().regex(SIZE_CODE_PATTERN, SIZE_CODE_MESSAGE).optional(),
@@ -53,6 +53,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }));
   } catch (error) {
     if (error instanceof SkuError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (isUniqueViolation(error)) return NextResponse.json({ error: RACE_MESSAGE }, { status: 409 });
     throw error;
   }
 

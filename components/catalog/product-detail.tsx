@@ -196,6 +196,7 @@ export function ProductDetail({
             canEdit={canEdit}
             hasCostView={hasCostView}
             onVariantsChange={handleVariantsChange}
+            onProductCodeChange={(code) => setProduct((prev) => (prev.code === code ? prev : { ...prev, code }))}
           />
         </CardContent>
       </Card>

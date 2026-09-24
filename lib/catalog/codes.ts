@@ -98,3 +98,15 @@ export function suggestProductCode(name: string, taken: ReadonlySet<string> = ne
   const pool = [...new Set(w.join("").split(""))];
   return firstFree(variants(base, pool, 2, 3), PRODUCT_CODE_PATTERN, taken);
 }
+
+/**
+ * The codes to try, in order, when a product's SKUs would clash with another
+ * product's (K1 + 23 + MRN = K12 + 3 + MRN = K123MRN): K1 → K12, K13, … —
+ * numbered the same way a taken code is. The caller skips taken codes.
+ */
+export function productCodeAlternatives(code: string, name: string): string[] {
+  const pool = [...new Set(words(name).join("").split(""))];
+  const out = new Set<string>();
+  for (const c of variants(code, pool, 2, 3)) if (c !== code && PRODUCT_CODE_PATTERN.test(c)) out.add(c);
+  return [...out];
+}

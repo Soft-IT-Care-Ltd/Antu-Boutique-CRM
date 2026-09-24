@@ -7,6 +7,7 @@ import {
   buildVariantSku,
   COLOR_CODE_PATTERN,
   PRODUCT_CODE_PATTERN,
+  productCodeAlternatives,
   SIZE_CODE_PATTERN,
   SKU_MAX_LENGTH,
   suggestColorCode,
@@ -19,6 +20,14 @@ describe("short SKUs (PRD §4.2)", () => {
   it("is product + size + colour code, no separators", () => {
     expect(buildVariantSku("K12", "M", "MYL")).toBe("K12MMYL");
     expect(buildVariantSku("S01", "F", "MRN")).toBe("S01FMRN");
+  });
+
+  it("so different codes can join the same way — and a clashing product has codes to move to", () => {
+    expect(buildVariantSku("K1", "23", "MRN")).toBe(buildVariantSku("K12", "3", "MRN"));
+    const next = productCodeAlternatives("K1", "Kurti 1");
+    expect(next.slice(0, 3)).toEqual(["K12", "K13", "K14"]);
+    expect(next).not.toContain("K1");
+    for (const code of next) expect(code).toMatch(PRODUCT_CODE_PATTERN);
   });
 
   it("suggests the codes staff would write by hand", () => {
