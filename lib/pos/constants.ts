@@ -6,6 +6,14 @@ import type { PaymentMethodValue } from "@/lib/orders/constants";
 export const POS_PAYMENT_METHODS = ["CASH", "BKASH", "NAGAD", "CARD"] as const satisfies readonly PaymentMethodValue[];
 export type PosPaymentMethod = (typeof POS_PAYMENT_METHODS)[number];
 
+/**
+ * P3.2 — what a counter payment can be: money, or the customer's store
+ * credit (needs their phone number; lib/store-credit/ledger.ts). Store
+ * credit moves no money and never touches the drawer.
+ */
+export const POS_TENDER_METHODS = [...POS_PAYMENT_METHODS, "STORE_CREDIT"] as const satisfies readonly PaymentMethodValue[];
+export type PosTenderMethod = (typeof POS_TENDER_METHODS)[number];
+
 /** Bangladeshi notes and coins, largest first — the drawer count helper. */
 export const BDT_DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1] as const;
 export type Denominations = Partial<Record<`${(typeof BDT_DENOMINATIONS)[number]}`, number>>;

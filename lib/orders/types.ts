@@ -49,10 +49,10 @@ export type OrderItemView = {
 
 export type PaymentView = {
   id: string;
-  /** REFUND rows are negative; EXCHANGE_CREDIT is negative on the original order, positive on its replacement. */
+  /** REFUND rows are negative; EXCHANGE_CREDIT is negative on the original order, positive on its replacement; STORE_CREDIT is positive where spent, negative where issued or given back. */
   amount: string;
   method: PaymentMethodValue;
-  kind: "PAYMENT" | "REFUND" | "EXCHANGE_CREDIT";
+  kind: "PAYMENT" | "REFUND" | "EXCHANGE_CREDIT" | "STORE_CREDIT";
   walletId: string | null;
   walletName: string | null;
   transactionId: string | null;

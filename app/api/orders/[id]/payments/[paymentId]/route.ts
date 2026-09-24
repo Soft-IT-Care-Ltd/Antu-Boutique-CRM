@@ -16,6 +16,8 @@ import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 const REFUND_LOCKED = "Refunds can't be edited or deleted — reject it and request a new one if it's wrong.";
 // P3.2 — the credit an exchange carried between two orders; it changes only with its exchange.
 const CREDIT_LOCKED = "This is exchange credit — it changes only if the exchange is cancelled (Returns & Exchanges).";
+// P3.2 — store credit rows are the customer's ledger (lib/store-credit/ledger.ts).
+const STORE_CREDIT_LOCKED = "This is store credit — it can't be edited or deleted. Use “Give back to store credit” on the order, or cancel the order, to return it to the customer.";
 
 async function loadOrderForPaymentMutation(orderId: string, paymentId: string, user: Parameters<typeof scopedWhere>[1]) {
   const order = await prisma.order.findFirst({ where: scopedWhere({ id: orderId, deletedAt: null }, user), select: { id: true } });
@@ -34,6 +36,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.kind === "REFUND") return NextResponse.json({ error: REFUND_LOCKED }, { status: 409 });
   if (payment.kind === "EXCHANGE_CREDIT") return NextResponse.json({ error: CREDIT_LOCKED }, { status: 409 });
+  if (payment.kind === "STORE_CREDIT") return NextResponse.json({ error: STORE_CREDIT_LOCKED }, { status: 409 });
 
   // P2.2b: a payment created by reconciling a courier statement is part of
   // that statement's audit trail — it can't be edited or deleted by hand.
@@ -115,6 +118,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.kind === "REFUND") return NextResponse.json({ error: REFUND_LOCKED }, { status: 409 });
   if (payment.kind === "EXCHANGE_CREDIT") return NextResponse.json({ error: CREDIT_LOCKED }, { status: 409 });
+  if (payment.kind === "STORE_CREDIT") return NextResponse.json({ error: STORE_CREDIT_LOCKED }, { status: 409 });
 
   // P2.2b: a payment created by reconciling a courier statement is part of
   // that statement's audit trail — it can't be edited or deleted by hand.

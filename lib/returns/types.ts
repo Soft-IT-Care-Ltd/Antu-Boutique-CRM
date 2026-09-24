@@ -3,6 +3,7 @@
 // roles without product.cost.view (lib/auth/strip-cost-fields.ts).
 
 import type { OrderChannelValue, OrderStatusValue } from "@/lib/orders/constants";
+import type { ReturnSettlementValue } from "@/lib/store-credit/constants";
 import type { CourierChargeBearerValue, ReturnCaseModeValue, ReturnCaseStatusValue, ReturnCaseTypeValue, ReturnReasonValue } from "@/lib/returns/constants";
 
 export type VariantLabel = { sku: string; product: string; size: string; color: string; hexCode: string };
@@ -40,8 +41,14 @@ export type ReturnCaseView = {
   cancelledAt: string | null;
   cancelNote: string | null;
   completedAt: string | null;
-  /** Refund requested by a counter exchange for a cheaper replacement (pending or approved). */
+  /** Refund requested for this case (pending or approved) — counter exchanges before store credit. */
   refundRequested: string;
+  /** How what's owed back goes to the customer. */
+  settlement: ReturnSettlementValue;
+  /** Left owed on the original by approval (null until approved). */
+  owedAmount: string | null;
+  /** Credited to the customer's store credit by this case. */
+  storeCreditIssued: string;
   isMine: boolean;
 };
 
@@ -89,6 +96,10 @@ export type CounterLookup = {
   channel: OrderChannelValue;
   soldAt: string;
   customerName: string;
+  /** False for an anonymous sale: store credit needs a phone number first. */
+  hasCustomer: boolean;
+  /** The customer's store credit balance, when there is a customer. */
+  storeCredit: string | null;
   returnableStatus: boolean;
   items: ReturnableItem[];
 };

@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
-import { POS_PAYMENT_METHODS } from "@/lib/pos/constants";
+import { POS_TENDER_METHODS } from "@/lib/pos/constants";
+import { RETURN_SETTLEMENT_VALUES } from "@/lib/store-credit/constants";
 import { COURIER_CHARGE_BEARER_VALUES, RETURN_CASE_TYPE_VALUES, RETURN_REASON_VALUES } from "@/lib/returns/constants";
 
 // Zod shapes for the PRD §4.11 routes (CLAUDE.md rule 9). Client-safe.
@@ -17,6 +18,7 @@ export const caseRequestSchema = z
     reason: z.enum(RETURN_REASON_VALUES, { error: "Pick a reason" }),
     reasonNote,
     courierChargeBearer: z.enum(COURIER_CHARGE_BEARER_VALUES).nullish(),
+    settlement: z.enum(RETURN_SETTLEMENT_VALUES).default("REFUND"),
     lines: z
       .array(z.object({ orderItemId: id, qty: units.min(1, "Enter how many are coming back"), replacementVariantId: id.nullish() }))
       .min(1, "Pick at least one item")
@@ -47,7 +49,7 @@ export const counterExchangeSchema = z
     tenders: z
       .array(
         z.object({
-          method: z.enum(POS_PAYMENT_METHODS),
+          method: z.enum(POS_TENDER_METHODS),
           amount: tenderAmount,
           tendered: tenderAmount.nullish(),
           walletId: z.string().trim().max(50).nullish(),
@@ -56,7 +58,8 @@ export const counterExchangeSchema = z
       )
       .max(4)
       .default([]),
-    refundMethod: z.enum(POS_PAYMENT_METHODS).nullish(),
+    // An anonymous sale's customer — needed for store credit (lib/returns/cases.ts).
+    customer: z.object({ phone: z.string().trim().max(20), name: z.string().trim().max(150).nullish() }).nullish(),
   })
   .refine((d) => d.reason !== "OTHER" || Boolean(d.reasonNote?.trim()), { message: "Say what the reason is", path: ["reasonNote"] });
 

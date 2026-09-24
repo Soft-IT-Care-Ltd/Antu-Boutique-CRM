@@ -31,11 +31,13 @@ export class RefundError extends Error {
  * refunds already approved or waiting for approval. Unverified payments
  * aren't refundable — the money may never have arrived. P3.2: exchange
  * credit counts too — carried in on a replacement, and less what an original
- * passed on to its replacement.
+ * passed on to its replacement — and so does store credit issued out of the
+ * order (the customer already has that back). Credit SPENT on an order is
+ * never refundable as money: cancelling the order gives it back as credit.
  */
 export async function refundableAmount(tx: Prisma.TransactionClient, orderId: string, excludePaymentId?: string): Promise<number> {
   const [received, refunds] = await Promise.all([
-    tx.payment.aggregate({ where: { orderId, OR: [{ kind: "PAYMENT", verified: true }, { kind: "EXCHANGE_CREDIT" }] }, _sum: { amount: true } }),
+    tx.payment.aggregate({ where: { orderId, OR: [{ kind: "PAYMENT", verified: true }, { kind: "EXCHANGE_CREDIT" }, { kind: "STORE_CREDIT", storeCreditEntry: { type: "ISSUED" } }] }, _sum: { amount: true } }),
     tx.payment.aggregate({
       where: { orderId, kind: "REFUND", refundStatus: { in: ["PENDING", "APPROVED"] }, ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}) },
       _sum: { amount: true },

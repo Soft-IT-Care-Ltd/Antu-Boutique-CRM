@@ -99,7 +99,53 @@ type CollectionReport = {
   byDay: { day: string; collected: string; refunds: string; net: string }[];
   byStaff: { name: string; count: number; collected: string }[];
   byChannel: { channel: OrderChannelValue; count: number; collected: string; refunds: string; net: string }[];
+  storeCredit: { outstanding: string; customersWithCredit: number; issued: string; used: string; restored: string; adjusted: string; expired: string };
 };
+
+/**
+ * P3.2 — store credit is what the shop owes customers (a liability), not
+ * money collected: it never enters the figures above. It becomes revenue
+ * only when spent, inside the total of the order it pays for.
+ */
+function StoreCreditPanel({ credit, to }: { credit: CollectionReport["storeCredit"]; to: string }) {
+  const moved = [
+    { label: "Issued", value: credit.issued, hint: "exchanges and returns settled as credit" },
+    { label: "Used", value: credit.used, hint: "spent on orders — revenue there" },
+    { label: "Given back", value: credit.restored, hint: "spent on orders later cancelled" },
+    { label: "Adjusted (Admin)", value: credit.adjusted, hint: "net, + added / − taken away" },
+    { label: "Expired", value: credit.expired, hint: "lapsed unspent" },
+  ].filter((m) => Number(m.value) !== 0);
+  return (
+    <Section title="Store credit (a liability, not income)">
+      <div className="flex flex-col gap-3 text-sm">
+        <div>
+          <p className="text-xs text-muted-foreground">Outstanding store credit on {dayLabel(to)}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatBDT(credit.outstanding)}</p>
+          <p className="text-xs text-muted-foreground">
+            Owed to {credit.customersWithCredit} customer{credit.customersWithCredit === 1 ? "" : "s"}, whole shop. It moves no cash, so it isn&apos;t in the collection above.
+          </p>
+        </div>
+        {moved.length > 0 ? (
+          <Table>
+            <TableBody>
+              {moved.map((m) => (
+                <TableRow key={m.label}>
+                  <TableCell>
+                    {m.label}
+                    <span className="block text-xs text-muted-foreground">{m.hint}</span>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{formatBDT(m.value)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <p className="text-xs text-muted-foreground">No store credit moved in this range.</p>
+        )}
+      </div>
+    </Section>
+  );
+}
 
 export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
   const [from, setFrom] = useState(initialFrom);
@@ -124,6 +170,7 @@ export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: 
             <Stat label="Refunds (approved)" value={report.totals.refunds} hint={`${report.totals.refundCount} refunds`} />
             <Stat label="Net collection" value={report.totals.net} />
           </div>
+          <StoreCreditPanel credit={report.storeCredit} to={to} />
           {report.totals.paymentCount + report.totals.refundCount === 0 ? (
             <Empty text="No payments in this range." />
           ) : (

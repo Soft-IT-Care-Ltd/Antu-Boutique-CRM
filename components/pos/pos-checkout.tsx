@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Banknote, CreditCard, Loader2, Smartphone, UserRound, X } from "lucide-react";
+import { Banknote, CreditCard, Gift, Loader2, Smartphone, UserRound, X } from "lucide-react";
 
 import { WalletSelect } from "@/components/wallets/wallet-select";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,10 @@ import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
 import { fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
-import { POS_PAYMENT_METHODS, type PosPaymentMethod } from "@/lib/pos/constants";
+import { POS_PAYMENT_METHODS, type PosPaymentMethod, type PosTenderMethod } from "@/lib/pos/constants";
 import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
 
-export type Tender = { key: string; method: PosPaymentMethod; amount: string; tendered: string; walletId: string; transactionId: string };
+export type Tender = { key: string; method: PosTenderMethod; amount: string; tendered: string; walletId: string; transactionId: string };
 
 export type CustomerInput = { phone: string; name: string };
 
@@ -67,7 +67,8 @@ export function PosCheckout({
   customer: CustomerInput;
   onCustomer: (c: CustomerInput) => void;
   tenders: Tender[];
-  onAddTender: (method: PosPaymentMethod) => void;
+  /** `capPaisa` limits the new tender (store credit: the customer's balance). */
+  onAddTender: (method: PosTenderMethod, capPaisa?: number) => void;
   onChangeTender: (key: string, patch: Partial<Tender>) => void;
   onRemoveTender: (key: string) => void;
   wallets: WalletOption[];
@@ -81,11 +82,15 @@ export function PosCheckout({
   phoneRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const [found, setFound] = useState<{ phone: string; customer: CustomerListItem | null } | null>(null);
+  const [credit, setCredit] = useState<{ phone: string; balance: string } | null>(null);
   const phoneOk = customer.phone.trim() !== "" && isValidBdPhone(customer.phone);
   // Only a lookup for the number now in the box counts.
   const match = phoneOk && found?.phone === customer.phone.trim() ? found.customer : null;
+  const creditPaisa = phoneOk && credit?.phone === customer.phone.trim() ? toPaisa(credit.balance) : 0;
 
   // A returning customer (one this user can see) is recognised by phone.
+  // P3.2 — and any number that is a customer shows its store credit (the
+  // balance only, whoever the customer belongs to).
   useEffect(() => {
     if (!phoneOk) return;
     const phone = customer.phone.trim();
@@ -93,6 +98,9 @@ export function PosCheckout({
       fetchJson<{ items: CustomerListItem[] }>(`/api/customers?q=${encodeURIComponent(phone)}&pageSize=1`)
         .then((d) => setFound({ phone, customer: d.items[0] ?? null }))
         .catch(() => setFound({ phone, customer: null }));
+      fetchJson<{ known: boolean; balance: string }>(`/api/store-credit/lookup?phone=${encodeURIComponent(phone)}`)
+        .then((d) => setCredit({ phone, balance: d.balance }))
+        .catch(() => setCredit({ phone, balance: "0.00" }));
     }, 250);
     return () => clearTimeout(timer);
   }, [customer.phone, phoneOk]);
@@ -171,6 +179,12 @@ export function PosCheckout({
         ) : phoneOk ? (
           <Input className="h-11 text-base" placeholder="Name (optional)" value={customer.name} onChange={(e) => onCustomer({ ...customer, name: e.target.value })} />
         ) : null}
+        {creditPaisa > 0 ? (
+          <p className="flex items-center gap-1.5 text-sm">
+            <Gift className="size-4 text-emerald-700 dark:text-emerald-400" />
+            Store credit: <b className="tabular-nums">{formatBDT(fromPaisa(creditPaisa))}</b>
+          </p>
+        ) : null}
       </section>
 
       <section className="flex flex-col gap-2 rounded-xl border p-3">
@@ -187,6 +201,12 @@ export function PosCheckout({
             );
           })}
         </div>
+        {creditPaisa > 0 && remaining > 0 && !tenders.some((t) => t.method === "STORE_CREDIT") ? (
+          <Button type="button" variant="outline" className="h-11 gap-2" onClick={() => onAddTender("STORE_CREDIT", creditPaisa)}>
+            <Gift className="size-4" />
+            Pay from store credit ({formatBDT(fromPaisa(Math.min(creditPaisa, remaining)))})
+          </Button>
+        ) : null}
         {!cashAllowed && cashBlockedReason ? <p className="text-xs text-amber-700 dark:text-amber-400">{cashBlockedReason}</p> : null}
 
         {tenders.map((t) => {
@@ -201,7 +221,11 @@ export function PosCheckout({
                   <X />
                 </Button>
               </div>
-              {t.method === "CASH" ? (
+              {t.method === "STORE_CREDIT" ? (
+                <p className={`text-xs ${toPaisa(Number(t.amount) || 0) > creditPaisa ? "text-destructive" : "text-muted-foreground"}`}>
+                  {creditPaisa > 0 ? `${formatBDT(fromPaisa(creditPaisa))} available — no money changes hands.` : "Enter the customer's phone number to use their store credit."}
+                </p>
+              ) : t.method === "CASH" ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <Input className="h-10 w-28 text-right tabular-nums" inputMode="decimal" placeholder="Cash given" aria-label="Cash handed over" value={t.tendered} onChange={(e) => onChangeTender(t.key, { tendered: e.target.value })} />
                   {cashSuggestions(toPaisa(Number(t.amount) || 0)).map((n) => (

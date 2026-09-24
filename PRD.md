@@ -121,6 +121,7 @@ It must run the whole business in one place: lead → order → stock → packin
 - **No payer/recipient split, no second person, no country field, no sender message.**
 - Auto-dedupe on phone number at order entry: typing a known number pulls up the existing customer with their order history.
 - Customer profile shows lifetime orders, lifetime value, returns/exchanges count, average order value, last order date, and a **risk flag** (e.g. 3+ refused COD deliveries).
+- Profile also shows the customer's **store credit** balance and ledger (P3.2, §4.11).
 
 ### 4.5 Leads & follow-ups
 
@@ -251,6 +252,7 @@ Recorded so later phases (P&L, reports, exchanges) build on the same rules.
 - **`order.due_amount` is recomputed on every payment write, never typed by a human.**
 - Wallets (bKash personal, bKash merchant, Nagad, bank account, showroom cash) with running balances, manual in/out entries, and a wallet statement per date range.
 - Refunds recorded as negative payments with a reason and approval.
+- **Store credit** (P3.2) is also a payment method: it moves no money and has no wallet — see §4.11 *Store credit*.
 
 ### 4.11 Returns & exchanges
 
@@ -274,13 +276,22 @@ Recorded so later phases (P&L, reports, exchanges) build on the same rules.
 - **Money.** Returned units are marked on their line (`returned_qty`, as for partial delivery), and the original total drops by their value (unit price less their share of the line discount). So revenue and COGS leave with the item (§4.12: COGS counts `qty − returned_qty`).
   - **Exchange:** that value moves to the replacement as a pair of `EXCHANGE_CREDIT` payment rows: negative on the original, positive on the replacement. They have no wallet and no TrxID, move no money, and can't be edited. Both count toward `due_amount`.
   - **Replacement price:** the same garment in another size or colour keeps what the customer paid for it, so a plain size swap costs nothing extra. Another product sells at today's price.
-  - **Difference:** the customer pays any extra on the replacement like any payment. If the replacement is cheaper, the rest stays on the original as credit, refunded through the P2.3 refund flow (a second person approves). At the counter that refund request is created automatically and waits for a Manager/Admin; the drawer counts it once it's approved.
-  - **Return:** the original is left overpaid by the returned value, and Accounts refunds it the same way.
+  - **Difference:** the customer pays any extra on the replacement like any payment (store credit included). If the replacement is cheaper, the rest is left overpaid on the original and goes back as the case's **settlement** says:
+    - **At the counter: always store credit, at once.** No refund waits for approval (the customer has left the shop by then) and no cash leaves the drawer. An anonymous sale needs the customer's phone number first; the number finds or creates the customer (dedupe on phone) and links both orders to them.
+    - **Online: staff choose** when requesting — *Refund* (the P2.3 flow, a second person approves) or *Store credit*, credited when the item is back and has passed its check, never before (so a cancelled case never has to claw credit back). The amount is what approval left owed (`owedAmount`), capped at what the order is still overpaid after any refund already paid or pending.
+  - **Return:** the original is left overpaid by the returned value; it goes back by refund or store credit, chosen the same way. A fully returned order becomes `REFUNDED` when the refund is approved, or when the store credit is issued.
 - **Statuses.** Approving an exchange moves the original to `EXCHANGE_REQUESTED`; its last exchange passing the check moves it to `COMPLETED`. A return of everything the customer had makes the order `RETURNED`; an approved refund on a `RETURNED` order makes it `REFUNDED`. None of these can be picked in the generic status control. The same goes for a customer return (`DELIVERED`/`COMPLETED` → `RETURNED`); a courier return in transit is still a plain move. `EXCHANGE_REQUESTED` can no longer go to `CANCELLED`: the customer has the goods.
 - **Replacement orders** carry `exchanged_from_order_id`, and both orders show the link and the reason. An online replacement is `CONFIRMED` with stock reserved and is packed through the normal flow as `EXCHANGE_OUT`. It belongs to the original order's executive, so it stays in their scope. It can't be edited or cancelled on its own; cancelling the exchange handles it.
 - **Cancel.** A request can be withdrawn by whoever asked or by an approver. An approved online case can be cancelled by an approver while its item hasn't been checked in and the replacement hasn't gone to the courier. Cancelling cancels the replacement (releasing its reservation, or restocking it if packed), removes the credit, un-marks the returned units, withdraws the check and puts the original back at its old status. Once a return's refund has been approved, it can't be cancelled.
 - **Courier charge bearer (online exchanges).** `CUSTOMER`: the replacement is charged the zone's delivery charge. `COMPANY`: it is charged nothing, and the courier's charge for that parcel posts **once** under "Exchange / return cost" (system category *Exchange courier charge*) when the shipment is final. The amount is the actual charge, else the estimate. The courier statement's delivery-charge expense leaves that amount out, so the charge reaches P&L exactly once. If the parcel's payout was already reconciled, nothing is posted.
 - **Exchange report** (Returns & Exchanges → Report): by reason, by product and variant, and by the executive who made the sale, with the channel filter. The courier charge we bore appears only for roles with `product.cost.view`.
+- **Store credit** (`store_credit_entries`, `lib/store-credit/`). What the shop owes a customer, to spend later.
+  - **A ledger per customer:** every row is *Issued* (from an exchange/return), *Used* (spent on an order), *Given back* (the order it paid for was cancelled, or the use was undone) or *Adjusted*, with its order, return case, user and time. **The balance is always derived from the ledger, never stored**, by one function (`lib/store-credit/balance.ts`).
+  - **Through orders only:** every movement except an adjustment is one `STORE_CREDIT` payment row on an order (no wallet, no TrxID, nothing to verify, never edited or deleted — DB CHECKs) plus its ledger row, in one transaction. So the order's `due_amount` and the balance always agree: issuing is a negative row on the overpaid order, spending a positive row on the order it pays for.
+  - **Spending:** a payment method at the POS (by the customer's phone number) and on online orders (as the advance at creation, or "Use store credit" on the order), never more than the balance or what's due. The POS and the order form show the balance as soon as a known phone number is typed (the balance only — never the other executive's customer record). Two tills can't spend the same credit: each write locks the customer row.
+  - **Cancelled orders** give the credit spent on them back automatically (*Given back*). Credit spent is never refundable as cash; `refundableAmount` also leaves out credit already issued from an order.
+  - **Adjustments:** Admin only (`customer.credit.adjust`), reason required (DB CHECK), audit-logged; a deduction can't take the balance below zero. The customer profile shows the balance, what's due to expire, and the whole ledger.
+  - **Expiry:** none by default. Settings → *Store credit expires after N days* applies to credit added from then on (each added row keeps its own `expiresAt`). When credit lapses, the soonest-expiring credit is used first, so the customer never loses credit they could have spent; what's left of it at its date has expired. Expiry is derived like the balance — no job writes it.
 - **For Phase 4:** a replacement order (`exchanged_from_order_id` set) is not a new sale. Targets, leaderboards and "orders" counts must leave it out, and P&L revenue must use the recomputed order totals.
 
 ### 4.12 Expenses & accounting
@@ -295,6 +306,7 @@ Recorded so later phases (P&L, reports, exchanges) build on the same rules.
   - **Per-order profit** (which subtracts the order's allocated ad cost and its courier cost) is a separate per-order view. It is **never summed into P&L**, and no report adds per-order courier or ad cost to the expense figures.
   - **Ad spend, courier delivery charges, COD fees and courier return charges each reach P&L exactly once, through expenses**: ad spend as the "Ad cost" expense each daily ad spend row posts; delivery charges and COD fees as the expenses a reconciled courier statement posts; a return charge as the expense the condition check posts — unless that parcel's payout was already reconciled, in which case the statement's delivery-charge expense already carries it and the condition check posts nothing.
   - **Damaged stock** reaches P&L once, as a "Damage / write-off" expense at cost. A damaged return's units left COGS when they came back, so writing them off is not a second charge.
+  - **Store credit is a liability, not income or expense (P3.2).** Issuing it is neither: the returned items' value already left the original order's total (and COGS left with them). It becomes revenue only when spent — as part of the total of the order it pays for, which is revenue like any order. Its payment rows carry no wallet, so wallet balances and the collection figures never include it. The collection report shows **Outstanding store credit** (what customers are owed at the end of the period) and the period's issued / used / given back / adjusted / expired amounts on their own lines. For P&L (Phase 4): an Admin adjustment is not a sale — a positive one is a cost (goodwill) and a negative one income, and credit that expires unspent is income (the shop keeps money it no longer owes). Both come only from the store credit ledger, never from `expenses`, so nothing is counted twice.
   - **Unexplained stock loss** reaches P&L through "Stock shortage": every manual stock-count adjustment posts there at cost — a shortfall as a cost, stock found later as a credit — so the heading shows the net loss. Damage and unexplained loss are different problems and are never mixed.
 - Wallet running balances and a cash-position view.
 - **Admin/Manager only.** Not visible to SE, TL, Packing.
@@ -374,7 +386,7 @@ All reports: date-range filter, plus filters for SE / team / status / channel / 
 
 ### 4.17 Settings (Admin only)
 
-Business profile (name, logo, address, phone, invoice footer) · Size master · Colour master · Category master · Courier companies and zone charges · Payment methods and wallets · Order edit-window minutes · Low-stock default threshold · Office hours and late rule · Ad-cost allocation method · Target and reward rules · Roles and permissions · Users · Steadfast API credentials and webhook URL · Backup status.
+Business profile (name, logo, address, phone, invoice footer) · Store credit expiry (optional, off by default — P3.2) · Size master · Colour master · Category master · Courier companies and zone charges · Payment methods and wallets · Order edit-window minutes · Low-stock default threshold · Office hours and late rule · Ad-cost allocation method · Target and reward rules · Roles and permissions · Users · Steadfast API credentials and webhook URL · Backup status.
 
 ### 4.18 System-wide behaviour
 

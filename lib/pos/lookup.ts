@@ -7,7 +7,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import type { Db } from "@/lib/db/tx";
 import { normalizeScannedCode } from "@/lib/barcode/scan";
 import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
-import type { PosPaymentMethod } from "@/lib/pos/constants";
+import type { PosTenderMethod } from "@/lib/pos/constants";
 import type { PosRecentSale, PosVariantHit } from "@/lib/pos/types";
 
 // The POS finds what to sell two ways: a scanned price tag (its barcode is
@@ -95,7 +95,7 @@ export async function listRecentPosSales(db: Db, user: SessionUser, limit = 8): 
       createdAt: true,
       customer: { select: { name: true } },
       _count: { select: { items: true, invoices: true } },
-      payments: { where: { kind: "PAYMENT" }, select: { method: true } },
+      payments: { where: { OR: [{ kind: "PAYMENT" }, { kind: "STORE_CREDIT", amount: { gt: 0 } }] }, select: { method: true } },
     },
   });
   return rows.map((o) => ({
@@ -105,7 +105,7 @@ export async function listRecentPosSales(db: Db, user: SessionUser, limit = 8): 
     createdAt: o.createdAt.toISOString(),
     customerName: o.customer?.name ?? null,
     itemCount: o._count.items,
-    methods: [...new Set(o.payments.map((p) => p.method as PosPaymentMethod))],
+    methods: [...new Set(o.payments.map((p) => p.method as PosTenderMethod))],
     hasInvoice: o._count.invoices > 0,
   }));
 }

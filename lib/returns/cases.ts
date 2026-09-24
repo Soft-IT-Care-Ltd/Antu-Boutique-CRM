@@ -14,8 +14,11 @@ import { generateOrderNumber } from "@/lib/orders/order-number";
 import { reserveVariantStock } from "@/lib/orders/stock";
 import { computeOrderTotals, keptLine, recomputeOrderDueAmount } from "@/lib/orders/totals";
 import { settleTenders } from "@/lib/pos/cart";
-import type { PosPaymentMethod } from "@/lib/pos/constants";
+import type { PosTenderMethod } from "@/lib/pos/constants";
 import { lockOpenDrawerForSale } from "@/lib/pos/drawer";
+import { resolveCounterCustomer } from "@/lib/pos/sale";
+import { getStoreCreditBalance, issueStoreCredit, spendStoreCredit } from "@/lib/store-credit/ledger";
+import type { ReturnSettlementValue } from "@/lib/store-credit/constants";
 import { completeConditionCheck, openReturnInspection } from "@/lib/returns/condition-check";
 import { RETURN_REASON_LABELS, RETURNABLE_ORDER_STATUSES, type CourierChargeBearerValue, type ReturnReasonValue } from "@/lib/returns/constants";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
@@ -36,14 +39,19 @@ import { resolvePaymentWalletId } from "@/lib/wallets/service";
 // recomputed on what the customer keeps, so COGS and revenue both leave
 // with the item (PRD §4.12: COGS counts qty − returnedQty). The value that
 // came back is the customer's credit:
-//   - a return: the original is overpaid by it — refunded through the P2.3
-//     refund flow (approved by a second person); a fully returned order is
-//     RETURNED, then REFUNDED once a refund is approved
+//   - a return: the original is overpaid by it; a fully returned order is
+//     RETURNED
 //   - an exchange: it moves to the replacement order as a pair of
 //     EXCHANGE_CREDIT rows (−credit / +credit, no wallet, no money). The
 //     customer pays any difference on the replacement like any payment; if
-//     the replacement is cheaper, the rest stays on the original as credit
-//     to refund.
+//     the replacement is cheaper, the rest is left overpaid on the original.
+// What's left overpaid goes back as the case's `settlement` says:
+//   - REFUND (online only): through the P2.3 refund flow, approved by a
+//     second person; an approved refund makes a RETURNED order REFUNDED
+//   - STORE_CREDIT: credited to the customer's store credit
+//     (lib/store-credit/ledger.ts) — at once at the counter, where the
+//     customer has left by the time anyone could approve a refund; online,
+//     once the item is back and checked (lib/returns/case-completion.ts).
 // Every item goes back through the one condition-check service
 // (lib/returns/condition-check.ts): Good → EXCHANGE_IN / RETURN_IN,
 // Damaged → DAMAGE_OUT at the frozen cost.
@@ -258,6 +266,8 @@ export type RequestCaseInput = {
   reason: ReturnReasonValue;
   reasonNote?: string | null;
   courierChargeBearer?: CourierChargeBearerValue | null;
+  /** How what's owed back goes to the customer: a refund (approved), or store credit once the item is checked. */
+  settlement?: ReturnSettlementValue;
   lines: CaseLineInput[];
 };
 
@@ -280,6 +290,7 @@ export async function requestReturnCase(db: Db, user: SessionUser, input: Reques
         reason: input.reason,
         reasonNote: input.reasonNote?.trim() || null,
         courierChargeBearer: input.type === "EXCHANGE" ? input.courierChargeBearer : null,
+        settlement: input.settlement ?? "REFUND",
         requestedById: user.id,
         lines: {
           create: input.lines.map((l) => ({ orderItemId: l.orderItemId, qty: l.qty, replacementVariantId: input.type === "EXCHANGE" ? l.replacementVariantId : null })),
@@ -292,7 +303,7 @@ export async function requestReturnCase(db: Db, user: SessionUser, input: Reques
       action: input.type === "EXCHANGE" ? "exchange.request" : "return.request",
       entityType: "order",
       entityId: order.id,
-      after: { caseId: created.id, reason: input.reason, reasonNote: input.reasonNote ?? null, courierChargeBearer: input.courierChargeBearer ?? null, lines: input.lines },
+      after: { caseId: created.id, reason: input.reason, reasonNote: input.reasonNote ?? null, courierChargeBearer: input.courierChargeBearer ?? null, settlement: input.settlement ?? "REFUND", lines: input.lines },
     });
     return created;
   });
@@ -303,8 +314,9 @@ export type DecisionResult = {
   totalsChanged: string[];
   replacementOrderId: string | null;
   replacementOrderNo: string | null;
-  /** What the customer is owed back on the original order after this (a refund to request). */
+  /** What the customer is owed back on the original order after this — a refund to request, or store credit once the item is checked. */
   owedToCustomer: string;
+  settlement: ReturnSettlementValue;
 };
 
 const CASE_WITH_LINES = {
@@ -316,6 +328,7 @@ const CASE_WITH_LINES = {
   reason: true,
   reasonNote: true,
   courierChargeBearer: true,
+  settlement: true,
   requestedById: true,
   replacementOrderId: true,
   inspectionId: true,
@@ -384,13 +397,16 @@ export async function decideReturnCase(
     }
     if (to) await moveOrderStatus(tx, { id: order.id, status: from, items: [] }, to, user.id, `${rc.type === "EXCHANGE" ? "Exchange" : "Return"} approved — ${RETURN_REASON_LABELS[rc.reason]}`);
 
+    // What this case leaves owed back: its returned value less the credit
+    // carried to the replacement, and never more than the order is now
+    // overpaid (an unpaid balance absorbs the rest).
+    const { dueAmount } = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { dueAmount: true } });
+    const owed = Math.max(0, Math.min(valuePaisa - creditPaisa, -toPaisa(dueAmount)));
     await tx.returnCase.update({
       where: { id: rc.id },
-      data: { inspectionId: inspection.id, replacementOrderId: replacement?.id ?? null, orderStatusBefore: to ? from : null },
+      data: { inspectionId: inspection.id, replacementOrderId: replacement?.id ?? null, orderStatusBefore: to ? from : null, owedAmount: fromPaisa(owed) },
     });
 
-    const { dueAmount } = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { dueAmount: true } });
-    const owed = Math.max(0, -toPaisa(dueAmount));
     await writeAuditLogWith(tx, {
       actorId: user.id,
       action: rc.type === "EXCHANGE" ? "exchange.approve" : "return.approve",
@@ -407,6 +423,7 @@ export async function decideReturnCase(
         replacementOrderId: replacement?.id ?? null,
         exchangeCredit: fromPaisa(creditPaisa),
         owedToCustomer: fromPaisa(owed),
+        settlement: rc.settlement,
       },
     });
 
@@ -415,6 +432,7 @@ export async function decideReturnCase(
       replacementOrderId: replacement?.id ?? null,
       replacementOrderNo: replacement?.orderNo ?? null,
       owedToCustomer: fromPaisa(owed),
+      settlement: rc.settlement,
     };
   });
 }
@@ -512,7 +530,7 @@ export async function cancelReturnCase(db: Db, user: SessionUser, caseId: string
 
     const { count } = await tx.returnCase.updateMany({
       where: { id: rc.id, status: rc.status },
-      data: { status: "CANCELLED", cancelledById: user.id, cancelledAt: new Date(), cancelNote: note, inspectionId: null },
+      data: { status: "CANCELLED", cancelledById: user.id, cancelledAt: new Date(), cancelNote: note, inspectionId: null, owedAmount: null },
     });
     if (count !== 1) throw new ReturnCaseError("Someone else just changed this — reload and try again.", 409);
 
@@ -559,7 +577,7 @@ export async function cancelReturnCase(db: Db, user: SessionUser, caseId: string
 
 export type CounterLineInput = { orderItemId: string; qty: number; replacementVariantId: string; goodQty: number; damagedQty: number };
 
-export type CounterTenderInput = { method: PosPaymentMethod; amount: number; tendered?: number | null; walletId?: string | null; transactionId?: string | null };
+export type CounterTenderInput = { method: PosTenderMethod; amount: number; tendered?: number | null; walletId?: string | null; transactionId?: string | null };
 
 export type CounterExchangeInput = {
   orderId: string;
@@ -568,8 +586,12 @@ export type CounterExchangeInput = {
   lines: CounterLineInput[];
   /** Pays the difference when the replacement costs more — exactly. */
   tenders: CounterTenderInput[];
-  /** How a cheaper replacement's difference goes back (a refund request, approved by a Manager/Admin). */
-  refundMethod?: PosPaymentMethod | null;
+  /**
+   * The customer's phone, for an anonymous sale: needed before store credit
+   * can be issued (or spent). Links both orders to that customer. Ignored
+   * when the sale already has a customer.
+   */
+  customer?: { phone: string; name?: string | null } | null;
 };
 
 export type CounterExchangeResult = {
@@ -579,8 +601,10 @@ export type CounterExchangeResult = {
   /** Paid by the customer now. */
   paid: string;
   change: string;
-  /** Owed back to the customer: a refund request waiting for approval. */
-  refundRequested: string;
+  /** A cheaper replacement's difference, credited to the customer's store credit. */
+  storeCreditIssued: string;
+  /** Their store credit after this exchange. */
+  storeCreditBalance: string | null;
   restockedUnits: number;
   writtenOffUnits: number;
 };
@@ -591,10 +615,15 @@ export type CounterExchangeResult = {
  * DAMAGE_OUT at the frozen cost, through the one condition-check service),
  * the replacement leaves as EXCHANGE_OUT on a linked walk-in order that is
  * COMPLETED at once (no courier), the credit moves across, and the
- * difference is settled — the customer pays extra now, or a refund of the
- * rest is requested for approval (the P2.3 two-person rule).
+ * difference is settled — the customer pays extra now, or the rest goes to
+ * their store credit at once. No refund waits for approval: the customer
+ * has left the shop by then, and no cash leaves the drawer.
  */
-export async function createCounterExchange(db: Db, ctx: { user: SessionUser; cashWalletId: string }, input: CounterExchangeInput): Promise<CounterExchangeResult> {
+export async function createCounterExchange(
+  db: Db,
+  ctx: { user: SessionUser; cashWalletId: string; canCreateCustomer: boolean },
+  input: CounterExchangeInput,
+): Promise<CounterExchangeResult> {
   if (input.reason === "OTHER" && !input.reasonNote?.trim()) throw new ReturnCaseError("Say what the reason is.");
   for (const l of input.lines) {
     if (!Number.isInteger(l.goodQty) || !Number.isInteger(l.damagedQty) || l.goodQty < 0 || l.damagedQty < 0 || l.goodQty + l.damagedQty !== l.qty) {
@@ -621,17 +650,39 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
     const totals = computeOrderTotals(priced.map((p) => ({ qty: p.line.qty, unitPrice: p.unitPrice, lineDiscount: p.lineDiscount })), 0);
     const replacementTotalPaisa = toPaisa(totals.total);
 
-    // The returned units come off the original first: the value that leaves
-    // it is the customer's credit, and settles the difference. (All in this
-    // transaction — any refusal below undoes it.)
-    const valuePaisa = await applyReturnedUnits(tx, order, input.lines, 1);
-    const extraPaisa = Math.max(0, replacementTotalPaisa - valuePaisa);
-    const owedPaisa = Math.max(0, valuePaisa - replacementTotalPaisa);
+    // The value coming back is the customer's credit, and settles the
+    // difference. Everything is checked before anything is written.
+    const expectedValuePaisa = returnedValue(order, input.lines, 1).valuePaisa;
+    const extraPaisa = Math.max(0, replacementTotalPaisa - expectedValuePaisa);
+    const owedPaisa = Math.max(0, expectedValuePaisa - replacementTotalPaisa);
     const settled = settleTenders(extraPaisa, input.tenders);
     if (settled.remainingPaisa > 0) throw new ReturnCaseError(`${formatBDT(fromPaisa(settled.remainingPaisa))} still to pay for the difference.`);
     if (settled.remainingPaisa < 0) throw new ReturnCaseError(`The payments are ${formatBDT(fromPaisa(-settled.remainingPaisa))} more than the difference — give the extra back as change.`);
-    // Cash taken now needs today's drawer open (a refund pays out only once approved).
+    const creditTenderPaisa = input.tenders.filter((t) => t.method === "STORE_CREDIT").reduce((sum, t) => sum + toPaisa(t.amount), 0);
+    // Store credit belongs to a customer: an anonymous sale needs a phone number.
+    const phone = input.customer?.phone?.trim();
+    if (!order.customerId && !phone && (owedPaisa > 0 || creditTenderPaisa > 0)) {
+      throw new ReturnCaseError(
+        owedPaisa > 0
+          ? `The replacement costs ${formatBDT(fromPaisa(owedPaisa))} less — enter the customer's phone number so it can go to their store credit.`
+          : "Enter the customer's phone number to pay with their store credit.",
+      );
+    }
+    // Cash taken now needs today's drawer open. Store credit never touches it.
     const drawer = input.tenders.some((t) => t.method === "CASH") ? await lockOpenDrawerForSale(tx, ctx.cashWalletId) : null;
+
+    // An anonymous sale's customer, from the phone number given now (dedupe
+    // on phone, PRD §4.4); both orders are linked to them.
+    let customerId = order.customerId;
+    if (!customerId && phone) {
+      customerId = (await resolveCounterCustomer(tx, { user: ctx.user, canCreateCustomer: ctx.canCreateCustomer }, { phone, name: input.customer?.name }))!.id;
+      await tx.order.update({ where: { id: order.id }, data: { customerId } });
+    }
+
+    // The returned units come off the original: its total drops by exactly
+    // that value (all in this transaction — any refusal below undoes it).
+    const valuePaisa = await applyReturnedUnits(tx, order, input.lines, 1);
+    if (valuePaisa !== expectedValuePaisa) throw new ReturnCaseError("The order changed while this exchange was being made — try again.", 409);
 
     const now = new Date();
     const rc = await tx.returnCase.create({
@@ -646,6 +697,7 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
         decidedById: ctx.user.id,
         decidedAt: now,
         decisionNote: "Exchanged at the counter",
+        settlement: "STORE_CREDIT",
         completedAt: now,
         lines: { create: input.lines.map((l) => ({ orderItemId: l.orderItemId, qty: l.qty, replacementVariantId: l.replacementVariantId })) },
       },
@@ -668,7 +720,7 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
         orderNo,
         channel: "WALK_IN",
         status: "COMPLETED",
-        customerId: order.customerId,
+        customerId,
         deliveryCharge: 0,
         subtotal: round2(totals.subtotal),
         discountTotal: round2(totals.discountTotal),
@@ -704,7 +756,11 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
     await transferExchangeCredit(tx, { caseId: rc.id, original: order, replacement, valuePaisa, actorId: ctx.user.id });
 
     // The difference: paid now on the replacement…
+    if (creditTenderPaisa > 0) {
+      await spendStoreCredit(tx, { customerId: customerId!, orderId: replacement.id, amountPaisa: creditTenderPaisa, actorId: ctx.user.id, note: `Paid from store credit — counter exchange for ${order.orderNo}` });
+    }
     for (const t of input.tenders) {
+      if (t.method === "STORE_CREDIT") continue;
       const change = t.method === "CASH" && t.tendered != null ? toPaisa(t.tendered) - toPaisa(t.amount) : 0;
       await tx.payment.create({
         data: {
@@ -723,27 +779,21 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
     const replacementDue = await recomputeOrderDueAmount(tx, replacement.id);
     if (toPaisa(replacementDue) !== 0) throw new ReturnCaseError("The payments don't settle the difference.");
 
-    // …or owed back: a refund on the original, waiting for a Manager/Admin.
+    // …or owed back: straight to the customer's store credit, out of what
+    // is now overpaid on the original. No approval, no cash.
+    let creditBalance: string | null = null;
     if (owedPaisa > 0) {
-      const method = input.refundMethod ?? "CASH";
-      const walletId = method === "CASH" ? ctx.cashWalletId : await resolvePaymentWalletId(tx, method, null);
-      if (!walletId) throw new ReturnCaseError("No active wallet can pay out this refund method — pick another.");
-      await tx.payment.create({
-        data: {
-          orderId: order.id,
-          kind: "REFUND",
-          amount: -fromPaisa(owedPaisa),
-          method,
-          walletId,
-          receivedById: ctx.user.id,
-          verified: false,
-          refundReason: `Counter exchange: the replacement ${replacement.orderNo} costs ${formatBDT(fromPaisa(owedPaisa))} less`,
-          refundStatus: "PENDING",
-          returnCaseId: rc.id,
-        },
+      await issueStoreCredit(tx, {
+        customerId: customerId!,
+        orderId: order.id,
+        amountPaisa: owedPaisa,
+        returnCaseId: rc.id,
+        reason: `Counter exchange: the replacement ${replacement.orderNo} costs ${formatBDT(fromPaisa(owedPaisa))} less`,
+        actorId: ctx.user.id,
       });
-      await recomputeOrderDueAmount(tx, order.id);
+      await tx.returnCase.update({ where: { id: rc.id }, data: { owedAmount: fromPaisa(owedPaisa) } });
     }
+    if (customerId) creditBalance = await getStoreCreditBalance(tx, customerId);
 
     await writeAuditLogWith(tx, {
       actorId: ctx.user.id,
@@ -760,7 +810,10 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
         returnedValue: fromPaisa(valuePaisa),
         replacementTotal: fromPaisa(replacementTotalPaisa),
         paid: fromPaisa(extraPaisa),
-        refundRequested: fromPaisa(owedPaisa),
+        paidFromStoreCredit: fromPaisa(creditTenderPaisa),
+        storeCreditIssued: fromPaisa(owedPaisa),
+        customerId,
+        customerLinked: customerId !== order.customerId,
         drawerId: drawer?.id ?? null,
       },
     });
@@ -771,14 +824,23 @@ export async function createCounterExchange(db: Db, ctx: { user: SessionUser; ca
       replacementOrderNo: replacement.orderNo,
       paid: fromPaisa(extraPaisa),
       change: fromPaisa(settled.changePaisa),
-      refundRequested: fromPaisa(owedPaisa),
+      storeCreditIssued: fromPaisa(owedPaisa),
+      storeCreditBalance: creditBalance,
       restockedUnits: check.restockedUnits,
       writtenOffUnits: check.writtenOffUnits,
     };
   });
 }
 
-export type CounterQuote = { returnedValue: string; replacementTotal: string; toPay: string; toRefund: string };
+export type CounterQuote = {
+  returnedValue: string;
+  replacementTotal: string;
+  toPay: string;
+  /** Goes to the customer's store credit. */
+  toCredit: string;
+  /** An anonymous sale: a phone number is needed before credit can be issued. */
+  needsCustomer: boolean;
+};
 
 /**
  * The counter screen's preview: exactly what createCounterExchange would
@@ -801,7 +863,8 @@ export async function quoteCounterExchange(db: Db, input: { orderId: string; lin
       returnedValue: fromPaisa(valuePaisa),
       replacementTotal: fromPaisa(replacementPaisa),
       toPay: fromPaisa(Math.max(0, replacementPaisa - valuePaisa)),
-      toRefund: fromPaisa(Math.max(0, valuePaisa - replacementPaisa)),
+      toCredit: fromPaisa(Math.max(0, valuePaisa - replacementPaisa)),
+      needsCustomer: order.customerId === null,
     };
   });
 }

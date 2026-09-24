@@ -37,7 +37,8 @@ export async function loadReceiptOrder(db: Db, orderId: string) {
           variant: { select: { sku: true, product: { select: { name: true } }, size: { select: { name: true } }, color: { select: { name: true } } } },
         },
       },
-      payments: { where: { kind: "PAYMENT" }, orderBy: { createdAt: "asc" }, select: { method: true, amount: true, cashTendered: true, transactionId: true } },
+      // P3.2 — store credit spent at the counter prints like any payment.
+      payments: { where: { OR: [{ kind: "PAYMENT" }, { kind: "STORE_CREDIT", amount: { gt: 0 } }] }, orderBy: { createdAt: "asc" }, select: { method: true, amount: true, cashTendered: true, transactionId: true } },
     },
   });
 }

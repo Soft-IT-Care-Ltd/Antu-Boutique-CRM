@@ -18,6 +18,7 @@ import { packOrder } from "../lib/orders/pack";
 import { getPosCashWalletId } from "../lib/pos/drawer";
 import { completeConditionCheck } from "../lib/returns/condition-check";
 import { createCounterExchange, decideReturnCase, requestReturnCase } from "../lib/returns/cases";
+import { adjustStoreCredit } from "../lib/store-credit/ledger";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
 // for the same "server-only" reason as nextOrderNo below.
@@ -1505,13 +1506,49 @@ async function seedReturnsDemo() {
     ? await prisma.productVariant.findFirst({ where: { productId: item.variant.productId, id: { not: item.variantId }, isActive: true, stockQty: { gte: 2 } }, orderBy: { sku: "asc" } })
     : null;
   if (walkIn && item && swap) {
-    await createCounterExchange(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma) }, {
+    await createCounterExchange(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma), canCreateCustomer: true }, {
       orderId: walkIn.id,
       reason: "WRONG_SIZE",
       lines: [{ orderItemId: item.id, qty: 1, replacementVariantId: swap.id, goodQty: 1, damagedQty: 0 }],
       tenders: [],
     });
   }
+}
+
+// P3.2 — store credit: a walk-in swaps for something cheaper at the counter
+// (the difference goes to credit, the anonymous sale gets a phone number),
+// and the Admin adds goodwill credit for a regular. Through the real services.
+async function seedStoreCreditDemo() {
+  if ((await prisma.storeCreditEntry.count()) > 0) return;
+  const [pos, admin] = await Promise.all(["01711000007", "01711000001"].map(sessionFor));
+
+  const walkIn = await prisma.order.findFirst({
+    where: { channel: "WALK_IN", status: "COMPLETED", exchangedFromOrderId: null, returnCases: { none: {} } },
+    orderBy: { createdAt: "asc" },
+    include: { items: { include: { variant: { select: { productId: true } } } } },
+  });
+  const item = walkIn?.items.find((i) => i.returnedQty < i.qty);
+  const cheaper = item
+    ? await prisma.productVariant.findFirst({
+        where: { productId: { not: item.variant.productId }, isActive: true, priceOverride: null, stockQty: { gte: 3 }, product: { isActive: true, deletedAt: null, basePrice: { lt: item.unitPrice } } },
+        orderBy: { product: { basePrice: "asc" } },
+      })
+    : null;
+  if (walkIn && item && cheaper) {
+    await createCounterExchange(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma), canCreateCustomer: true }, {
+      orderId: walkIn.id,
+      reason: "NOT_AS_EXPECTED",
+      reasonNote: "Wanted something lighter for summer",
+      lines: [{ orderItemId: item.id, qty: 1, replacementVariantId: cheaper.id, goodQty: 1, damagedQty: 0 }],
+      tenders: [],
+      customer: walkIn.customerId ? null : { phone: "01911223344" },
+    });
+  } else {
+    console.log("Store credit counter demo skipped: no walk-in sale with a cheaper product to swap to.");
+  }
+
+  const regular = await prisma.customer.findUnique({ where: { phone: "01812345678" } });
+  if (regular) await adjustStoreCredit(prisma, { customerId: regular.id, amount: 300, reason: "Goodwill — the parcel arrived two days late", actorId: admin.id });
 }
 
 async function seedSettings() {
@@ -1546,6 +1583,7 @@ async function main() {
   await seedFinanceDemo();
   await seedPosDemo();
   await seedReturnsDemo();
+  await seedStoreCreditDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

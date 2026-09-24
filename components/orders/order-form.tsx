@@ -129,7 +129,9 @@ export function OrderForm({
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceTxnId, setAdvanceTxnId] = useState("");
   const [advanceWalletId, setAdvanceWalletId] = useState(() => walletsForMethod(wallets, "BKASH")[0]?.id ?? "");
-  const advanceWallets = walletsForMethod(wallets, advanceMethod);
+  const advanceWallets = advanceMethod === "STORE_CREDIT" ? [] : walletsForMethod(wallets, advanceMethod);
+  // P3.2 — a known phone number's store credit, usable as the advance.
+  const [credit, setCredit] = useState<{ phone: string; balance: string } | null>(null);
 
   const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
   const [persistedImages, setPersistedImages] = useState<OrderImageView[]>(order?.images ?? []);
@@ -160,6 +162,19 @@ export function OrderForm({
     }, 250);
     return () => clearTimeout(timer);
   }, [customer.phone, customer.customerId, isEdit]);
+
+  useEffect(() => {
+    if (isEdit || !isValidBdPhone(customer.phone)) return;
+    const phone = customer.phone.trim();
+    const timer = setTimeout(() => {
+      fetchJson<{ known: boolean; balance: string }>(`/api/store-credit/lookup?phone=${encodeURIComponent(phone)}`)
+        .then((d) => setCredit({ phone, balance: d.balance }))
+        .catch(() => setCredit(null));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [customer.phone, isEdit]);
+  const creditBalance = credit && credit.phone === customer.phone.trim() && isValidBdPhone(customer.phone) ? Number(credit.balance) : 0;
+  const advanceMethods: PaymentMethodValue[] = creditBalance > 0 ? [...PAYMENT_METHOD_VALUES, "STORE_CREDIT"] : [...PAYMENT_METHOD_VALUES];
 
   function selectExistingCustomer(match: CustomerListItem) {
     setCustomer({
@@ -225,10 +240,12 @@ export function OrderForm({
   const overStockRows = items.filter((i) => i.available !== null && i.qty > i.available);
   const blockedByStock = overStockRows.some((i) => !canStockOverride || !i.stockOverrideReason.trim());
 
+  const creditAdvanceInvalid = advanceEnabled && advanceMethod === "STORE_CREDIT" && (advanceAmountNum > creditBalance || advanceAmountNum > total);
   const canSubmit =
     items.length > 0 &&
     (customer.customerId || (customer.name.trim() && isValidBdPhone(customer.phone))) &&
-    !blockedByStock;
+    !blockedByStock &&
+    !creditAdvanceInvalid;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -291,7 +308,7 @@ export function OrderForm({
           method: advanceMethod,
           amount: advanceAmountNum,
           walletId: advanceWallets.some((w) => w.id === advanceWalletId) ? advanceWalletId : undefined,
-          transactionId: advanceTxnId.trim() || undefined,
+          transactionId: advanceMethod === "STORE_CREDIT" ? undefined : advanceTxnId.trim() || undefined,
         };
       }
 
@@ -343,6 +360,11 @@ export function OrderForm({
                     {[customer.addressDetail, customer.thana, customer.district, customer.division].filter(Boolean).join(", ") ||
                       "No address on file"}
                   </p>
+                  {creditBalance > 0 ? (
+                    <p className="mt-1 text-sm text-emerald-700 dark:text-emerald-400">
+                      Store credit: <b>{formatBDT(String(creditBalance))}</b> — can pay the advance below.
+                    </p>
+                  ) : null}
                 </div>
               </div>
               {!isEdit ? (
@@ -701,9 +723,10 @@ export function OrderForm({
                         <SelectValue>{(value: PaymentMethodValue) => PAYMENT_METHOD_LABELS[value]}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {PAYMENT_METHOD_VALUES.map((m) => (
+                        {advanceMethods.map((m) => (
                           <SelectItem key={m} value={m}>
                             {PAYMENT_METHOD_LABELS[m]}
+                            {m === "STORE_CREDIT" ? ` (${formatBDT(String(creditBalance))} available)` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -720,18 +743,26 @@ export function OrderForm({
                       onChange={(e) => setAdvanceAmount(e.target.value)}
                     />
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="order-advance-wallet">Received into</Label>
-                    {advanceWallets.length > 0 ? (
-                      <WalletSelect id="order-advance-wallet" wallets={advanceWallets} value={advanceWalletId} onChange={setAdvanceWalletId} />
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No active {PAYMENT_METHOD_LABELS[advanceMethod]} wallet.</p>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="order-advance-txn">Transaction ID</Label>
-                    <Input id="order-advance-txn" value={advanceTxnId} onChange={(e) => setAdvanceTxnId(e.target.value)} />
-                  </div>
+                  {advanceMethod === "STORE_CREDIT" ? (
+                    <p className={`text-xs sm:col-span-2 ${creditAdvanceInvalid ? "text-destructive" : "text-muted-foreground"}`}>
+                      Paid from the customer&apos;s store credit ({formatBDT(String(creditBalance))} available) — no money moves and nothing to verify. At most the balance or the order total.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="order-advance-wallet">Received into</Label>
+                        {advanceWallets.length > 0 ? (
+                          <WalletSelect id="order-advance-wallet" wallets={advanceWallets} value={advanceWalletId} onChange={setAdvanceWalletId} />
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No active {PAYMENT_METHOD_LABELS[advanceMethod]} wallet.</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="order-advance-txn">Transaction ID</Label>
+                        <Input id="order-advance-txn" value={advanceTxnId} onChange={(e) => setAdvanceTxnId(e.target.value)} />
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>

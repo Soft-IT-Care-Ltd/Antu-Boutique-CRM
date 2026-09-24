@@ -33,6 +33,7 @@ export const PERMISSIONS = [
   { key: "customer.create", group: "Customers", label: "Create customers" },
   { key: "customer.edit", group: "Customers", label: "Edit customers" },
   { key: "customer.delete", group: "Customers", label: "Delete customers" },
+  { key: "customer.credit.adjust", group: "Customers", label: "Adjust a customer's store credit (with a reason)" },
 
   // Orders
   { key: "order.view_own", group: "Orders", label: "View own orders" },
@@ -145,7 +146,9 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
 
   // order.courier_status_override is Admin-only: it overrides what the
   // courier reports (API down, parcel lost) and must stay rare.
-  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view", "order.courier_status_override"]),
+  // customer.credit.adjust is Admin-only too (PRD §4.11): a store credit
+  // balance changes by hand only with a reason, and only by the owner.
+  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view", "order.courier_status_override", "customer.credit.adjust"]),
 
   TEAM_LEADER: [
     "lead.view_team",

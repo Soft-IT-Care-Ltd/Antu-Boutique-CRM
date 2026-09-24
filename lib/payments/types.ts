@@ -12,7 +12,7 @@ export const REFUND_STATUS_LABELS: Record<RefundStatusValue, string> = {
   REJECTED: "Rejected",
 };
 
-export type PaymentKindValue = "PAYMENT" | "REFUND" | "EXCHANGE_CREDIT";
+export type PaymentKindValue = "PAYMENT" | "REFUND" | "EXCHANGE_CREDIT" | "STORE_CREDIT";
 
 export type PaymentListQuery = {
   view: PaymentListView;

@@ -6,7 +6,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { badRequest, idString } from "@/lib/finance/http";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
-import { POS_PAYMENT_METHODS } from "@/lib/pos/constants";
+import { POS_TENDER_METHODS } from "@/lib/pos/constants";
 import { getPosCashWalletId } from "@/lib/pos/drawer";
 import { posErrorResponse } from "@/lib/pos/http";
 import { listRecentPosSales } from "@/lib/pos/lookup";
@@ -40,7 +40,7 @@ const saleSchema = z.object({
   tenders: z
     .array(
       z.object({
-        method: z.enum(POS_PAYMENT_METHODS),
+        method: z.enum(POS_TENDER_METHODS),
         amount: z.coerce.number().positive("Each payment needs an amount").max(100_000_000),
         tendered: amount.nullish(),
         walletId: idString.nullish(),

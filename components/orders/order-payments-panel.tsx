@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, Loader2, Lock, Pencil, Plus, Trash2, Undo2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Gift, Loader2, Lock, Pencil, Plus, Trash2, Undo2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -95,6 +95,41 @@ export function OrderPaymentsPanel({
   const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<PaymentView | null>(null);
   const [rejectNote, setRejectNote] = useState("");
+  // P3.2 — the customer's store credit, to pay part of this order with it.
+  const [creditBalance, setCreditBalance] = useState<string | null>(null);
+  const [creditDialog, setCreditDialog] = useState<"use" | "giveBack" | null>(null);
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditNote, setCreditNote] = useState("");
+  const customerPhone = order.customer?.phone ?? null;
+
+  useEffect(() => {
+    if (!canCreate || !customerPhone) return;
+    let live = true;
+    fetchJson<{ known: boolean; balance: string }>(`/api/store-credit/lookup?phone=${encodeURIComponent(customerPhone)}`)
+      .then((r) => live && setCreditBalance(r.balance))
+      .catch(() => live && setCreditBalance(null));
+    return () => {
+      live = false;
+    };
+  }, [canCreate, customerPhone, order.payments.length]);
+
+  async function submitCredit() {
+    setSaving(true);
+    setError(null);
+    try {
+      const [url, body] =
+        creditDialog === "use"
+          ? [`/api/orders/${order.id}/payments`, { method: "STORE_CREDIT", amount: Number(creditAmount), note: creditNote.trim() || undefined }]
+          : [`/api/orders/${order.id}/store-credit`, { reason: creditNote.trim() }];
+      const { order: updated } = await fetchJson<{ order: OrderDetail }>(url, { method: "POST", body: JSON.stringify(body) });
+      onChange(updated);
+      setCreditDialog(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function open(mode: "new" | "refund") {
     setForm(emptyForm());
@@ -105,7 +140,7 @@ export function OrderPaymentsPanel({
   function openEdit(payment: PaymentView) {
     setForm({
       amount: payment.amount,
-      method: payment.method === "COURIER_COD" || payment.method === "EXCHANGE_CREDIT" ? "CASH" : payment.method,
+      method: payment.method === "COURIER_COD" || payment.method === "EXCHANGE_CREDIT" || payment.method === "STORE_CREDIT" ? "CASH" : payment.method,
       walletId: payment.walletId ?? "",
       transactionId: payment.transactionId ?? "",
       paidAt: toDateInputValue(payment.paidAt),
@@ -192,6 +227,23 @@ export function OrderPaymentsPanel({
               Refund
             </Button>
           ) : null}
+          {canCreate && creditBalance && Number(creditBalance) > 0 && Number(order.dueAmount) > 0 && order.status !== "CANCELLED" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-1.5 text-xs"
+              onClick={() => {
+                setCreditAmount(String(Math.min(Number(creditBalance), Number(order.dueAmount))));
+                setCreditNote("");
+                setError(null);
+                setCreditDialog("use");
+              }}
+            >
+              <Gift className="size-3.5" />
+              Use store credit ({formatBDT(creditBalance)})
+            </Button>
+          ) : null}
           {canCreate ? (
             <Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-xs" onClick={() => open("new")}>
               <Plus className="size-3.5" />
@@ -205,7 +257,9 @@ export function OrderPaymentsPanel({
 
       {order.payments.map((payment) => {
         const isRefund = payment.kind === "REFUND";
-        const locked = payment.fromCourierStatement;
+        // Exchange and store credit move no money: nothing to verify, edit or delete by hand.
+        const isCredit = payment.kind === "EXCHANGE_CREDIT" || payment.kind === "STORE_CREDIT";
+        const locked = payment.fromCourierStatement || isCredit;
         const pendingRefund = isRefund && payment.refundStatus === "PENDING";
         const canDecideThis = canDecideRefund && pendingRefund && payment.receivedBy?.id !== currentUserId;
         return (
@@ -223,6 +277,10 @@ export function OrderPaymentsPanel({
                   >
                     {REFUND_STATUS_LABELS[payment.refundStatus ?? "PENDING"]}
                   </Badge>
+                ) : isCredit ? (
+                  <Badge variant="outline" className="ml-1.5">
+                    {payment.kind === "STORE_CREDIT" ? (Number(payment.amount) > 0 ? "Spent from credit" : "To store credit") : "Moved with exchange"}
+                  </Badge>
                 ) : payment.verified ? (
                   <Badge variant="outline" className="ml-1.5 gap-1 border-emerald-600/30 text-emerald-700 dark:text-emerald-400">
                     <CheckCircle2 className="size-3" />
@@ -233,7 +291,7 @@ export function OrderPaymentsPanel({
                     Unverified
                   </Badge>
                 )}
-                {locked ? <Lock className="ml-1 inline size-3 text-muted-foreground" aria-label="From a courier statement" /> : null}
+                {payment.fromCourierStatement ? <Lock className="ml-1 inline size-3 text-muted-foreground" aria-label="From a courier statement" /> : null}
               </span>
               <div className="text-xs text-muted-foreground">
                 {formatDateTime(payment.paidAt)}
@@ -272,7 +330,23 @@ export function OrderPaymentsPanel({
                   </Button>
                 </>
               ) : null}
-              {!isRefund && canVerify && !payment.verified ? (
+              {payment.kind === "STORE_CREDIT" && Number(payment.amount) > 0 && canEdit && order.status !== "CANCELLED" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-1.5 text-xs"
+                  title="Give the credit spent on this order back to the customer"
+                  onClick={() => {
+                    setCreditNote("");
+                    setError(null);
+                    setCreditDialog("giveBack");
+                  }}
+                >
+                  Give back
+                </Button>
+              ) : null}
+              {!isRefund && !isCredit && canVerify && !payment.verified ? (
                 <Button type="button" variant="ghost" size="icon-sm" title="Verify payment" disabled={busyPaymentId === payment.id} onClick={() => verifyPayment(payment.id)}>
                   {busyPaymentId === payment.id ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
                 </Button>
@@ -306,7 +380,7 @@ export function OrderPaymentsPanel({
         );
       })}
 
-      {error && !dialog && !rejecting ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error && !dialog && !rejecting && !creditDialog ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <Dialog open={dialog !== null} onOpenChange={(o) => !o && setDialog(null)}>
         <DialogContent>
@@ -367,6 +441,40 @@ export function OrderPaymentsPanel({
             <Button onClick={submit} disabled={saving}>
               {saving ? <Loader2 className="animate-spin" /> : null}
               {dialog?.mode === "new" ? "Record payment" : isRefundDialog ? "Request refund" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={creditDialog !== null} onOpenChange={(o) => !o && setCreditDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{creditDialog === "use" ? "Pay from store credit" : "Give store credit back"}</DialogTitle>
+            <DialogDescription>
+              {creditDialog === "use"
+                ? `The customer has ${formatBDT(creditBalance ?? "0")} of store credit. No money moves — it comes off their balance and counts as paid here.`
+                : "Returns the store credit spent on this order to the customer's balance — e.g. if it was used by mistake. The order's due amount goes back up by the same."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            {creditDialog === "use" ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="credit-amount">Amount (৳)</Label>
+                <Input id="credit-amount" type="number" min={0} step="0.01" inputMode="decimal" value={creditAmount} onChange={(e) => setCreditAmount(e.target.value)} />
+                <p className="text-xs text-muted-foreground">Up to {formatBDT(String(Math.min(Number(creditBalance ?? 0), Number(order.dueAmount))))} — the balance or what&apos;s due, whichever is less.</p>
+              </div>
+            ) : null}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="credit-note">{creditDialog === "use" ? "Note" : "Why (required)"}</Label>
+              <Textarea id="credit-note" rows={2} value={creditNote} onChange={(e) => setCreditNote(e.target.value)} />
+            </div>
+          </div>
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <Button onClick={submitCredit} disabled={saving || (creditDialog === "use" ? !(Number(creditAmount) > 0) : creditNote.trim().length < 3)}>
+              {saving ? <Loader2 className="animate-spin" /> : null}
+              {creditDialog === "use" ? "Pay from credit" : "Give back"}
             </Button>
           </DialogFooter>
         </DialogContent>

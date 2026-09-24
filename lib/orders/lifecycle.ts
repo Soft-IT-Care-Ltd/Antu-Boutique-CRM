@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 
 import { releaseVariantStock, restoreVariantStockAfterPack } from "@/lib/orders/stock";
 import { openReturnInspection } from "@/lib/returns/condition-check";
+import { restoreStoreCreditForOrder } from "@/lib/store-credit/ledger";
 import { isTransitionAllowed } from "@/lib/orders/status-graph";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 
@@ -82,6 +83,9 @@ export async function moveOrderStatus(
         await releaseVariantStock(tx, item.variantId, item.qty);
       }
     }
+    // P3.2 — store credit spent on it goes back to the customer as credit
+    // (never as cash: lib/payments/refunds.ts).
+    await restoreStoreCreditForOrder(tx, { orderId: order.id, actorId: changedById, reason: `Given back — the order it paid for was cancelled${note ? `: ${note}` : ""}` });
   }
 
   await tx.orderStatusHistory.create({

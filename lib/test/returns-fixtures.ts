@@ -25,7 +25,7 @@ export async function userFor(tx: Prisma.TransactionClient, phone: string): Prom
 }
 
 let phoneSeq = 0;
-const freshPhone = () => `017${String(Date.now() % 1e6).padStart(6, "0")}${String(++phoneSeq % 100).padStart(2, "0")}`;
+export const freshPhone = () => `017${String(Date.now() % 1e6).padStart(6, "0")}${String(++phoneSeq % 100).padStart(2, "0")}`;
 
 /**
  * One product in the first three sizes of one colour (`m`, `l`, `xl` — stock
@@ -123,7 +123,7 @@ export async function runCounterExchange(tx: Prisma.TransactionClient) {
   const pos = await userFor(tx, PHONES.POS);
   const cashWallet = await tx.wallet.findFirstOrThrow({ where: { type: "CASH" } });
   // Returned value: 1,450 − 50 (half the line discount) = 1,400; replacement 2,200 → 800 to pay.
-  const result = await createCounterExchange(tx, { user: pos, cashWalletId: cashWallet.id }, {
+  const result = await createCounterExchange(tx, { user: pos, cashWalletId: cashWallet.id, canCreateCustomer: true }, {
     orderId: order.id,
     reason: "DEFECTIVE",
     lines: [{ orderItemId: order.items[0].id, qty: 1, replacementVariantId: catalog.pricier.id, goodQty: 0, damagedQty: 1 }],

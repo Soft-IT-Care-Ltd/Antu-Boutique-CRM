@@ -89,6 +89,7 @@ export function ReturnCaseCard({ returnCase: c, actions, onChanged, showOrder = 
         <span className="text-muted-foreground">Reason:</span> <b>{RETURN_REASON_LABELS[c.reason]}</b>
         {c.reasonNote ? ` — ${c.reasonNote}` : ""}
         {c.courierChargeBearer ? <span className="text-muted-foreground"> · {COURIER_CHARGE_BEARER_LABELS[c.courierChargeBearer]}</span> : null}
+        {c.mode === "ONLINE" ? <span className="text-muted-foreground"> · money back as {c.settlement === "STORE_CREDIT" ? "store credit" : "a refund"}</span> : null}
       </p>
 
       {c.replacementOrder ? (
@@ -103,6 +104,10 @@ export function ReturnCaseCard({ returnCase: c, actions, onChanged, showOrder = 
       ) : null}
       {c.status === "APPROVED" && c.mode === "ONLINE" ? <p className="text-amber-700 dark:text-amber-400">Waiting for the item to come back — Packing checks it on the Courier page, then stock moves.</p> : null}
       {Number(c.refundRequested) > 0 ? <p>Refund requested: {formatBDT(c.refundRequested)} (approved on the order&apos;s payments)</p> : null}
+      {Number(c.storeCreditIssued) > 0 ? <p>Store credit issued: {formatBDT(c.storeCreditIssued)} — on the customer&apos;s balance</p> : null}
+      {c.status === "APPROVED" && c.settlement === "STORE_CREDIT" && Number(c.owedAmount ?? 0) > 0 ? (
+        <p>{formatBDT(c.owedAmount!)} goes to the customer&apos;s store credit once the item passes its check.</p>
+      ) : null}
 
       <p className="text-xs text-muted-foreground">
         Asked by {c.requestedBy ?? "—"} · {formatDhakaDateTime(c.requestedAt)}
@@ -164,7 +169,7 @@ function CaseActionDialog({ pending, onClose, onDone }: { pending: Pending; onCl
         onDone();
         return;
       }
-      const result = await fetchJson<{ replacementOrderNo?: string | null; owedToCustomer?: string }>(`/api/returns/${c.id}/decision`, {
+      const result = await fetchJson<{ replacementOrderNo?: string | null; owedToCustomer?: string; settlement?: "REFUND" | "STORE_CREDIT" }>(`/api/returns/${c.id}/decision`, {
         method: "POST",
         body: JSON.stringify({ decision: pending.kind === "approve" ? "APPROVE" : "REJECT", note: note.trim() || null }),
       });
@@ -172,7 +177,11 @@ function CaseActionDialog({ pending, onClose, onDone }: { pending: Pending; onCl
         setDone(
           [
             result.replacementOrderNo ? `Replacement order ${result.replacementOrderNo} is confirmed and in the packing queue.` : null,
-            Number(result.owedToCustomer) > 0 ? `The customer is owed ${formatBDT(result.owedToCustomer!)} on ${c.order.orderNo} — Accounts refunds it from the order's payments.` : null,
+            Number(result.owedToCustomer) > 0
+              ? result.settlement === "STORE_CREDIT"
+                ? `${formatBDT(result.owedToCustomer!)} goes to the customer's store credit once the item is back and checked.`
+                : `The customer is owed ${formatBDT(result.owedToCustomer!)} on ${c.order.orderNo} — Accounts refunds it from the order's payments.`
+              : null,
           ]
             .filter(Boolean)
             .join(" "),

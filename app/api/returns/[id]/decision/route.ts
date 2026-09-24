@@ -29,7 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const result = await decideReturnCase(prisma, guard.user, id, parsed.data);
     if (result) await regenerateInvoices(result.totalsChanged, guard.user.id);
-    return NextResponse.json({ ok: true, ...(result ? { replacementOrderId: result.replacementOrderId, replacementOrderNo: result.replacementOrderNo, owedToCustomer: result.owedToCustomer } : {}) });
+    return NextResponse.json({ ok: true, ...(result ? { replacementOrderId: result.replacementOrderId, replacementOrderNo: result.replacementOrderNo, owedToCustomer: result.owedToCustomer, settlement: result.settlement } : {}) });
   } catch (error) {
     return returnsErrorResponse(error);
   }

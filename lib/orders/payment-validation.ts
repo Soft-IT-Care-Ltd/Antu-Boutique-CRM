@@ -36,6 +36,13 @@ export const createPaymentSchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
+// P3.2 — paying part of an order from the customer's store credit.
+export const storeCreditPaymentSchema = z.object({
+  method: z.literal("STORE_CREDIT"),
+  amount: z.coerce.number().positive("Enter an amount greater than zero").max(100_000_000),
+  note: z.string().trim().max(500).optional(),
+});
+
 // verified is deliberately absent — verification is its own sensitive
 // action gated on payment.verify, not bundled into a general-purpose edit
 // gated on payment.edit (see app/api/orders/[id]/payments/[paymentId]/verify/route.ts).

@@ -10,6 +10,7 @@ import type { OrderChannelValue, OrderStatusValue } from "@/lib/orders/constants
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { RETURNABLE_ORDER_STATUSES, type ReturnCaseModeValue, type ReturnCaseStatusValue, type ReturnCaseTypeValue, type ReturnReasonValue } from "@/lib/returns/constants";
 import type { CounterLookup, ExchangeReport, OrderReturnInfo, ReturnCaseView, ReturnableItem } from "@/lib/returns/types";
+import { getStoreCreditBalance } from "@/lib/store-credit/ledger";
 
 // Read side of PRD §4.11. Every list and detail is scoped through the
 // ORIGINAL order (CLAUDE.md rule 6): an SE sees the returns on their own
@@ -36,6 +37,7 @@ const CASE_VIEW_INCLUDE = {
     },
   },
   payments: { where: { kind: "REFUND" }, select: { amount: true, refundStatus: true } },
+  storeCreditEntries: { where: { type: "ISSUED" }, select: { amount: true } },
 } satisfies Prisma.ReturnCaseInclude;
 
 type CaseRow = Prisma.ReturnCaseGetPayload<{ include: typeof CASE_VIEW_INCLUDE }>;
@@ -88,6 +90,9 @@ function toView(r: CaseRow, user: SessionUser): ReturnCaseView {
     cancelNote: r.cancelNote,
     completedAt: r.completedAt?.toISOString() ?? null,
     refundRequested: fromPaisa(-r.payments.filter((p) => p.refundStatus !== "REJECTED").reduce((a, p) => a + toPaisa(p.amount), 0)).toString(),
+    settlement: r.settlement,
+    owedAmount: r.owedAmount?.toFixed(2) ?? null,
+    storeCreditIssued: fromPaisa(r.storeCreditEntries.reduce((a, e) => a + toPaisa(e.amount), 0)),
     isMine: r.requestedBy?.id === user.id,
   };
 }
@@ -219,7 +224,7 @@ export async function getOrderReturnInfo(db: Db, user: SessionUser, orderId: str
 export async function lookupOrderForCounter(db: Db, orderNo: string): Promise<CounterLookup | null> {
   const order = await db.order.findFirst({
     where: { orderNo: { equals: orderNo.trim(), mode: "insensitive" }, deletedAt: null },
-    select: { id: true, orderNo: true, status: true, channel: true, createdAt: true, customer: { select: { name: true } }, items: ITEMS_FOR_RETURN },
+    select: { id: true, orderNo: true, status: true, channel: true, createdAt: true, customerId: true, customer: { select: { name: true } }, items: ITEMS_FOR_RETURN },
   });
   if (!order) return null;
   return {
@@ -229,6 +234,9 @@ export async function lookupOrderForCounter(db: Db, orderNo: string): Promise<Co
     channel: order.channel as OrderChannelValue,
     soldAt: order.createdAt.toISOString(),
     customerName: order.customer?.name ?? WALK_IN_CUSTOMER_LABEL,
+    // P3.2 — store credit needs a customer; an anonymous sale asks for a phone.
+    hasCustomer: order.customerId !== null,
+    storeCredit: order.customerId ? await getStoreCreditBalance(db, order.customerId) : null,
     returnableStatus: RETURNABLE_ORDER_STATUSES.includes(order.status as OrderStatusValue),
     items: await returnableItems(db, order.id, order.items),
   };

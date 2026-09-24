@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { can } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { badRequest } from "@/lib/finance/http";
 import { getPosCashWalletId } from "@/lib/pos/drawer";
@@ -10,7 +11,8 @@ import { counterExchangeSchema } from "@/lib/returns/validation";
 
 // PRD §4.11 B — an exchange at the showroom counter: inspected, swapped and
 // settled in one transaction (lib/returns/cases.ts createCounterExchange).
-// Needs no approval; a refund for a cheaper replacement does (P2.3).
+// Needs no approval: a cheaper replacement's difference goes straight to the
+// customer's store credit — no refund, no cash out of the drawer.
 export async function POST(request: NextRequest) {
   const guard = await requirePermission(["pos.sell", "exchange.create"], "all");
   if (!guard.ok) return guard.response;
@@ -18,8 +20,8 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return badRequest(parsed.error);
 
   try {
-    const cashWalletId = await getPosCashWalletId(prisma);
-    const result = await createCounterExchange(prisma, { user: guard.user, cashWalletId }, {
+    const [cashWalletId, canCreateCustomer] = await Promise.all([getPosCashWalletId(prisma), can(guard.user, "customer.create")]);
+    const result = await createCounterExchange(prisma, { user: guard.user, cashWalletId, canCreateCustomer }, {
       ...parsed.data,
       tenders: parsed.data.tenders.map((t) => ({ ...t, transactionId: t.transactionId || null })),
     });

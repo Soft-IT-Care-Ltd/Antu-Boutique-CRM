@@ -18,7 +18,7 @@ import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
 import { CartError, priceCart, type PricedCart } from "@/lib/pos/cart";
-import type { PosPaymentMethod } from "@/lib/pos/constants";
+import type { PosTenderMethod } from "@/lib/pos/constants";
 import type { DrawerState, PosRecentSale, PosSaleResult, PosVariantHit } from "@/lib/pos/types";
 import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
 
@@ -125,7 +125,9 @@ export function PosScreen({
   const paidPaisa = tenders.reduce((a, t) => a + toPaisa(Number(t.amount) || 0), 0);
   const tendersValid = tenders.every((t) => toPaisa(Number(t.amount) || 0) > 0 && (t.method !== "CASH" || !t.tendered || toPaisa(Number(t.tendered) || 0) >= toPaisa(Number(t.amount) || 0)));
   const stockOk = lines.every((l) => l.qty <= l.available || (canSellOutOfStock && l.overrideReason.trim()));
-  const canComplete = lines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && stockOk && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
+  // Store credit belongs to a customer: it needs their phone number.
+  const creditNeedsPhone = tenders.some((t) => t.method === "STORE_CREDIT") && !customer.phone.trim();
+  const canComplete = lines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && stockOk && !creditNeedsPhone && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
 
   function addHit(hit: PosVariantHit) {
     setError(null);
@@ -157,11 +159,12 @@ export function PosScreen({
     setSelectedVariantId(hit.variantId);
   }
 
-  function addTender(method: PosPaymentMethod) {
+  function addTender(method: PosTenderMethod, capPaisa?: number) {
     const remaining = Math.max(0, totalPaisa - paidPaisa);
     if (remaining <= 0) return;
-    const wallet = walletsForMethod(wallets, method)[0];
-    setTenders((prev) => [...prev, { key: newLocalId(), method, amount: fromPaisa(remaining), tendered: "", walletId: method === "CASH" ? "" : (wallet?.id ?? ""), transactionId: "" }]);
+    const wallet = method === "STORE_CREDIT" ? undefined : walletsForMethod(wallets, method)[0];
+    const amount = capPaisa === undefined ? remaining : Math.min(remaining, capPaisa);
+    setTenders((prev) => [...prev, { key: newLocalId(), method, amount: fromPaisa(amount), tendered: "", walletId: method === "CASH" ? "" : (wallet?.id ?? ""), transactionId: "" }]);
   }
 
   function reset() {
@@ -190,7 +193,7 @@ export function PosScreen({
             method: t.method,
             amount: Number(t.amount),
             tendered: t.method === "CASH" && t.tendered ? Number(t.tendered) : null,
-            walletId: t.method === "CASH" ? null : t.walletId || null,
+            walletId: t.method === "CASH" || t.method === "STORE_CREDIT" ? null : t.walletId || null,
             transactionId: t.transactionId.trim() || null,
           })),
           note: note.trim() || null,

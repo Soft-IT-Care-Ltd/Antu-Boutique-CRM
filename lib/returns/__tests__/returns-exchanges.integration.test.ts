@@ -17,7 +17,6 @@ import { postExchangeCourierCost } from "@/lib/returns/exchange-courier-cost";
 import { listReturnCases } from "@/lib/returns/queries";
 import { deliveredOrder, PHONES, runCounterExchange, runOnlineExchange, runReturnWithDamage, scratchCatalog, userFor } from "@/lib/test/returns-fixtures";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
-import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // P3.2 — returns and exchanges (PRD §4.11). Service tests run in a
 // rolled-back transaction on antu_test.
@@ -190,7 +189,7 @@ describe("counter exchange (PRD §4.11 B)", () => {
         const replacement = await tx.order.findUniqueOrThrow({ where: { id: result.replacementOrderId }, include: { shipment: true, items: true } });
         expect(replacement).toMatchObject({ channel: "WALK_IN", status: "COMPLETED", exchangedFromOrderId: order.id, shipment: null, courierId: null });
         expect(toNumber(replacement.dueAmount)).toBe(0);
-        expect(result).toMatchObject({ paid: "800.00", refundRequested: "0.00", restockedUnits: 0, writtenOffUnits: 1 });
+        expect(result).toMatchObject({ paid: "800.00", storeCreditIssued: "0.00", restockedUnits: 0, writtenOffUnits: 1 });
         expect((await movements(tx, catalog.pricier.id)).at(-1)).toMatchObject({ type: "EXCHANGE_OUT", qty: -1 });
         expect((await movements(tx, catalog.m.id)).slice(-2).map((m) => m.type)).toEqual(["EXCHANGE_IN", "DAMAGE_OUT"]);
         expect(toNumber(replacement.items[0].unitCostSnapshot!)).toBe(900);
@@ -205,29 +204,24 @@ describe("counter exchange (PRD §4.11 B)", () => {
   );
 
   it(
-    "a cheaper replacement leaves a refund waiting for a second person's approval",
+    "a cheaper replacement goes to the customer's store credit at once — no refund, no approval, no cash",
     async () => {
       await inRolledBackTransaction(async (tx) => {
         const catalog = await scratchCatalog(tx);
         const order = await deliveredOrder(tx, catalog.m.id);
-        const [pos, manager] = await Promise.all([userFor(tx, PHONES.POS), userFor(tx, PHONES.MANAGER)]);
+        const pos = await userFor(tx, PHONES.POS);
         const cash = await tx.wallet.findFirstOrThrow({ where: { type: "CASH" } });
-        const bkash = await resolvePaymentWalletId(tx, "BKASH", null);
-        const result = await createCounterExchange(tx, { user: pos, cashWalletId: cash.id }, {
+        const result = await createCounterExchange(tx, { user: pos, cashWalletId: cash.id, canCreateCustomer: true }, {
           orderId: order.id,
           reason: "NOT_AS_EXPECTED",
           lines: [{ orderItemId: order.items[0].id, qty: 1, replacementVariantId: catalog.cheaper.id, goodQty: 1, damagedQty: 0 }],
           tenders: [],
-          refundMethod: "BKASH",
         });
-        // Returned 1,350; replacement 900 → 450 back, pending approval.
-        expect(result.refundRequested).toBe("450.00");
-        const refund = await tx.payment.findFirstOrThrow({ where: { returnCaseId: result.caseId, kind: "REFUND" } });
-        expect(refund).toMatchObject({ refundStatus: "PENDING", walletId: bkash, orderId: order.id });
-        expect(toNumber(refund.amount)).toBe(-450);
-        await expect(decideRefund(tx, refund.id, { decision: "APPROVE" }, pos.id)).rejects.toThrow(/someone other than who requested/);
-        await decideRefund(tx, refund.id, { decision: "APPROVE" }, manager.id);
+        // Returned 1,350; replacement 900 → 450 to store credit.
+        expect(result).toMatchObject({ storeCreditIssued: "450.00", storeCreditBalance: "450.00" });
+        expect(await tx.payment.count({ where: { returnCaseId: result.caseId, kind: "REFUND" } })).toBe(0);
         expect(toNumber((await tx.order.findUniqueOrThrow({ where: { id: order.id } })).dueAmount)).toBe(0);
+        expect((await tx.returnCase.findUniqueOrThrow({ where: { id: result.caseId } })).settlement).toBe("STORE_CREDIT");
       });
     },
     TIMEOUT,

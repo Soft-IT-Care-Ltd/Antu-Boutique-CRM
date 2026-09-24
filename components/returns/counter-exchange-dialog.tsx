@@ -13,18 +13,30 @@ import { ReplacementPicker, type Replacement } from "@/components/returns/replac
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
-import { POS_PAYMENT_METHODS, type PosPaymentMethod } from "@/lib/pos/constants";
+import { isValidBdPhone } from "@/lib/customers/phone";
+import { POS_PAYMENT_METHODS, type PosTenderMethod } from "@/lib/pos/constants";
 import { RETURN_REASON_LABELS, RETURN_REASON_VALUES, type ReturnReasonValue } from "@/lib/returns/constants";
 import type { CounterLookup } from "@/lib/returns/types";
 
-type Quote = { returnedValue: string; replacementTotal: string; toPay: string; toRefund: string };
-type Result = { replacementOrderId: string; replacementOrderNo: string; paid: string; change: string; refundRequested: string; restockedUnits: number; writtenOffUnits: number };
+type Quote = { returnedValue: string; replacementTotal: string; toPay: string; toCredit: string; needsCustomer: boolean };
+type Result = {
+  replacementOrderId: string;
+  replacementOrderNo: string;
+  paid: string;
+  change: string;
+  storeCreditIssued: string;
+  storeCreditBalance: string | null;
+  restockedUnits: number;
+  writtenOffUnits: number;
+};
 type Line = { qty: string; damaged: string; replacement: Replacement | null };
 
 // PRD §4.11 B — the customer is at the counter with the item. Find the sale
 // on their receipt, swap the size/colour, check the item on the spot, settle
-// the difference. Stock moves both ways in one go; no courier, no approval
-// (a refund for a cheaper replacement still needs a Manager/Admin).
+// the difference. Stock moves both ways in one go; no courier, no approval.
+// A cheaper replacement's difference goes to the customer's store credit at
+// once — they've left by the time anyone could approve a refund, and no cash
+// leaves the drawer. An anonymous sale needs a phone number for that.
 export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { initialOrderNo?: string; onClose: () => void; onDone?: () => void }) {
   const [orderNo, setOrderNo] = useState(initialOrderNo ?? "");
   const [order, setOrder] = useState<CounterLookup | null>(null);
@@ -34,10 +46,11 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
   const [reasonNote, setReasonNote] = useState("");
   // Keyed by the lines it priced, so a stale quote is never shown for changed lines.
   const [quoted, setQuoted] = useState<{ key: string; quote: Quote | null; error: string | null } | null>(null);
-  const [payMethod, setPayMethod] = useState<PosPaymentMethod>("CASH");
+  const [payMethod, setPayMethod] = useState<PosTenderMethod>("CASH");
   const [tendered, setTendered] = useState("");
   const [trxId, setTrxId] = useState("");
-  const [refundMethod, setRefundMethod] = useState<PosPaymentMethod>("CASH");
+  const [phone, setPhone] = useState("");
+  const [customerName, setCustomerName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -93,9 +106,14 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
   const quote = quoted && quoted.key === quoteKey ? quoted.quote : null;
   const quoteError = quoted && quoted.key === quoteKey ? quoted.error : null;
   const toPay = Number(quote?.toPay ?? 0);
-  const toRefund = Number(quote?.toRefund ?? 0);
-  const tenderInvalid = toPay > 0 && ((payMethod === "CASH" && tendered !== "" && Number(tendered) < toPay) || ((payMethod === "BKASH" || payMethod === "NAGAD") && !trxId.trim()));
-  const invalid = !linesValid || !quote || !reason || (reason === "OTHER" && !reasonNote.trim()) || tenderInvalid;
+  const toCredit = Number(quote?.toCredit ?? 0);
+  // Store credit pays the difference only when the customer has enough.
+  const creditAvailable = order?.hasCustomer ? Number(order.storeCredit ?? 0) : 0;
+  const payMethods = creditAvailable >= toPay && toPay > 0 ? [...POS_PAYMENT_METHODS, "STORE_CREDIT" as const] : POS_PAYMENT_METHODS;
+  const tenderInvalid = toPay > 0 && ((payMethod === "CASH" && tendered !== "" && Number(tendered) < toPay) || ((payMethod === "BKASH" || payMethod === "NAGAD") && !trxId.trim()) || (payMethod === "STORE_CREDIT" && creditAvailable < toPay));
+  const needsPhone = toCredit > 0 && order !== null && !order.hasCustomer;
+  const phoneInvalid = needsPhone && !isValidBdPhone(phone);
+  const invalid = !linesValid || !quote || !reason || (reason === "OTHER" && !reasonNote.trim()) || tenderInvalid || phoneInvalid;
 
   async function submit() {
     if (!order) return;
@@ -113,7 +131,7 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
             return { orderItemId: i.orderItemId, qty: Number(l.qty), replacementVariantId: l.replacement!.variantId, goodQty: Number(l.qty) - Number(l.damaged), damagedQty: Number(l.damaged) };
           }),
           tenders: toPay > 0 ? [{ method: payMethod, amount: toPay, tendered: payMethod === "CASH" && tendered ? Number(tendered) : null, transactionId: trxId.trim() || null }] : [],
-          refundMethod: toRefund > 0 ? refundMethod : null,
+          customer: needsPhone ? { phone: phone.trim(), name: customerName.trim() || null } : null,
         }),
       });
       setResult(r);
@@ -153,9 +171,10 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
                 ) : null}
               </p>
             ) : null}
-            {Number(result.refundRequested) > 0 ? (
+            {Number(result.storeCreditIssued) > 0 ? (
               <p className="text-base">
-                Refund of <b>{formatBDT(result.refundRequested)}</b> sent for a Manager&apos;s approval — pay it out once approved.
+                <b>{formatBDT(result.storeCreditIssued)}</b> added to the customer&apos;s store credit — no cash back.
+                {result.storeCreditBalance ? ` They now have ${formatBDT(result.storeCreditBalance)} to spend.` : ""}
               </p>
             ) : null}
           </div>
@@ -180,6 +199,7 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
           <div className="flex flex-col gap-4 text-sm">
             <p>
               <b className="font-mono">{order.orderNo}</b> · {order.customerName} · {order.channel === "WALK_IN" ? "Walk-in" : "Online"} sale
+              {order.storeCredit && Number(order.storeCredit) > 0 ? <span className="text-muted-foreground"> · store credit {formatBDT(order.storeCredit)}</span> : null}
               {!order.returnableStatus ? <span className="text-destructive"> — this order isn&apos;t with the customer yet, so it can&apos;t be exchanged.</span> : null}
             </p>
             {order.items.filter((i) => i.returnable > 0).length === 0 ? <p className="text-muted-foreground">Nothing on this order can be exchanged — it&apos;s all been returned already.</p> : null}
@@ -247,20 +267,27 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
               <div className="flex flex-col gap-3 rounded-md bg-muted/50 p-3">
                 <p>
                   Coming back {formatBDT(quote.returnedValue)} · going out {formatBDT(quote.replacementTotal)} →{" "}
-                  {toPay > 0 ? <b className="text-base">customer pays {formatBDT(toPay)}</b> : toRefund > 0 ? <b className="text-base">customer is owed {formatBDT(toRefund)}</b> : <b>no difference</b>}
+                  {toPay > 0 ? (
+                    <b className="text-base">customer pays {formatBDT(toPay)}</b>
+                  ) : toCredit > 0 ? (
+                    <b className="text-base">{formatBDT(toCredit)} goes to their store credit</b>
+                  ) : (
+                    <b>no difference</b>
+                  )}
                 </p>
                 {toPay > 0 ? (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="flex flex-col gap-1.5">
                       <Label>Paid by</Label>
-                      <Select value={payMethod} onValueChange={(v) => setPayMethod(v as PosPaymentMethod)}>
+                      <Select value={payMethod} onValueChange={(v) => setPayMethod(v as PosTenderMethod)}>
                         <SelectTrigger className="h-10">
-                          <SelectValue>{(v: string) => PAYMENT_METHOD_LABELS[v as PosPaymentMethod]}</SelectValue>
+                          <SelectValue>{(v: string) => PAYMENT_METHOD_LABELS[v as PosTenderMethod]}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {POS_PAYMENT_METHODS.map((m) => (
+                          {payMethods.map((m) => (
                             <SelectItem key={m} value={m}>
                               {PAYMENT_METHOD_LABELS[m]}
+                              {m === "STORE_CREDIT" ? ` (${formatBDT(String(creditAvailable))})` : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -279,22 +306,24 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
                     ) : null}
                   </div>
                 ) : null}
-                {toRefund > 0 ? (
-                  <div className="flex flex-col gap-1.5">
-                    <Label>Refund by</Label>
-                    <Select value={refundMethod} onValueChange={(v) => setRefundMethod(v as PosPaymentMethod)}>
-                      <SelectTrigger className="h-10 sm:w-56">
-                        <SelectValue>{(v: string) => PAYMENT_METHOD_LABELS[v as PosPaymentMethod]}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {POS_PAYMENT_METHODS.map((m) => (
-                          <SelectItem key={m} value={m}>
-                            {PAYMENT_METHOD_LABELS[m]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">The refund waits for a Manager or Admin to approve it — every refund needs a second person.</p>
+                {toCredit > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      Credited now, no approval and no cash from the drawer. The customer spends it on a later purchase, here or online, by giving their phone number.
+                    </p>
+                    {needsPhone ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1.5">
+                          <Label htmlFor="cx-phone">Customer&apos;s phone (needed for store credit)</Label>
+                          <Input id="cx-phone" type="tel" inputMode="tel" className="h-10" placeholder="01XXXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                          {phone && phoneInvalid ? <p className="text-xs text-destructive">Enter a valid Bangladeshi mobile number.</p> : null}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <Label htmlFor="cx-name">Name (optional)</Label>
+                          <Input id="cx-name" className="h-10" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

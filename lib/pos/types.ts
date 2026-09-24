@@ -1,5 +1,5 @@
 import type { OrderChannelValue } from "@/lib/orders/constants";
-import type { Denominations, PosPaymentMethod } from "@/lib/pos/constants";
+import type { Denominations, PosTenderMethod } from "@/lib/pos/constants";
 
 // Client-side shapes mirroring what /api/pos/* returns. Money is "123.45".
 // Nothing here carries cost — the POS screens show selling prices only.
@@ -107,6 +107,6 @@ export type PosRecentSale = {
   createdAt: string;
   customerName: string | null;
   itemCount: number;
-  methods: PosPaymentMethod[];
+  methods: PosTenderMethod[];
   hasInvoice: boolean;
 };

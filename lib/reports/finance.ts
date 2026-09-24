@@ -8,6 +8,7 @@ import type { Db } from "@/lib/db/tx";
 import type { ExpenseKindValue, ExpenseNatureValue } from "@/lib/expenses/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import type { OrderChannelValue, PaymentMethodValue } from "@/lib/orders/constants";
+import { getStoreCreditPosition, type StoreCreditPosition } from "@/lib/store-credit/ledger";
 
 // P2.3 collection report and expense report, for a Dhaka date range
 // [from, to). Money is summed in paisa and returned as "123.45" strings.
@@ -35,6 +36,13 @@ export type CollectionReport = {
   byStaff: { name: string; count: number; collected: string }[];
   /** P3.1 — Online vs Walk-in (PRD §4.15 R14). */
   byChannel: { channel: OrderChannelValue; count: number; collected: string; refunds: string; net: string }[];
+  /**
+   * P3.2 — store credit is a liability, not money collected: it moves no
+   * cash, so none of the figures above include it. `outstanding` is what the
+   * shop owed customers at the end of the period (whole shop — credit isn't
+   * tied to one channel or executive).
+   */
+  storeCredit: StoreCreditPosition;
 };
 
 export async function getCollectionReport(db: Db, user: SessionUser, from: Date, to: Date, channel?: OrderChannelValue): Promise<CollectionReport> {
@@ -109,6 +117,7 @@ export async function getCollectionReport(db: Db, user: SessionUser, from: Date,
   }
 
   const days = [...new Set([...dayIn.keys(), ...dayOut.keys()])].sort();
+  const storeCredit = await getStoreCreditPosition(db, from, to);
   return {
     from: from.toISOString(),
     to: to.toISOString(),
@@ -136,6 +145,7 @@ export async function getCollectionReport(db: Db, user: SessionUser, from: Date,
     }),
     byStaff: [...staff.entries()].map(([name, v]) => ({ name, count: v.count, collected: fromPaisa(v.paisa) })).sort((a, b) => Number(b.collected) - Number(a.collected)),
     byChannel: [...byChannel.entries()].map(([ch, v]) => ({ channel: ch, count: v.count, collected: fromPaisa(v.in), refunds: fromPaisa(v.out), net: fromPaisa(v.in - v.out) })),
+    storeCredit,
   };
 }
 

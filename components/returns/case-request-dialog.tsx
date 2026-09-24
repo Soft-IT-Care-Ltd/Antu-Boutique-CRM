@@ -19,6 +19,7 @@ import {
   type CourierChargeBearerValue,
   type ReturnReasonValue,
 } from "@/lib/returns/constants";
+import { RETURN_SETTLEMENT_LABELS, RETURN_SETTLEMENT_VALUES, type ReturnSettlementValue } from "@/lib/store-credit/constants";
 import type { ReturnableItem } from "@/lib/returns/types";
 
 // PRD §4.11 — asking for a return or an exchange on an order the customer
@@ -45,6 +46,7 @@ export function CaseRequestDialog({
   const [reason, setReason] = useState<ReturnReasonValue | "">("");
   const [reasonNote, setReasonNote] = useState("");
   const [bearer, setBearer] = useState<CourierChargeBearerValue>("CUSTOMER");
+  const [settlement, setSettlement] = useState<ReturnSettlementValue>("REFUND");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +70,7 @@ export function CaseRequestDialog({
           reason,
           reasonNote: reasonNote.trim() || null,
           courierChargeBearer: type === "EXCHANGE" ? bearer : null,
+          settlement,
           lines: chosen.map((i) => ({ orderItemId: i.orderItemId, qty: Number(qty[i.orderItemId]), replacementVariantId: type === "EXCHANGE" ? replacements[i.orderItemId]!.variantId : null })),
         }),
       });
@@ -163,6 +166,26 @@ export function CaseRequestDialog({
                 </Select>
               </div>
             ) : null}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>{type === "EXCHANGE" ? "If the replacement costs less, the difference goes back as" : "Money goes back as"}</Label>
+            <Select value={settlement} onValueChange={(v) => setSettlement(v as ReturnSettlementValue)}>
+              <SelectTrigger className="h-9 w-full sm:w-72">
+                <SelectValue>{(v: string) => RETURN_SETTLEMENT_LABELS[v as ReturnSettlementValue]}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {RETURN_SETTLEMENT_VALUES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {RETURN_SETTLEMENT_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {settlement === "STORE_CREDIT"
+                ? "Credited to the customer's store credit once the item is back and checked — no cash goes out, no refund approval."
+                : "Accounts requests the refund from the order's payments; a Manager or Admin approves it."}
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="rq-note">{reason === "OTHER" ? "What happened" : "Note (optional)"}</Label>

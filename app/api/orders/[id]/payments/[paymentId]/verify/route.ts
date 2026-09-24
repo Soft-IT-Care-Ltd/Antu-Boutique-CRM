@@ -27,6 +27,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!payment) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   if (payment.kind === "REFUND") return NextResponse.json({ error: "Refunds are approved, not verified." }, { status: 409 });
   if (payment.kind === "EXCHANGE_CREDIT") return NextResponse.json({ error: "Exchange credit moves no money — there's nothing to verify." }, { status: 409 });
+  if (payment.kind === "STORE_CREDIT") return NextResponse.json({ error: "Store credit moves no money — there's nothing to verify." }, { status: 409 });
 
   const parsed = verifySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {

@@ -14,9 +14,10 @@ import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
 import { formatBDT, toNumber } from "@/lib/money";
 import { CartError, priceCart, settleTenders } from "@/lib/pos/cart";
-import type { PosPaymentMethod } from "@/lib/pos/constants";
+import type { PosTenderMethod } from "@/lib/pos/constants";
 import { lockOpenDrawerForSale } from "@/lib/pos/drawer";
 import type { PosSaleResult } from "@/lib/pos/types";
+import { spendStoreCredit } from "@/lib/store-credit/ledger";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // PRD §4.7 — a showroom sale, start to finish, in ONE transaction:
@@ -31,6 +32,8 @@ import { resolvePaymentWalletId } from "@/lib/wallets/service";
 //     and wallets tables as online ones, due_amount recomputed (rule 1)
 //   - cash goes into today's open drawer (Showroom Cash); the day-end count
 //     verifies it. Card, bKash and Nagad wait in the Accounts queue.
+//   - P3.2: store credit pays from the customer's ledger — it needs their
+//     phone number, moves no money and never touches the drawer.
 
 export class PosSaleError extends Error {
   constructor(
@@ -43,7 +46,7 @@ export class PosSaleError extends Error {
 
 export type PosSaleItemInput = { variantId: string; qty: number; unitPrice: number; lineDiscount: number; stockOverrideReason?: string | null };
 
-export type PosTenderInput = { method: PosPaymentMethod; amount: number; tendered?: number | null; walletId?: string | null; transactionId?: string | null };
+export type PosTenderInput = { method: PosTenderMethod; amount: number; tendered?: number | null; walletId?: string | null; transactionId?: string | null };
 
 export type PosSaleInput = {
   items: PosSaleItemInput[];
@@ -62,7 +65,16 @@ export type PosContext = {
   canCreateCustomer: boolean;
 };
 
-async function resolveCustomer(tx: Prisma.TransactionClient, ctx: PosContext, input: PosSaleInput["customer"]): Promise<{ id: string; name: string } | null> {
+/**
+ * The customer behind a phone number typed at the counter: the existing
+ * record (dedupe on phone), or a new one. Null when no number was given.
+ * Shared by the POS sale and the counter exchange (P3.2 store credit).
+ */
+export async function resolveCounterCustomer(
+  tx: Prisma.TransactionClient,
+  ctx: Pick<PosContext, "user" | "canCreateCustomer">,
+  input: PosSaleInput["customer"],
+): Promise<{ id: string; name: string } | null> {
   const phone = input?.phone?.trim();
   if (!phone) return null;
   if (!isValidBdPhone(phone)) throw new PosSaleError("Enter a valid Bangladeshi phone number (e.g. 017XXXXXXXX), or leave it blank for an anonymous sale.");
@@ -103,6 +115,8 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
   if (settled.remainingPaisa > 0) throw new PosSaleError(`${formatBDT(fromPaisa(settled.remainingPaisa))} still to pay.`);
   if (settled.remainingPaisa < 0) throw new PosSaleError(`The payments are ${formatBDT(fromPaisa(-settled.remainingPaisa))} more than the total — give the extra back as change.`);
   const takesCash = input.tenders.some((t) => t.method === "CASH");
+  const creditPaisa = input.tenders.filter((t) => t.method === "STORE_CREDIT").reduce((sum, t) => sum + toPaisa(t.amount), 0);
+  if (creditPaisa > 0 && !input.customer?.phone?.trim()) throw new PosSaleError("Enter the customer's phone number to pay with their store credit.");
 
   return withTx(db, async (tx) => {
     // Cash needs today's drawer open — and holds it (FOR SHARE) so a close
@@ -143,7 +157,7 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       }
     }
 
-    const customer = await resolveCustomer(tx, ctx, input.customer);
+    const customer = await resolveCounterCustomer(tx, ctx, input.customer);
     const orderNo = await generateOrderNumber(tx);
     const order = await tx.order.create({
       data: {
@@ -195,7 +209,12 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     }
 
     const tenderAudit: unknown[] = [];
+    if (creditPaisa > 0) {
+      const spent = await spendStoreCredit(tx, { customerId: customer!.id, orderId: order.id, amountPaisa: creditPaisa, actorId: ctx.user.id, note: "Paid from store credit at the counter" });
+      tenderAudit.push({ paymentId: spent.paymentId, method: "STORE_CREDIT", amount: fromPaisa(creditPaisa), storeCreditEntryId: spent.entryId });
+    }
     for (const t of input.tenders) {
+      if (t.method === "STORE_CREDIT") continue;
       const change = t.method === "CASH" && t.tendered != null ? toPaisa(t.tendered) - toPaisa(t.amount) : 0;
       const payment = await tx.payment.create({
         data: {

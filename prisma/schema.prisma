@@ -85,6 +85,9 @@ enum PaymentMethod {
   // P3.2 — no money moves: the value of items returned in an exchange,
   // carried from the original order to its replacement (kind EXCHANGE_CREDIT).
   EXCHANGE_CREDIT
+  // P3.2 — the customer's store credit (kind STORE_CREDIT): spent on an
+  // order, or issued from one. No wallet — the money is already in the shop.
+  STORE_CREDIT
 }
 
 // PRD §4.6 edit window: PENDING until a TL/Admin acts on it, then terminal.
@@ -209,6 +212,7 @@ model User {
   requestedReturnCases      ReturnCase[]             @relation("ReturnCaseRequestedBy")
   decidedReturnCases        ReturnCase[]             @relation("ReturnCaseDecidedBy")
   cancelledReturnCases      ReturnCase[]             @relation("ReturnCaseCancelledBy")
+  storeCreditEntries        StoreCreditEntry[]       @relation("StoreCreditEntryCreatedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -380,7 +384,10 @@ model Customer {
   teamId      String?
   team        Team?   @relation("CustomerTeam", fields: [teamId], references: [id])
 
-  orders Order[]
+  orders             Order[]
+  // P3.2 — store credit. The balance is never stored: it is derived from
+  // these rows (lib/store-credit/ledger.ts).
+  storeCreditEntries StoreCreditEntry[]
 
   // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
   // query via `deletedAt: null`; purged by the trash cron after 30 days.
@@ -513,17 +520,18 @@ model Order {
   exchangedFrom        Order?  @relation("OrderExchange", fields: [exchangedFromOrderId], references: [id], onDelete: Restrict)
   exchangeOrders       Order[] @relation("OrderExchange")
 
-  items             OrderItem[]
-  images            OrderImage[]
-  payments          Payment[]
-  statusHistory     OrderStatusHistory[]
-  editRequests      OrderEditRequest[]
-  invoices          Invoice[]
-  shipment          Shipment?
-  returnInspections ReturnInspection[]
-  statementLines    CourierStatementLine[]
-  returnCases       ReturnCase[]           @relation("ReturnCaseOrder")
-  replacementFor    ReturnCase?            @relation("ReturnCaseReplacement")
+  items              OrderItem[]
+  images             OrderImage[]
+  payments           Payment[]
+  statusHistory      OrderStatusHistory[]
+  editRequests       OrderEditRequest[]
+  invoices           Invoice[]
+  shipment           Shipment?
+  returnInspections  ReturnInspection[]
+  statementLines     CourierStatementLine[]
+  returnCases        ReturnCase[]           @relation("ReturnCaseOrder")
+  storeCreditEntries StoreCreditEntry[]
+  replacementFor     ReturnCase?            @relation("ReturnCaseReplacement")
 
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
@@ -669,6 +677,9 @@ model Payment {
   // refund a counter exchange requested for the difference.
   returnCaseId String?
   returnCase   ReturnCase? @relation(fields: [returnCaseId], references: [id], onDelete: Restrict)
+
+  // P3.2 — the ledger row a STORE_CREDIT payment wrote (and only those).
+  storeCreditEntry StoreCreditEntry?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -992,6 +1003,11 @@ enum PaymentKind {
   // P3.2 — exchange credit moved between two orders (method EXCHANGE_CREDIT,
   // no wallet): negative on the original, positive on the replacement.
   EXCHANGE_CREDIT
+  // P3.2 — store credit (method STORE_CREDIT, no wallet). Positive: credit
+  // spent on this order. Negative: credit issued to the customer out of
+  // what they overpaid here, or given back when the order it paid for was
+  // cancelled. Every row has exactly one store_credit_entries row.
+  STORE_CREDIT
 }
 
 enum RefundStatus {
@@ -1614,6 +1630,14 @@ model ReturnCase {
   reasonNote          String?
   // Online exchanges only (DB CHECK): who pays the replacement's courier.
   courierChargeBearer CourierChargeBearer?
+  // What the customer is owed back goes as a refund (P2.3 approval flow) or
+  // as store credit, issued once the item is back and checked. A counter
+  // exchange is always STORE_CREDIT: the customer has left by then.
+  settlement          ReturnSettlement     @default(REFUND)
+  // Set on approval: what the case left owed to the customer on the
+  // original order (returned value less exchange credit carried to the
+  // replacement). Caps the store credit issued when the case completes.
+  owedAmount          Decimal?             @db.Decimal(12, 2)
 
   // The original order's status before approval moved it (to RETURNED or
   // EXCHANGE_REQUESTED) — where cancelling puts it back.
@@ -1637,7 +1661,8 @@ model ReturnCase {
 
   lines              ReturnCaseLine[]
   payments           Payment[]
-  courierCostExpense Expense?         @relation("ExchangeCourierCostExpense")
+  courierCostExpense Expense?           @relation("ExchangeCourierCostExpense")
+  storeCreditEntries StoreCreditEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1664,4 +1689,57 @@ model ReturnCaseLine {
   @@unique([caseId, orderItemId])
   @@index([replacementVariantId])
   @@map("return_case_lines")
+}
+
+// ============ Store credit (P3.2) ============
+// PRD §4.11 / §4.12. What the shop owes a customer, to spend on a later
+// order. A liability: issuing it is not income or expense, and it becomes
+// revenue only when spent (as part of that order's total).
+
+enum ReturnSettlement {
+  REFUND
+  STORE_CREDIT
+}
+
+enum StoreCreditEntryType {
+  // Credited out of an order the customer overpaid (an exchange for
+  // something cheaper, a return settled as credit).
+  ISSUED
+  // Spent on an order.
+  USED
+  // Given back: the order it was spent on was cancelled, or the use undone.
+  RESTORED
+  // Admin correction, reason required.
+  ADJUSTED
+}
+
+model StoreCreditEntry {
+  id         String               @id @default(cuid())
+  customerId String
+  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  type       StoreCreditEntryType
+  // + adds to the balance, − takes from it (DB CHECK by type).
+  amount     Decimal              @db.Decimal(12, 2)
+  // Credit added while an expiry was set (Settings) lapses at this moment;
+  // null = never. Only on rows that add credit (DB CHECK).
+  expiresAt  DateTime?
+
+  // Every row but an adjustment moves credit through an order, as exactly
+  // one STORE_CREDIT payment row on it (DB CHECK).
+  orderId      String?
+  order        Order?      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentId    String?     @unique
+  payment      Payment?    @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  returnCaseId String?
+  returnCase   ReturnCase? @relation(fields: [returnCaseId], references: [id], onDelete: Restrict)
+
+  reason      String?
+  createdById String?
+  createdBy   User?    @relation("StoreCreditEntryCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([createdAt])
+  @@index([orderId])
+  @@map("store_credit_entries")
 }
