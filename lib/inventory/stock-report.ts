@@ -44,7 +44,9 @@ type RawRow = {
 };
 
 const AVAILABLE = Prisma.sql`(v."stockQty" - v."reservedQty")`;
-const THRESHOLD = Prisma.sql`COALESCE(v."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})`;
+// ::int — a bound JS number arrives as bigint, and COALESCE would then hand
+// back a BigInt that JSON can't carry (every stock route 500'd on it).
+const THRESHOLD = Prisma.sql`COALESCE(v."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD}::int)`;
 
 function whereClause(query: Pick<StockReportQuery, "q" | "categoryId" | "status">): Prisma.Sql {
   // An inactive variant still shows while it physically holds stock —
@@ -155,7 +157,7 @@ export async function getLowStockAlerts(): Promise<LowStockProductAlert[]> {
       AND p."id" IN (
         SELECT v2."productId" FROM "product_variants" v2
         WHERE v2."isActive" = true
-          AND (v2."stockQty" - v2."reservedQty") <= COALESCE(v2."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})
+          AND (v2."stockQty" - v2."reservedQty") <= COALESCE(v2."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD}::int)
       )
     ORDER BY p."name" ASC, s."sortOrder" ASC, c."sortOrder" ASC
   `;
