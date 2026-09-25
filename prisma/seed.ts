@@ -1,4 +1,4 @@
-import { PrismaClient, type RoleName } from "@prisma/client";
+import { PrismaClient, type OrderStatus as OrderStatusName, type RoleName } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { PERMISSIONS, ROLE_TEMPLATES } from "../lib/auth/permission-definitions";
@@ -26,6 +26,10 @@ import { computeOrderTotals } from "../lib/orders/totals";
 import { generateOrderNumber } from "../lib/orders/order-number";
 import { resolveSetLines, writeSetLines } from "../lib/sets/order-lines";
 import { saveSet } from "../lib/sets/service";
+import { DEFAULT_OFFICE_HOURS, OFFICE_HOURS_SETTING_KEY } from "../lib/attendance/office-hours";
+import { attendanceStatus, dayKind } from "../lib/attendance/rules";
+import { dhakaDayStart, dhakaMonth, dhakaToday, shiftMonth } from "../lib/targets/month";
+import { statsByTeam, statsByUser } from "../lib/targets/performance";
 
 // Mirrors lib/settings/get.ts's ORDER_EDIT_WINDOW_SETTING_KEY — duplicated
 // for the same "server-only" reason as nextOrderNo below.
@@ -106,6 +110,9 @@ const DEMO_USERS: SeedUser[] = [
   { name: "Demo Packing Staff", phone: "01711000005", email: "packing@antuboutique.com", role: "PACKING" },
   { name: "Demo Accounts Staff", phone: "01711000006", email: "accounts@antuboutique.com", role: "ACCOUNTS" },
   { name: "Demo POS Operator", phone: "01711000007", email: "pos@antuboutique.com", role: "POS_OPERATOR" },
+  // P4.2 — two more executives so the leaderboard has a race to show.
+  { name: "Rima Akter", phone: "01711000008", email: "rima@antuboutique.com", role: "SALES_EXECUTIVE" },
+  { name: "Sumaiya Khan", phone: "01711000009", email: "sumaiya@antuboutique.com", role: "SALES_EXECUTIVE" },
 ];
 
 async function seedPermissionsAndRoles() {
@@ -1416,9 +1423,23 @@ async function variantPairs(minAvailable: number) {
   );
 }
 
-/** A delivered online order sold by the demo SE, paid in full by bKash (verified), packed and walked through the courier statuses. */
-async function seedDeliveredOrder(customerPhone: string, variantId: string, qty: number, unitPrice: number, daysAgo: number): Promise<{ id: string; itemId: string }> {
-  const [se, packer, accounts] = await Promise.all([sessionFor("01711000004"), sessionFor("01711000005"), sessionFor("01711000006")]);
+type DemoOrderEnd = "CONFIRMED" | "IN_TRANSIT" | "DELIVERED" | "RETURNED";
+
+/**
+ * A delivered online order sold by the demo SE, paid in full by bKash (verified), packed and walked through the courier statuses.
+ * P4.2: `opts` sells it as someone else and/or stops it earlier — still CONFIRMED, on the way, or refused at the door
+ * (RETURNED from the courier: cash on delivery, so nothing was paid, and the return waits for Packing's check).
+ */
+async function seedDeliveredOrder(
+  customerPhone: string,
+  variantId: string,
+  qty: number,
+  unitPrice: number,
+  daysAgo: number,
+  opts: { sellerPhone?: string; end?: DemoOrderEnd } = {},
+): Promise<{ id: string; itemId: string }> {
+  const end = opts.end ?? "DELIVERED";
+  const [se, packer, accounts] = await Promise.all([sessionFor(opts.sellerPhone ?? "01711000004"), sessionFor("01711000005"), sessionFor("01711000006")]);
   const customer = await prisma.customer.findUniqueOrThrow({ where: { phone: customerPhone } });
   const bkash = await prisma.wallet.findFirstOrThrow({ where: { type: "BKASH", isActive: true }, orderBy: { sortOrder: "asc" } });
   const at = new Date(Date.now() - daysAgo * 86_400_000);
@@ -1433,7 +1454,7 @@ async function seedDeliveredOrder(customerPhone: string, variantId: string, qty:
           customerId: customer.id,
           subtotal: total,
           total,
-          dueAmount: 0,
+          dueAmount: end === "RETURNED" ? total : 0,
           createdById: se.id,
           teamId: se.teamId,
           createdAt: at,
@@ -1443,12 +1464,16 @@ async function seedDeliveredOrder(customerPhone: string, variantId: string, qty:
       });
       await tx.productVariant.update({ where: { id: variantId }, data: { reservedQty: { increment: qty } } });
       await tx.orderStatusHistory.create({ data: { orderId: order.id, toStatus: "CONFIRMED", changedById: se.id, createdAt: at } });
-      await tx.payment.create({
-        data: { orderId: order.id, amount: total, method: "BKASH", walletId: bkash.id, paidAt: at, receivedById: se.id, verified: true, verifiedById: accounts.id, verifiedAt: at, note: "Demo: paid in full by bKash" },
-      });
+      if (end !== "RETURNED") {
+        await tx.payment.create({
+          data: { orderId: order.id, amount: total, method: "BKASH", walletId: bkash.id, paidAt: at, receivedById: se.id, verified: true, verifiedById: accounts.id, verifiedAt: at, note: "Demo: paid in full by bKash" },
+        });
+      }
+      if (end === "CONFIRMED") return { id: order.id, itemId: order.items[0].id };
       await packOrder(tx, { id: order.id, status: "CONFIRMED", items: order.items }, packer.id);
-      let status: "PACKED" | "HANDED_TO_COURIER" | "IN_TRANSIT" | "DELIVERED" = "PACKED";
-      for (const next of ["HANDED_TO_COURIER", "IN_TRANSIT", "DELIVERED"] as const) {
+      const path = { IN_TRANSIT: ["HANDED_TO_COURIER", "IN_TRANSIT"], DELIVERED: ["HANDED_TO_COURIER", "IN_TRANSIT", "DELIVERED"], RETURNED: ["HANDED_TO_COURIER", "IN_TRANSIT", "RETURNED"] } as const;
+      let status: OrderStatusName = "PACKED";
+      for (const next of path[end]) {
         await moveOrderStatus(tx, { id: order.id, status, items: [] }, next, packer.id);
         status = next;
       }
@@ -1697,6 +1722,8 @@ async function seedSettings() {
   });
   // Mirrors lib/expenses/constants.ts AD_ALLOCATION_SETTING_KEY / DEFAULT_AD_ALLOCATION.
   await prisma.setting.upsert({ where: { key: "ad_cost_allocation" }, update: {}, create: { key: "ad_cost_allocation", value: "EQUAL" } });
+  // P4.2 — office hours drive the late / half-day flags (lib/attendance/office-hours.ts).
+  await prisma.setting.upsert({ where: { key: OFFICE_HOURS_SETTING_KEY }, update: {}, create: { key: OFFICE_HOURS_SETTING_KEY, value: JSON.stringify(DEFAULT_OFFICE_HOURS) } });
 }
 
 // P4.1 (PRD §4.5) — leads across the whole funnel for the demo SE, the
@@ -1828,6 +1855,181 @@ async function seedLeadsDemo() {
   }
 }
 
+// P4.2 (PRD §4.13 / §4.14) — a month worth judging: Rima and Sumaiya sell
+// alongside the demo SE (Sumaiya places the most but a lot comes back, so
+// "Delivered value" ranks her lower), targets for this month and last,
+// tiered reward rules with a delivered floor, six weeks of check-ins with
+// the odd late / half / absent day, and leave in every state.
+async function seedTargetsAndAttendanceDemo() {
+  if ((await prisma.salesTarget.count()) > 0) return;
+  const phones = ["01711000002", "01711000003", "01711000004", "01711000005", "01711000006", "01711000007", "01711000008", "01711000009"];
+  const [manager, tl, se, packing, accounts, pos, rima, sumaiya] = await Promise.all(phones.map((phone) => prisma.user.findUniqueOrThrow({ where: { phone } })));
+  const DAY = 86_400_000;
+  const now = Date.now();
+  // Everyone has been here a while, so their earlier days aren't blank on the sheet.
+  await prisma.user.updateMany({ where: { phone: { in: phones } }, data: { joinDate: new Date(now - 120 * DAY) } });
+
+  // ── Orders for the two new executives, all inside this Dhaka month ──
+  const dayOfMonth = Number(dhakaToday().slice(8, 10));
+  const within = (daysAgo: number) => Math.min(daysAgo, dayOfMonth - 1);
+  const customers = [
+    { name: "Tanjila Haque", phone: "01822000101", owner: rima, district: "Dhaka" },
+    { name: "Moushumi Das", phone: "01822000102", owner: rima, district: "Gazipur" },
+    { name: "Shamima Nasrin", phone: "01822000103", owner: sumaiya, district: "Chattogram" },
+    { name: "Lipi Barua", phone: "01822000104", owner: sumaiya, district: "Sylhet" },
+  ];
+  for (const c of customers) {
+    await prisma.customer.upsert({ where: { phone: c.phone }, update: {}, create: { name: c.name, phone: c.phone, district: c.district, division: c.district === "Gazipur" ? "Dhaka" : c.district, addressDetail: "House 12, Road 4", createdById: c.owner.id, teamId: c.owner.teamId } });
+  }
+  const variants = (await prisma.productVariant.findMany({
+    where: { isActive: true, product: { isActive: true, deletedAt: null } },
+    orderBy: { sku: "asc" },
+    select: { id: true, stockQty: true, reservedQty: true, priceOverride: true, product: { select: { basePrice: true } } },
+  })).filter((v) => v.stockQty - v.reservedQty >= 6 && Number(v.priceOverride ?? v.product.basePrice) > 0);
+  if (variants.length < 4) {
+    console.warn("Targets demo: not enough stock for the extra executives' orders — skipped them.");
+  } else {
+    const price = (i: number) => Number(variants[i % variants.length].priceOverride ?? variants[i % variants.length].product.basePrice);
+    const plan: [typeof rima, string, number, number, DemoOrderEnd][] = [
+      // seller, customer, days ago, qty, where it ended
+      [rima, "01822000101", 20, 2, "DELIVERED"],
+      [rima, "01822000102", 17, 1, "DELIVERED"],
+      [rima, "01822000101", 14, 2, "DELIVERED"],
+      [rima, "01822000102", 11, 1, "DELIVERED"],
+      [rima, "01822000101", 8, 2, "DELIVERED"],
+      [rima, "01822000102", 5, 1, "DELIVERED"],
+      [rima, "01822000101", 2, 1, "IN_TRANSIT"],
+      [rima, "01822000102", 0, 1, "CONFIRMED"],
+      [sumaiya, "01822000103", 21, 3, "DELIVERED"],
+      [sumaiya, "01822000104", 19, 2, "RETURNED"],
+      [sumaiya, "01822000103", 16, 3, "RETURNED"],
+      [sumaiya, "01822000104", 13, 2, "DELIVERED"],
+      [sumaiya, "01822000103", 10, 3, "RETURNED"],
+      [sumaiya, "01822000104", 7, 3, "DELIVERED"],
+      [sumaiya, "01822000103", 4, 2, "RETURNED"],
+      [sumaiya, "01822000104", 3, 3, "IN_TRANSIT"],
+      [sumaiya, "01822000103", 1, 3, "IN_TRANSIT"],
+      [sumaiya, "01822000104", 0, 2, "CONFIRMED"],
+    ];
+    // Resumable: a run that stopped part-way already placed the first few.
+    const placed = await prisma.order.count({ where: { createdById: { in: [rima.id, sumaiya.id] } } });
+    for (const [i, [seller, phone, daysAgo, qty, end]] of plan.entries()) {
+      if (i < placed) continue;
+      await seedDeliveredOrder(phone, variants[i % variants.length].id, qty, price(i), within(daysAgo), { sellerPhone: seller.phone, end });
+    }
+  }
+
+  // ── Targets: last month and this one (Sumaiya's this month is left for "Copy last month's") ──
+  const month = dhakaMonth();
+  const lastMonth = shiftMonth(month, -1);
+  const byUser = await statsByUser(prisma, month, [se.id, tl.id, rima.id, sumaiya.id]);
+  const byTeam = se.teamId ? await statsByTeam(prisma, month, [se.teamId]) : new Map();
+  const taka = (paisa = 0) => paisa / 100;
+  const roundUp = (v: number) => Math.max(20_000, Math.ceil(v / 5_000) * 5_000);
+  const seSales = taka(byUser.get(se.id)?.salesPaisa);
+  const rimaSales = taka(byUser.get(rima.id)?.salesPaisa);
+  type DemoTarget = { month: string; userId?: string; teamId?: string; orderValue: number; orderCount?: number; note?: string };
+  const targets: DemoTarget[] = [
+    { month, userId: se.id, orderValue: roundUp(seSales * 1.4), orderCount: Math.max(10, (byUser.get(se.id)?.orderCount ?? 0) + 6), note: "Eid push — stretch target" },
+    { month, userId: rima.id, orderValue: Math.max(10_000, Math.floor((rimaSales * 0.95) / 5_000) * 5_000), orderCount: 8 },
+    { month, userId: tl.id, orderValue: 40_000 },
+    { month: lastMonth, userId: se.id, orderValue: 150_000, orderCount: 30 },
+    { month: lastMonth, userId: rima.id, orderValue: 120_000 },
+    { month: lastMonth, userId: sumaiya.id, orderValue: 150_000, orderCount: 30 },
+    { month: lastMonth, userId: tl.id, orderValue: 60_000 },
+  ];
+  if (se.teamId) {
+    targets.push({ month, teamId: se.teamId, orderValue: roundUp(taka(byTeam.get(se.teamId)?.salesPaisa) * 1.2), orderCount: 40 });
+    targets.push({ month: lastMonth, teamId: se.teamId, orderValue: 500_000 });
+  }
+  for (const t of targets) await prisma.salesTarget.create({ data: { ...t, createdById: manager.id } });
+
+  await prisma.rewardRule.createMany({
+    data: [
+      { name: "Nearly there", scope: "INDIVIDUAL", metric: "VALUE_TARGET_PERCENT", threshold: 80, minDeliveredRate: 85, rewardAmount: 1_000, createdById: manager.id },
+      { name: "Target hit", scope: "INDIVIDUAL", metric: "VALUE_TARGET_PERCENT", threshold: 100, minDeliveredRate: 85, rewardAmount: 3_000, createdById: manager.id },
+      { name: "Clean deliveries", scope: "INDIVIDUAL", metric: "DELIVERED_VALUE", threshold: 25_000, minDeliveredRate: 90, rewardNote: "Extra day off, your pick", createdById: manager.id },
+      { name: "Team target", scope: "TEAM", metric: "VALUE_TARGET_PERCENT", threshold: 100, rewardAmount: 5_000, rewardNote: "Team dinner", createdById: manager.id },
+      { name: "Old flat bonus (replaced)", scope: "INDIVIDUAL", metric: "ORDER_COUNT", threshold: 50, rewardAmount: 500, isActive: false, createdById: manager.id },
+    ],
+  });
+
+  // ── Leave (decided before attendance, so leave days have no check-in) ──
+  const dayAt = (offset: number) => dhakaToday(new Date(now + offset * DAY));
+  const workingBack = (fromOffset: number) => {
+    let o = fromOffset;
+    while (dayKind(dayAt(o), DEFAULT_OFFICE_HOURS) !== "WORKING") o -= 1;
+    return o;
+  };
+  const sick = workingBack(-9);
+  const leaves = [
+    { user: se, type: "SICK" as const, from: sick - 1, to: sick, reason: "Fever — doctor's note sent on WhatsApp", status: "APPROVED" as const, by: tl },
+    { user: se, type: "CASUAL" as const, from: 6, to: 8, reason: "Cousin's wedding in Cumilla", status: "PENDING" as const },
+    { user: packing, type: "ANNUAL" as const, from: 12, to: 14, reason: "Family trip to Cox's Bazar", status: "PENDING" as const },
+    { user: rima, type: "CASUAL" as const, from: -4, to: -4, reason: "Personal work", status: "REJECTED" as const, by: tl, note: "Eid rush week — please take it after the 10th" },
+    { user: sumaiya, type: "CASUAL" as const, from: 0, to: 0, reason: "Child's school admission test", status: "APPROVED" as const, by: tl },
+  ];
+  const leaveDays = new Map<string, Set<string>>();
+  for (const l of leaves) {
+    await prisma.leaveRequest.create({
+      data: {
+        userId: l.user.id,
+        type: l.type,
+        fromDate: dhakaDayStart(dayAt(l.from)),
+        toDate: dhakaDayStart(dayAt(l.to)),
+        reason: l.reason,
+        status: l.status,
+        decidedById: l.by?.id ?? null,
+        decidedAt: l.by ? new Date(now + (l.from - 2) * DAY) : null,
+        decisionNote: l.note ?? null,
+        createdAt: new Date(now + (Math.min(l.from, 0) - 3) * DAY),
+      },
+    });
+    if (l.status === "APPROVED") for (let o = l.from; o <= l.to; o++) leaveDays.set(l.user.id, new Set([...(leaveDays.get(l.user.id) ?? []), dayAt(o)]));
+  }
+
+  // ── Six weeks of check-ins for everyone on the roster (not the owner) ──
+  const roster = [manager, tl, se, packing, accounts, pos, rima, sumaiya];
+  const at = (day: string, minutes: number) => new Date(dhakaDayStart(day).getTime() + minutes * 60_000);
+  for (const [ui, person] of roster.entries()) {
+    const rows = [];
+    for (let offset = -42; offset <= 0; offset++) {
+      const day = dayAt(offset);
+      if (leaveDays.get(person.id)?.has(day)) continue;
+      const kind = dayKind(day, DEFAULT_OFFICE_HOURS);
+      const roll = (ui * 7 + (offset + 50) * 13) % 23;
+      // Packing covers one Friday a month; everyone else rests.
+      if (kind !== "WORKING" && !(person.id === packing.id && offset % 28 === 0)) continue;
+      if (roll === 0) continue; // absent
+      let inMin = 9 * 60 + 45 + (roll % 5) * 6; // 9:45–10:09
+      if (roll === 1 || roll === 2 || roll === 3) inMin = 10 * 60 + 20 + roll * 9; // late
+      if (roll === 4) inMin = 12 * 60 + 30; // half day
+      let outMin: number | null = 19 * 60 + 40 + (roll % 4) * 10;
+      if (offset === -3 && person.id === rima.id) outMin = null; // forgot to check out
+      if (offset === 0) {
+        // Today: the demo SE hasn't come in yet (try the button); the rest arrived and are still here.
+        if (person.id === se.id) continue;
+        outMin = null;
+        if (at(day, inMin).getTime() > now) continue;
+      }
+      const checkInAt = at(day, inMin);
+      const checkOutAt = outMin === null ? null : at(day, outMin);
+      const { status, lateMinutes } = attendanceStatus({ day, checkInAt, checkOutAt }, DEFAULT_OFFICE_HOURS);
+      rows.push({ userId: person.id, workDate: dhakaDayStart(day), checkInAt, checkOutAt, status, lateMinutes });
+    }
+    await prisma.attendance.createMany({ data: rows });
+  }
+  // One corrected day, so the sheet shows what a manager's fix looks like.
+  const fixDay = dayAt(workingBack(-15));
+  const fixed = await prisma.attendance.findFirst({ where: { userId: packing.id, workDate: dhakaDayStart(fixDay) } });
+  if (fixed) {
+    await prisma.attendance.update({
+      where: { id: fixed.id },
+      data: { checkOutAt: at(fixDay, 20 * 60 + 5), correctedById: manager.id, correctedAt: new Date(now - 14 * DAY), correctionReason: "Stayed late for the courier pickup, phone was off" },
+    });
+  }
+}
+
 async function main() {
   const roleIds = await seedPermissionsAndRoles();
   await seedCatalogMasters();
@@ -1848,6 +2050,7 @@ async function main() {
   await seedStoreCreditDemo();
   await seedSetsAndPackagingDemo();
   await seedLeadsDemo();
+  await seedTargetsAndAttendanceDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

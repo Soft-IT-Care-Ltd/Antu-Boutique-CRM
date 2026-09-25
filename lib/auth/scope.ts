@@ -50,3 +50,30 @@ export function scopedWhere<W extends Record<string, unknown>>(
   if (Object.keys(scope).length === 0) return where;
   return { AND: [where, scope] };
 }
+
+// ─── Permission-level scope (P4.2) ───────────────────────────────────────
+//
+// Targets and attendance cover every role, not just the sales floor, and
+// their view permissions don't follow the role → scope mapping above: a
+// Packing or Accounts user holds attendance.view_own only, yet
+// buildScopeWhere() would give them everyone. For these modules the level
+// comes from which *_all / *_team / *_own permission the user holds
+// (lib/auth/permissions.ts viewLevel()), and this turns it into the where.
+
+export type ViewLevel = "all" | "team" | "own";
+
+/** The where clause for a view level. A team-level user with no team sees only their own. */
+export function levelScopeWhere(user: SessionUser, level: ViewLevel, config: ScopeConfig = {}): Record<string, unknown> {
+  const ownerField = config.ownerField ?? "createdById";
+  const teamField = config.teamField ?? "teamId";
+  if (level === "all") return {};
+  if (level === "team" && user.teamId) return { [teamField]: user.teamId };
+  return { [ownerField]: user.id };
+}
+
+/** Same as scopedWhere(), for a permission-derived view level. */
+export function levelScopedWhere<W extends Record<string, unknown>>(where: W, user: SessionUser, level: ViewLevel, config: ScopeConfig = {}): Record<string, unknown> {
+  const scope = levelScopeWhere(user, level, config);
+  if (Object.keys(scope).length === 0) return where;
+  return { AND: [where, scope] };
+}

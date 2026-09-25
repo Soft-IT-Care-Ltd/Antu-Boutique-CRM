@@ -125,6 +125,7 @@ export const PERMISSIONS = [
   { key: "attendance.view_all", group: "Attendance", label: "View all attendance" },
   { key: "attendance.mark", group: "Attendance", label: "Mark attendance" },
   { key: "attendance.manage", group: "Attendance", label: "Manage attendance & leave" },
+  { key: "leave.approve", group: "Attendance", label: "Approve or reject leave requests (never one's own)" },
 
   // Reports
   { key: "report.view", group: "Reports", label: "View reports" },
@@ -177,6 +178,8 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "attendance.view_team",
     "attendance.view_own",
     "attendance.mark",
+    // P4.2 (PRD §4.14): a TL decides their team's leave requests.
+    "leave.approve",
     "report.view",
   ],
 

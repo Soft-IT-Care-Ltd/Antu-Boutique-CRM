@@ -1,16 +1,21 @@
 import Link from "next/link";
 import { BarChart3, PackageCheck, ShoppingBag, Wallet } from "lucide-react";
 
+import { CheckInCard } from "@/components/attendance/check-in-card";
 import { DueFollowUpList } from "@/components/leads/due-follow-ups";
+import { TargetGauge } from "@/components/targets/target-gauge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import type { SessionUser } from "@/lib/auth/types";
+import { getMyDay } from "@/lib/attendance/sheet";
 import { LEAD_VIEW_PERMISSIONS } from "@/lib/leads/http";
 import { listDueFollowUps, listLeadPeople } from "@/lib/leads/queries";
 import { formatBDT } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
+import { TARGET_VIEW_PERMISSIONS } from "@/lib/targets/http";
+import { getMyProgress } from "@/lib/targets/service";
 
 const statCards = [
   { label: "Today's orders", value: "0", icon: ShoppingBag },
@@ -63,9 +68,38 @@ async function FollowUpsDueCard({ user }: { user: SessionUser }) {
   );
 }
 
+/** PRD §4.13 "live progress gauge on the SE dashboard" — the viewer's own month. */
+async function MyTargetCard({ user }: { user: SessionUser }) {
+  const mine = await getMyProgress(prisma, user);
+  if (!mine) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>My target this month</CardTitle>
+        <CardDescription>Orders you placed — cancelled and returned ones left out.</CardDescription>
+        <CardAction>
+          <Button variant="outline" size="sm" render={<Link href="/targets/leaderboard" />} nativeButton={false}>
+            Leaderboard
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <TargetGauge progress={mine} daysLeft={mine.daysLeft} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** PRD §4.14 check-in / check-out, one tap from the dashboard. */
+async function CheckInDashboardCard({ user }: { user: SessionUser }) {
+  const me = await getMyDay(prisma, user.id);
+  if (!me.onRoster) return null;
+  return <CheckInCard record={me.record} hours={me.hours} dayKind={me.dayKind} leaveToday={me.leaveToday} />;
+}
+
 export default async function DashboardPage() {
   const user = await guardPage("/dashboard");
-  const seesLeads = await can(user, LEAD_VIEW_PERMISSIONS);
+  const [seesLeads, seesTargets, marksAttendance] = await Promise.all([can(user, LEAD_VIEW_PERMISSIONS), can(user, TARGET_VIEW_PERMISSIONS), can(user, "attendance.mark")]);
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div>
@@ -91,6 +125,8 @@ export default async function DashboardPage() {
         ))}
       </div>
 
+      {marksAttendance ? <CheckInDashboardCard user={user} /> : null}
+      {seesTargets ? <MyTargetCard user={user} /> : null}
       {seesLeads ? <FollowUpsDueCard user={user} /> : null}
 
       <Card className="border-dashed">

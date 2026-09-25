@@ -367,11 +367,32 @@ Covers §4.10 and §4.12. Recorded so P&L (Phase 4) and returns/exchanges (P3) b
 - Reward rules table: threshold → reward (amount or note), auto-evaluated at month end.
 - Leaderboard: this month's top SEs by value and by converted orders, with delivered-vs-returned quality shown alongside (so quantity alone can't win).
 
+#### Decisions made during build (P4.2 — targets, rewards, leaderboard)
+
+- **Months are Dhaka calendar months** (`"YYYY-MM"`). A target (`targets`) is for one person *or* one team and sets an order count, an order value, or both (DB CHECKs). Individual targets are for the sales floor — Sales Executives and Team Leaders (`lib/auth/rosters.ts`). Set, change, remove and "copy last month's" need `target.manage` (Admin/Manager) and are audit-logged. A month's targets are **final once its rewards are worked out**.
+- **What counts** (`lib/targets/performance.ts`, never stored — progress is always live): orders **placed** in the month (Dhaka time) by the person (a team's: orders carrying its `teamId`), not deleted, not `LEAD`/`CANCELLED`, and **not an exchange's replacement order** (P3.2). Value is the order total, which already drops by anything returned. Fully returned orders (`RETURNED`/`REFUNDED`) count toward neither value nor order count; they show under quality.
+- **Quality** = delivered ÷ (delivered + returned) for the month's orders, with the counts (delivered · returned · on the way) beside it everywhere a number appears. Delivered = `DELIVERED`, `COMPLETED`, `PARTIAL_DELIVERED`, `EXCHANGE_REQUESTED`. Under 80% the row is flagged with an icon.
+- **Leaderboard** ranks the whole sales floor by *Order value*, *Delivered value* (only what reached the customer — the measure returns can't inflate) or *Orders*; ties go to the better delivered rate. Scope follows `target.view_*`: an **executive sees only their own row and their rank** ("#2 of 4") — never another executive's numbers; a TL their team (with shop-wide ranks) and the team table; Admin/Manager everyone.
+- **Gauge**: the dashboard's "My target this month" card and the Targets page — a half-ring for value (count if there's no value target), "৳ X of ৳ Y — N%, D days left" (today included), what's needed per day, a count bar when both are set, and the quality line.
+- **Reward rules** (`reward_rules`): each person or each team; measure = % of value target, % of count target, order value, delivered value, or orders; threshold → an amount, a note, or both; optional **delivered floor** (1–100%). **Rules on the same scope + measure are tiers — only the highest reached pays**; different measures add up. A % rule needs that target. Rules are switched off, never deleted.
+- **Month end**: `GET /api/cron/rewards` (CRON_SECRET, daily) works out last month the first time it runs in a new month; `target.manage` can work a closed month out again by hand, which replaces its awards. Awards (`reward_awards`) copy the rule and the month's numbers, so editing a rule never changes a past month. Both are audit-logged (`reward.evaluate`). The current month shows a live "if it ended today" preview. Payout is outside the system (payroll is out of scope).
+
 ### 4.14 Attendance & leave
 
 - Check-in / check-out with time; late / absent / half-day / leave flags driven by office-hour settings.
 - Leave request → TL/Admin approval → reflected in the attendance sheet.
 - Monthly attendance report per staff member.
+
+#### Decisions made during build (P4.2 — attendance and leave)
+
+- **Roster**: every active user except the owner (Admin) (`lib/auth/rosters.ts`). Scope follows `attendance.view_all / _team / _own` (`lib/auth/permissions.ts viewLevel` + `levelScopedWhere`), not the role default — Packing and Accounts see only their own.
+- **Check-in / check-out**: one tap each for oneself (`attendance.mark`), stamped with the **server's** clock and the IP; one row per person per Dhaka day. Nobody checks in for someone else.
+- **Office hours** (Settings → *Office hours & late rule*, one JSON setting, audit-logged): opening/closing time, late grace (default 15 min), half-day cut-off (default 120 min after opening), half day if fewer than N hours worked (default 4), weekly off days (default Friday), holiday dates. Defaults 10 am – 8 pm.
+- **Flags**: *Late* = checked in past the grace; late minutes count from opening time. *Half day* = checked in at/after the cut-off, or checked out with too few hours. Coming in on an off day or holiday is just *Present*. The status is **worked out when the day is recorded and kept**, so changing office hours never rewrites history.
+- **Derived marks** on the sheet (`lib/attendance/days.ts`): no check-in + approved leave on a working day → *Leave*; weekly off / holiday → shown as such; otherwise a working day that's over (past, or today after closing) → *Absent*. Days before the person's join date, and future days, are blank. Totals count days so far; a day with a check-in but no check-out is flagged.
+- **Corrections**: `attendance.manage` (Admin/Manager) sets a day's times with a required reason (DB CHECK) — creating the day if missing; the status is recomputed and the change audit-logged.
+- **Leave**: anyone on the roster asks for their own (casual, sick, annual, unpaid, other), from 30 days back to a year ahead, at most 60 days, never overlapping their pending/approved leave. **`leave.approve`** (new: TL, Manager, Admin) decides — a TL only their team's, **never one's own**; a rejection needs a reason. The person can cancel while it's pending or before it starts; an approver can cancel approved leave. Every decision/cancel is audit-logged. Weekly offs and holidays inside the dates don't use leave.
+- **Monthly report** (Attendance → Monthly report): summary per staff member (working days, present, late, half day, absent, leave, no check-out) and the day-by-day sheet; CSV needs `report.export`. R10 in P4.4 builds on this.
 
 ### 4.15 Reports
 

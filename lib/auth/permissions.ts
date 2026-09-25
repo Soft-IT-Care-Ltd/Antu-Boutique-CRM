@@ -5,6 +5,7 @@ import { cache } from "react";
 import type { Db } from "@/lib/db/tx";
 import { prisma } from "@/lib/prisma";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
+import type { ViewLevel } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
 
 // lib/auth/permissions.ts is the ONLY place permission decisions get made.
@@ -70,4 +71,20 @@ export async function can(
   if (keys.length === 0) return true;
 
   return mode === "all" ? keys.every((k) => permissions.has(k)) : keys.some((k) => permissions.has(k));
+}
+
+/**
+ * The widest view level the user holds out of an all / team / own trio
+ * (e.g. attendance.view_all / _team / _own), or null for none. Feed the
+ * result to levelScopedWhere() in lib/auth/scope.ts.
+ */
+export async function viewLevel(
+  user: SessionUser,
+  keys: { all: PermissionKey; team: PermissionKey; own: PermissionKey },
+): Promise<ViewLevel | null> {
+  const permissions = await getEffectivePermissions(user.id);
+  if (permissions.has(keys.all)) return "all";
+  if (permissions.has(keys.team)) return "team";
+  if (permissions.has(keys.own)) return "own";
+  return null;
 }

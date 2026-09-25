@@ -107,6 +107,8 @@ model Team {
   orders          Order[]          @relation("OrderTeam")
   leads           Lead[]           @relation("LeadTeam")
   leadDailyCounts LeadDailyCount[] @relation("LeadDailyCountTeam")
+  salesTargets    SalesTarget[]    @relation("SalesTargetTeam")
+  rewardAwards    RewardAward[]    @relation("RewardAwardTeam")
   isActive        Boolean          @default(true)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -221,6 +223,16 @@ model User {
   completedLeadFollowUps    LeadFollowUp[]           @relation("LeadFollowUpCompletedBy")
   leadDailyCounts           LeadDailyCount[]         @relation("LeadDailyCountOwner")
   enteredLeadDailyCounts    LeadDailyCount[]         @relation("LeadDailyCountCreatedBy")
+  salesTargets              SalesTarget[]            @relation("SalesTargetUser")
+  createdSalesTargets       SalesTarget[]            @relation("SalesTargetCreatedBy")
+  createdRewardRules        RewardRule[]             @relation("RewardRuleCreatedBy")
+  rewardEvaluations         RewardEvaluation[]       @relation("RewardEvaluatedBy")
+  rewardAwards              RewardAward[]            @relation("RewardAwardUser")
+  attendance                Attendance[]             @relation("AttendanceUser")
+  correctedAttendance       Attendance[]             @relation("AttendanceCorrectedBy")
+  leaveRequests             LeaveRequest[]           @relation("LeaveRequestUser")
+  decidedLeaveRequests      LeaveRequest[]           @relation("LeaveRequestDecidedBy")
+  cancelledLeaveRequests    LeaveRequest[]           @relation("LeaveRequestCancelledBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -2032,4 +2044,212 @@ model LeadDailyCount {
   @@index([teamId])
   @@index([countDate])
   @@map("lead_daily_counts")
+}
+
+// ─── P4.2 (PRD §4.13) — targets, reward rules, leaderboard ───────────────
+
+// A month's goal for one person or one team: an order count, an order
+// value, or both (DB CHECK). Progress is never stored — it is recomputed
+// from the orders themselves (lib/targets/performance.ts), so it's live.
+model SalesTarget {
+  id         String   @id @default(cuid())
+  // Dhaka calendar month, "YYYY-MM" (DB CHECK).
+  month      String
+  // Exactly one of userId / teamId (DB CHECK).
+  userId     String?
+  user       User?    @relation("SalesTargetUser", fields: [userId], references: [id], onDelete: Restrict)
+  teamId     String?
+  team       Team?    @relation("SalesTargetTeam", fields: [teamId], references: [id], onDelete: Restrict)
+  orderCount Int?
+  orderValue Decimal? @db.Decimal(12, 2)
+  note       String?
+
+  createdById String?
+  createdBy   User?    @relation("SalesTargetCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([month, userId])
+  @@unique([month, teamId])
+  @@index([teamId])
+  @@map("targets")
+}
+
+enum RewardScope {
+  INDIVIDUAL
+  TEAM
+}
+
+// What a reward rule measures. Rules on the same scope + measure are tiers:
+// only the highest threshold reached pays (lib/targets/rewards.ts).
+enum RewardMetric {
+  // % of the month's order-value target reached.
+  VALUE_TARGET_PERCENT
+  // % of the month's order-count target reached.
+  COUNT_TARGET_PERCENT
+  // Order value (৳), cancelled and returned orders left out.
+  SALES_VALUE
+  // Value (৳) of the month's orders that were actually delivered.
+  DELIVERED_VALUE
+  // Number of orders, cancelled and returned ones left out.
+  ORDER_COUNT
+}
+
+// threshold → reward (an amount, a note, or both — DB CHECK). The optional
+// delivered-rate floor is what keeps volume alone from earning a reward.
+model RewardRule {
+  id               String       @id @default(cuid())
+  name             String
+  scope            RewardScope
+  metric           RewardMetric
+  threshold        Decimal      @db.Decimal(12, 2)
+  // 0–100: the month's delivered ÷ (delivered + returned) must be at least this.
+  minDeliveredRate Int?
+  rewardAmount     Decimal?     @db.Decimal(12, 2)
+  rewardNote       String?
+  isActive         Boolean      @default(true)
+
+  awards RewardAward[]
+
+  createdById String?
+  createdBy   User?    @relation("RewardRuleCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("reward_rules")
+}
+
+// A month whose rewards have been worked out — by the month-end cron
+// (evaluatedById null) or by hand. Re-running replaces its awards.
+model RewardEvaluation {
+  month         String   @id
+  evaluatedAt   DateTime @default(now())
+  evaluatedById String?
+  evaluatedBy   User?    @relation("RewardEvaluatedBy", fields: [evaluatedById], references: [id])
+
+  awards RewardAward[]
+
+  @@map("reward_evaluations")
+}
+
+// One reward earned. The rule is copied in, so editing or switching off a
+// rule later never rewrites what a past month earned.
+model RewardAward {
+  id         String           @id @default(cuid())
+  month      String
+  evaluation RewardEvaluation @relation(fields: [month], references: [month], onDelete: Cascade)
+  ruleId     String?
+  rule       RewardRule?      @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  ruleName  String
+  scope     RewardScope
+  metric    RewardMetric
+  threshold Decimal      @db.Decimal(12, 2)
+
+  // Exactly one of userId / teamId (DB CHECK).
+  userId String?
+  user   User?   @relation("RewardAwardUser", fields: [userId], references: [id], onDelete: Restrict)
+  teamId String?
+  team   Team?   @relation("RewardAwardTeam", fields: [teamId], references: [id], onDelete: Restrict)
+
+  // The measured value that met the threshold, and the month as it stood.
+  achieved      Decimal  @db.Decimal(14, 2)
+  salesValue    Decimal  @db.Decimal(14, 2)
+  orderCount    Int
+  deliveredRate Decimal? @db.Decimal(5, 2)
+
+  rewardAmount Decimal? @db.Decimal(12, 2)
+  rewardNote   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([month])
+  @@index([userId])
+  @@index([teamId])
+  @@map("reward_awards")
+}
+
+// ─── P4.2 (PRD §4.14) — attendance and leave ─────────────────────────────
+
+// Worked out from the office-hour settings when the person checks in/out
+// (or a manager corrects the day) and kept, so changing office hours later
+// never rewrites a past day. Absent, leave and off days have no row — the
+// monthly sheet derives them (lib/attendance/sheet.ts).
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  HALF_DAY
+}
+
+model Attendance {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation("AttendanceUser", fields: [userId], references: [id])
+  // Midnight (Dhaka) of the working day, as UTC — like lead_daily_counts.
+  workDate    DateTime
+  checkInAt   DateTime
+  checkOutAt  DateTime?
+  status      AttendanceStatus
+  // Minutes after the office start time (0 when on time or within grace).
+  lateMinutes Int              @default(0)
+  checkInIp   String?
+  checkOutIp  String?
+
+  // A manager's correction: who, when and why (reason required — DB CHECK).
+  correctedById    String?
+  correctedBy      User?     @relation("AttendanceCorrectedBy", fields: [correctedById], references: [id])
+  correctedAt      DateTime?
+  correctionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, workDate])
+  @@index([workDate])
+  @@map("attendance")
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  ANNUAL
+  UNPAID
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// Asked for by the person, decided by their Team Leader or a Manager/Admin
+// (never by themself). Approved leave shows on the attendance sheet.
+model LeaveRequest {
+  id       String      @id @default(cuid())
+  userId   String
+  user     User        @relation("LeaveRequestUser", fields: [userId], references: [id])
+  type     LeaveType
+  // Dhaka midnights, both days included (DB CHECK: to ≥ from).
+  fromDate DateTime
+  toDate   DateTime
+  reason   String
+  status   LeaveStatus @default(PENDING)
+
+  decidedById  String?
+  decidedBy    User?     @relation("LeaveRequestDecidedBy", fields: [decidedById], references: [id])
+  decidedAt    DateTime?
+  decisionNote String?
+
+  cancelledById String?
+  cancelledBy   User?     @relation("LeaveRequestCancelledBy", fields: [cancelledById], references: [id])
+  cancelledAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, fromDate])
+  @@index([status])
+  @@map("leave_requests")
 }
