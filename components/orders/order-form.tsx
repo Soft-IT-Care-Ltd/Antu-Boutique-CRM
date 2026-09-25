@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Layers, Loader2, Pencil, Trash2, UserCheck } from "lucide-react";
+import { Layers, Loader2, Pencil, Trash2, UserCheck, Users2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import { newLocalId } from "@/lib/browser/local-id";
 import { isValidBdPhone } from "@/lib/customers/phone";
 import { BD_DIVISIONS } from "@/lib/customers/constants";
 import type { CustomerListItem } from "@/lib/customers/types";
+import { LEAD_SOURCE_LABELS, type LeadSourceValue } from "@/lib/leads/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
@@ -117,14 +118,55 @@ function itemsFromOrder(order: OrderDetail): ItemRow[] {
   }));
 }
 
+/** P4.1 — the lead a new order converts (PRD §4.5): pre-fills the form; the order links back to it. */
+export type LeadPrefill = {
+  id: string;
+  name: string;
+  phone: string | null;
+  source: LeadSourceValue;
+  interest: string | null;
+  /** The lead's customer, when it has one the user can see. */
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+    altPhone: string | null;
+    division: string | null;
+    district: string | null;
+    thana: string | null;
+    addressDetail: string | null;
+  } | null;
+};
+
+function initialCustomer(order?: OrderDetail, lead?: LeadPrefill): CustomerFormState {
+  const known = order?.customer ?? lead?.customer;
+  if (known) {
+    return {
+      customerId: known.id,
+      name: known.name,
+      phone: known.phone,
+      altPhone: known.altPhone ?? "",
+      division: known.division,
+      district: known.district ?? "",
+      thana: known.thana ?? "",
+      addressDetail: known.addressDetail ?? "",
+    };
+  }
+  // A new person: their name and number from the lead; the phone search
+  // below still offers an existing customer if the number is known.
+  return { customerId: null, name: lead?.name ?? "", phone: lead?.phone ?? "", altPhone: "", division: null, district: "", thana: "", addressDetail: "" };
+}
+
 export function OrderForm({
   order,
+  lead,
   hasCostAccess,
   canStockOverride,
   couriers,
   wallets = [],
 }: {
   order?: OrderDetail;
+  lead?: LeadPrefill;
   hasCostAccess: boolean;
   canStockOverride: boolean;
   couriers: CourierCompanyOption[];
@@ -134,20 +176,7 @@ export function OrderForm({
   const router = useRouter();
   const isEdit = Boolean(order);
 
-  const [customer, setCustomer] = useState<CustomerFormState>(() =>
-    order?.customer
-      ? {
-          customerId: order.customer.id,
-          name: order.customer.name,
-          phone: order.customer.phone,
-          altPhone: order.customer.altPhone ?? "",
-          division: order.customer.division,
-          district: order.customer.district ?? "",
-          thana: order.customer.thana ?? "",
-          addressDetail: order.customer.addressDetail ?? "",
-        }
-      : { customerId: null, name: "", phone: "", altPhone: "", division: null, district: "", thana: "", addressDetail: "" },
-  );
+  const [customer, setCustomer] = useState<CustomerFormState>(() => initialCustomer(order, lead));
   const [customerMatches, setCustomerMatches] = useState<CustomerListItem[]>([]);
   const [customerSearching, setCustomerSearching] = useState(false);
 
@@ -160,7 +189,7 @@ export function OrderForm({
   const [courierZoneId, setCourierZoneId] = useState<string | null>(order?.courierZoneId ?? null);
   const [deliveryCharge, setDeliveryCharge] = useState(order?.deliveryCharge ?? "0");
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(order?.expectedDeliveryDate?.slice(0, 10) ?? "");
-  const [internalNote, setInternalNote] = useState(order?.internalNote ?? "");
+  const [internalNote, setInternalNote] = useState(order?.internalNote ?? (lead?.interest ? `Lead asked for: ${lead.interest}` : ""));
   const [deliveryNote, setDeliveryNote] = useState(order?.deliveryNote ?? "");
 
   const [advanceEnabled, setAdvanceEnabled] = useState(false);
@@ -350,6 +379,7 @@ export function OrderForm({
         expectedDeliveryDate: expectedDeliveryDate || null,
         internalNote: internalNote || null,
         deliveryNote: deliveryNote || null,
+        ...(lead ? { leadId: lead.id } : {}),
       };
       if (customer.customerId) {
         payload.customerId = customer.customerId;
@@ -404,6 +434,15 @@ export function OrderForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {lead ? (
+        <div className="flex items-start gap-2 rounded-lg border bg-muted/40 p-3 text-sm">
+          <Users2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <p>
+            Converting lead <span className="font-medium">{lead.name}</span> ({LEAD_SOURCE_LABELS[lead.source]}). Placing this order marks the lead{" "}
+            <span className="font-medium">Converted</span> and links it to the order.
+          </p>
+        </div>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>1. Customer</CardTitle>

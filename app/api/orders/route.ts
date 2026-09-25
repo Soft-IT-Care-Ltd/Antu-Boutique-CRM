@@ -10,6 +10,7 @@ import { scopedWhere } from "@/lib/auth/scope";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { isValidBdPhone, normalizeBdPhone } from "@/lib/customers/phone";
 import { toNumber } from "@/lib/money";
+import { assertLeadConvertible, LeadError, markLeadConverted } from "@/lib/leads/service";
 import { generateOrderInvoice } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { generateOrderNumber } from "@/lib/orders/order-number";
@@ -130,6 +131,9 @@ const createOrderSchema = z
     advancePayment: advancePaymentSchema.nullish(),
     internalNote: z.string().trim().max(2000).nullish(),
     deliveryNote: z.string().trim().max(200).nullish(),
+    // P4.1 — the lead this order converts (PRD §4.5): sets order.leadId and
+    // closes the lead as CONVERTED in the same transaction.
+    leadId: z.string().cuid().nullish(),
   })
   .refine((data) => Boolean(data.customerId) !== Boolean(data.customer), {
     message: "Provide either an existing customerId or new customer details, not both",
@@ -145,8 +149,22 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
   }
-  const { customerId, customer: newCustomerInput, items, sets, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote, deliveryNote } =
+  const { customerId, customer: newCustomerInput, items, sets, courierId, courierZoneId, deliveryCharge, expectedDeliveryDate, advancePayment, internalNote, deliveryNote, leadId } =
     parsed.data;
+
+  // A lead is converted only by someone who may convert it and can see it —
+  // checked before anything is written (the customer below included).
+  if (leadId) {
+    if (!(await can(guard.user, "lead.convert"))) {
+      return NextResponse.json({ error: "You don't have permission to convert leads" }, { status: 403 });
+    }
+    try {
+      await assertLeadConvertible(prisma, guard.user, leadId);
+    } catch (error) {
+      if (error instanceof LeadError) return NextResponse.json({ error: error.message }, { status: error.status });
+      throw error;
+    }
+  }
 
   // Section 1 — resolve the one person on this order. Existing customer
   // must be one this user can already see; a brand-new customer is
@@ -296,10 +314,15 @@ export async function POST(request: NextRequest) {
           dueAmount,
           internalNote: internalNote || null,
           deliveryNote: deliveryNote || null,
+          leadId: leadId || null,
           createdById: guard.user.id,
           teamId: guard.user.teamId,
         },
       });
+
+      if (leadId) {
+        await markLeadConverted(tx, { leadId, customerId: resolvedCustomerId, orderId: created.id, actorId: guard.user.id, request });
+      }
 
       const itemIds: string[] = [];
       for (const item of items) {
@@ -386,7 +409,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(await stripCostFieldsForUser({ order: serialized, itemIds }, guard.user), { status: 201 });
   } catch (error) {
-    if (error instanceof WalletError || error instanceof StoreCreditError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof WalletError || error instanceof StoreCreditError || error instanceof LeadError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       // Two distinct unique constraints can land here: transactionId
       // (CLAUDE.md rule 4 — a bKash/Nagad TrxID reused) or orderNo (the
@@ -396,6 +419,9 @@ export async function POST(request: NextRequest) {
       const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : String(error.meta?.target ?? "");
       if (target.includes("orderNo")) {
         return NextResponse.json({ error: "Could not generate a unique order number — please try again." }, { status: 409 });
+      }
+      if (target.includes("leadId")) {
+        return NextResponse.json({ error: "This lead has already been converted to an order." }, { status: 409 });
       }
       return NextResponse.json({ error: "This transaction ID has already been used" }, { status: 409 });
     }

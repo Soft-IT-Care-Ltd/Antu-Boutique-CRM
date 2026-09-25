@@ -19,6 +19,7 @@ import { OrderReturnsCard, type ReturnPermissions } from "@/components/returns/o
 import type { ShipmentDetailView } from "@/lib/courier/types";
 import { formatBDT } from "@/lib/money";
 import { fetchJson } from "@/lib/orders/client";
+import { LEAD_SOURCE_LABELS } from "@/lib/leads/constants";
 import { DELIVERY_ZONE_LABELS, ORDER_STATUS_LABELS } from "@/lib/orders/constants";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { orderUploadUrl } from "@/lib/orders/types";
@@ -94,6 +95,15 @@ export function OrderDetail({
           </div>
           <p className="text-sm text-muted-foreground">
             Placed {formatDateTime(order.createdAt)} by {order.createdBy?.name ?? "—"}
+            {order.lead ? (
+              <>
+                {" · from lead "}
+                <Link href={`/leads/${order.lead.id}`} className="font-medium text-foreground underline-offset-4 hover:underline">
+                  {order.lead.name}
+                </Link>
+                {` (${LEAD_SOURCE_LABELS[order.lead.source]})`}
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

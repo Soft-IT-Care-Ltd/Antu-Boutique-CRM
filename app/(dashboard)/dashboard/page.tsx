@@ -1,7 +1,16 @@
+import Link from "next/link";
 import { BarChart3, PackageCheck, ShoppingBag, Wallet } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DueFollowUpList } from "@/components/leads/due-follow-ups";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { guardPage } from "@/lib/auth/guard-page";
+import { can } from "@/lib/auth/permissions";
+import type { SessionUser } from "@/lib/auth/types";
+import { LEAD_VIEW_PERMISSIONS } from "@/lib/leads/http";
+import { listDueFollowUps, listLeadPeople } from "@/lib/leads/queries";
 import { formatBDT } from "@/lib/money";
+import { prisma } from "@/lib/prisma";
 
 const statCards = [
   { label: "Today's orders", value: "0", icon: ShoppingBag },
@@ -10,7 +19,53 @@ const statCards = [
   { label: "This month", value: formatBDT(0), icon: BarChart3 },
 ];
 
-export default function DashboardPage() {
+export const dynamic = "force-dynamic";
+
+/**
+ * PRD §4.5 / §4.16 — "my follow-ups due today" with overdue ones first and
+ * in red. Scoped: an executive's own, a team leader's team's. The rest of
+ * the role dashboards land in P4.3.
+ */
+async function FollowUpsDueCard({ user }: { user: SessionUser }) {
+  const [due, canEdit, people] = await Promise.all([listDueFollowUps(prisma, user, { limit: 15 }), can(user, "lead.edit"), listLeadPeople(prisma, user)]);
+  const mine = people.length <= 1;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{mine ? "My follow-ups due today" : "Follow-ups due today"}</CardTitle>
+        <CardDescription>
+          <Link href="/leads?followUp=overdue" className={due.overdue > 0 ? "font-medium text-destructive underline-offset-4 hover:underline" : "underline-offset-4 hover:underline"}>
+            {due.overdue} overdue
+          </Link>
+          {" · "}
+          <Link href="/leads?followUp=today" className="underline-offset-4 hover:underline">
+            {due.dueToday} later today
+          </Link>
+        </CardDescription>
+        <CardAction>
+          <Button variant="outline" size="sm" render={<Link href="/leads/follow-ups" />} nativeButton={false}>
+            All follow-ups
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <DueFollowUpList items={due.items} showOwner={!mine} canEdit={canEdit} emptyText="Nothing due today. New reminders show up here on the day they're due." />
+        {due.items.length < due.overdue + due.dueToday ? (
+          <p className="pt-2 text-sm text-muted-foreground">
+            Showing {due.items.length} of {due.overdue + due.dueToday}.{" "}
+            <Link href="/leads/follow-ups" className="underline-offset-4 hover:underline">
+              See them all
+            </Link>
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default async function DashboardPage() {
+  const user = await guardPage("/dashboard");
+  const seesLeads = await can(user, LEAD_VIEW_PERMISSIONS);
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div>
@@ -35,6 +90,8 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {seesLeads ? <FollowUpsDueCard user={user} /> : null}
 
       <Card className="border-dashed">
         <CardHeader>

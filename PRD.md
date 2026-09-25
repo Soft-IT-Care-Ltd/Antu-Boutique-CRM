@@ -148,6 +148,17 @@ It must run the whole business in one place: lead → order → stock → packin
 - Converting a lead pre-fills the order form and links `order.lead_id`.
 - Conversion-rate reporting per SE, source, and campaign.
 
+#### Decisions made during build (P4.1 — leads and follow-ups)
+
+- **A lead needs only a name and a source.** Phone, campaign (free text, suggested from ones already used; reports group it ignoring case and spacing), "interested in" and notes are optional — a Messenger enquiry often has only a profile name. A phone that matches a customer the executive can see links the lead to that customer and offers "Repeat customer" as the source.
+- **Ownership and scope** follow customers and orders: the creator owns the lead (`createdById`, `teamId` copied from them), and every list, detail, follow-up list, report and export runs through the shared scope helper. Conversion credit in reports goes to the lead's owner, whoever places the order.
+- **Funnel rules** (`lib/leads/status.ts`): the four open stages move freely in any direction; any open lead can be marked **Lost** (reason required, a written note required for "Other" — also a DB CHECK); a lost lead can be **reopened**, which clears the reason. **Converted is never picked by hand** — it is set only by placing the lead's order, so every converted lead has an order behind it. A converted lead is final and can't be deleted.
+- **Follow-ups** (`lead_followups`) are reminders with a Dhaka date/time and an optional note; marking one done records what happened and can set the next one in the same step. Setting a follow-up on a New/Contacted lead moves it to Follow-up. A lead can have several. Overdue = past its time and not done; overdue ones are red everywhere. When a lead is converted or lost its open reminders simply stop showing (reopening brings them back).
+- **"Due today"** = open follow-ups due before Dhaka midnight, overdue first. It's a card on the dashboard ("My follow-ups due today" for an executive, the team's for a TL, everyone's for Admin/Manager — the full role dashboards are P4.3), plus a Follow-ups tab covering the next 7 days.
+- **Conversion**: "Convert to order" opens the order form pre-filled (the lead's customer if it has one the user can see, else its name and phone; "interested in" goes into the internal note). Placing the order sets `order.lead_id` and closes the lead as Converted **in the same transaction**; `orders.leadId` is unique, so a lead converts once. A lost lead that comes back can be converted directly. Needs `lead.convert` and `order.create`.
+- **Daily counts** (`lead_daily_counts`): one sheet per person per day — leads and "bought" per source, optionally per campaign. Saving replaces that day's sheet (audit-logged with before/after). An executive counts their own days; a TL for their team; Admin/Manager for anyone. No future days.
+- **Conversion report** (Leads → Conversion, `lib/leads/report.ts`) is a **cohort**: leads that came in during the period (recorded ones by the day added, counted ones by the day counted) and how many have bought since. Recorded and counted leads add together; open/lost apply only to recorded leads. Also shows lost reasons and the value of the (not cancelled) orders recorded leads turned into. CSV export needs `report.export`. R2 in P4.4 builds on this.
+
 ### 4.6 Orders — the online order form
 
 **This is the screen that differs most from Gift Valy. Build it exactly as described.**

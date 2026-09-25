@@ -1,4 +1,5 @@
 import type { DeliveryZoneValue, OrderEditRequestStatusValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
+import type { LeadSourceValue } from "@/lib/leads/constants";
 import type { OrderSetLineView } from "@/lib/sets/types";
 
 // Client-side shapes mirroring the JSON /api/orders/* returns.
@@ -126,6 +127,8 @@ export type OrderDetail = {
   expectedDeliveryDate: string | null;
   /** P3.2 — set on an exchange's replacement order (its items come from the exchange). */
   exchangedFromOrderId: string | null;
+  /** P4.1 — the lead this order converted (PRD §4.5), if it came from one. */
+  lead: { id: string; name: string; source: LeadSourceValue } | null;
   subtotal: string;
   discountTotal: string;
   total: string;

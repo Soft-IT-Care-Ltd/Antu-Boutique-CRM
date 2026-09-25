@@ -98,16 +98,18 @@ enum OrderEditRequestStatus {
 }
 
 model Team {
-  id        String     @id @default(cuid())
-  name      String
-  leaderId  String?    @unique
-  leader    User?      @relation("TeamLeader", fields: [leaderId], references: [id])
-  members   User[]     @relation("TeamMembers")
-  customers Customer[] @relation("CustomerTeam")
-  orders    Order[]    @relation("OrderTeam")
-  isActive  Boolean    @default(true)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id              String           @id @default(cuid())
+  name            String
+  leaderId        String?          @unique
+  leader          User?            @relation("TeamLeader", fields: [leaderId], references: [id])
+  members         User[]           @relation("TeamMembers")
+  customers       Customer[]       @relation("CustomerTeam")
+  orders          Order[]          @relation("OrderTeam")
+  leads           Lead[]           @relation("LeadTeam")
+  leadDailyCounts LeadDailyCount[] @relation("LeadDailyCountTeam")
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@map("teams")
 }
@@ -214,6 +216,11 @@ model User {
   cancelledReturnCases      ReturnCase[]             @relation("ReturnCaseCancelledBy")
   storeCreditEntries        StoreCreditEntry[]       @relation("StoreCreditEntryCreatedBy")
   createdOutfitSets         OutfitSet[]              @relation("OutfitSetCreatedBy")
+  createdLeads              Lead[]                   @relation("LeadCreatedBy")
+  createdLeadFollowUps      LeadFollowUp[]           @relation("LeadFollowUpCreatedBy")
+  completedLeadFollowUps    LeadFollowUp[]           @relation("LeadFollowUpCompletedBy")
+  leadDailyCounts           LeadDailyCount[]         @relation("LeadDailyCountOwner")
+  enteredLeadDailyCounts    LeadDailyCount[]         @relation("LeadDailyCountCreatedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -399,6 +406,8 @@ model Customer {
   // P3.2 — store credit. The balance is never stored: it is derived from
   // these rows (lib/store-credit/ledger.ts).
   storeCreditEntries StoreCreditEntry[]
+  // P4.1 — leads from this person (matched on phone, or set on conversion).
+  leads              Lead[]
 
   // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
   // query via `deletedAt: null`; purged by the trash cron after 30 days.
@@ -530,6 +539,11 @@ model Order {
   exchangedFromOrderId String?
   exchangedFrom        Order?  @relation("OrderExchange", fields: [exchangedFromOrderId], references: [id], onDelete: Restrict)
   exchangeOrders       Order[] @relation("OrderExchange")
+
+  // P4.1 (PRD §4.5) — the lead this order converted. One lead converts to
+  // at most one order (unique), set only by the order-create route.
+  leadId String? @unique
+  lead   Lead?   @relation("OrderLead", fields: [leadId], references: [id], onDelete: Restrict)
 
   items              OrderItem[]
   images             OrderImage[]
@@ -1873,4 +1887,149 @@ model OrderSetLine {
   @@index([orderId])
   @@index([outfitSetId])
   @@map("order_set_lines")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.5 — Leads & follow-ups (P4.1)
+// ---------------------------------------------------------------------------
+
+enum LeadSource {
+  FACEBOOK_AD
+  MESSENGER
+  WHATSAPP
+  INSTAGRAM
+  REFERRAL
+  REPEAT_CUSTOMER
+  SHOWROOM_WALK_IN
+  OTHER
+}
+
+// NEW → CONTACTED → FOLLOW_UP → NEGOTIATING → CONVERTED | LOST. CONVERTED
+// is set only by placing the lead's order (lib/leads/service.ts).
+enum LeadStatus {
+  NEW
+  CONTACTED
+  FOLLOW_UP
+  NEGOTIATING
+  CONVERTED
+  LOST
+}
+
+enum LeadLostReason {
+  PRICE
+  SIZE_UNAVAILABLE
+  NO_RESPONSE
+  BOUGHT_ELSEWHERE
+  OTHER
+}
+
+// One enquiry, recorded individually. Scoped like customers and orders:
+// createdById is the owning executive, teamId is denormalized from them.
+model Lead {
+  id    String  @id @default(cuid())
+  name  String
+  // Normalized BD phone, when the person gave one (a Messenger enquiry
+  // often has only a profile name).
+  phone String?
+
+  // Linked when the phone matches a customer the owner can see, and always
+  // on conversion.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  source   LeadSource
+  // Free text, optional ("Eid Collection"). Reports group it case-insensitively.
+  campaign String?
+  // What they asked about ("maroon kurti in M, the one from Friday's post").
+  interest String?
+  notes    String?
+
+  status      LeadStatus      @default(NEW)
+  // Required when LOST (DB CHECK); lostNote required when the reason is OTHER.
+  lostReason  LeadLostReason?
+  lostNote    String?
+  lostAt      DateTime?
+  convertedAt DateTime?
+
+  order     Order?         @relation("OrderLead")
+  followUps LeadFollowUp[]
+
+  createdById String?
+  createdBy   User?   @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  teamId      String?
+  team        Team?   @relation("LeadTeam", fields: [teamId], references: [id])
+
+  // Soft delete only, like every other record people can remove.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+  @@index([teamId])
+  @@index([status])
+  @@index([source])
+  @@index([phone])
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("leads")
+}
+
+// A reminder to get back to a lead at a date/time. Open until completed;
+// an open one past dueAt is overdue. A closed lead's (converted / lost)
+// open reminders drop off every list without being touched, so reopening
+// the lead brings them back.
+model LeadFollowUp {
+  id     String @id @default(cuid())
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  dueAt DateTime
+  note  String?
+
+  completedAt   DateTime?
+  completedById String?
+  completedBy   User?     @relation("LeadFollowUpCompletedBy", fields: [completedById], references: [id])
+  // What happened ("sent size chart, will confirm tonight").
+  outcome       String?
+
+  createdById String?
+  createdBy   User?    @relation("LeadFollowUpCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([dueAt, completedAt])
+  @@map("lead_followups")
+}
+
+// PRD §4.5 bulk quick entry: on a busy day an executive records how many
+// leads came in per source instead of one row each. Counted leads join the
+// individual ones in conversion reporting. One day's entry for one person is
+// saved as a whole (lib/leads/daily-counts.ts replaces that day's rows).
+model LeadDailyCount {
+  id             String     @id @default(cuid())
+  // Midnight (Dhaka) of the day counted, as UTC — same as DailyAdSpend.
+  countDate      DateTime
+  // Whose leads these were; scoped on this, not on who typed them in.
+  userId         String
+  user           User       @relation("LeadDailyCountOwner", fields: [userId], references: [id])
+  teamId         String?
+  team           Team?      @relation("LeadDailyCountTeam", fields: [teamId], references: [id])
+  source         LeadSource
+  campaign       String?
+  leadCount      Int
+  // How many of those became orders (≤ leadCount, DB CHECK).
+  convertedCount Int        @default(0)
+
+  createdById String?
+  createdBy   User?    @relation("LeadDailyCountCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, countDate])
+  @@index([teamId])
+  @@index([countDate])
+  @@map("lead_daily_counts")
 }

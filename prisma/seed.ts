@@ -1699,6 +1699,135 @@ async function seedSettings() {
   await prisma.setting.upsert({ where: { key: "ad_cost_allocation" }, update: {}, create: { key: "ad_cost_allocation", value: "EQUAL" } });
 }
 
+// P4.1 (PRD §4.5) — leads across the whole funnel for the demo SE, the
+// Team Leader and the Manager, with follow-ups overdue, due today and
+// upcoming, a few converted into the demo orders they already placed, and
+// a few days of quick-entry counts.
+async function seedLeadsDemo() {
+  if ((await prisma.lead.count()) > 0) return;
+  const [se, tl, manager] = await Promise.all(["01711000004", "01711000003", "01711000002"].map((phone) => prisma.user.findUniqueOrThrow({ where: { phone } })));
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const now = Date.now();
+  const ago = (days: number, hours = 0) => new Date(now - days * DAY - hours * HOUR);
+
+  type DemoLead = {
+    owner: typeof se;
+    name: string;
+    phone?: string;
+    source: "FACEBOOK_AD" | "MESSENGER" | "WHATSAPP" | "INSTAGRAM" | "REFERRAL" | "REPEAT_CUSTOMER" | "SHOWROOM_WALK_IN" | "OTHER";
+    campaign?: string;
+    interest?: string;
+    status: "NEW" | "CONTACTED" | "FOLLOW_UP" | "NEGOTIATING" | "CONVERTED" | "LOST";
+    lost?: ["PRICE" | "SIZE_UNAVAILABLE" | "NO_RESPONSE" | "BOUGHT_ELSEWHERE" | "OTHER", string?];
+    createdDaysAgo: number;
+    /** Hours from now: negative = overdue. */
+    followUps?: { inHours: number; note?: string }[];
+    done?: { daysAgo: number; outcome: string }[];
+  };
+
+  const leads: DemoLead[] = [
+    { owner: se, name: "Nusrat Jahan", phone: "01755123401", source: "FACEBOOK_AD", campaign: "Eid Collection", interest: "Maroon kurti, size M", status: "FOLLOW_UP", createdDaysAgo: 2, followUps: [{ inHours: -20, note: "Send the size chart" }], done: [{ daysAgo: 2, outcome: "Asked for price, sent photos" }] },
+    { owner: se, name: "Sadia Afrin", phone: "01755123402", source: "MESSENGER", campaign: "Eid Collection", interest: "Three-piece in olive, L", status: "NEGOTIATING", createdDaysAgo: 3, followUps: [{ inHours: -2, note: "Wants 10% off — check with TL" }] },
+    { owner: se, name: "Farzana Rahman", source: "INSTAGRAM", interest: "The printed dupatta from Friday's reel", status: "FOLLOW_UP", createdDaysAgo: 1, followUps: [{ inHours: 3, note: "She'll confirm after salary day" }] },
+    { owner: se, name: "Tahmina Akter", phone: "01755123404", source: "WHATSAPP", interest: "Plazo set, black", status: "CONTACTED", createdDaysAgo: 1, followUps: [{ inHours: 5 }] },
+    { owner: se, name: "Rumana Islam", phone: "01755123405", source: "FACEBOOK_AD", campaign: "Puja Special", interest: "Saree-style kurti", status: "FOLLOW_UP", createdDaysAgo: 4, followUps: [{ inHours: 30, note: "Call after 5 pm" }] },
+    { owner: se, name: "Mim Chowdhury", source: "MESSENGER", interest: "Asked about delivery to Sylhet", status: "NEW", createdDaysAgo: 0 },
+    { owner: se, name: "Jannatul Ferdous", phone: "01755123407", source: "REFERRAL", interest: "Wedding guest outfit", status: "NEW", createdDaysAgo: 0 },
+    { owner: se, name: "Shirin Sultana", phone: "01755123408", source: "FACEBOOK_AD", campaign: "Eid Collection", interest: "Kurti, XL", status: "LOST", lost: ["SIZE_UNAVAILABLE"], createdDaysAgo: 9, done: [{ daysAgo: 8, outcome: "XL out of stock in that colour" }] },
+    { owner: se, name: "Lamia Hossain", source: "INSTAGRAM", status: "LOST", lost: ["NO_RESPONSE"], createdDaysAgo: 12 },
+    { owner: se, name: "Ayesha Siddika", phone: "01755123410", source: "WHATSAPP", campaign: "Puja Special", status: "LOST", lost: ["PRICE"], createdDaysAgo: 6 },
+    { owner: se, name: "Kaniz Fatema", phone: "01755123411", source: "SHOWROOM_WALK_IN", status: "LOST", lost: ["OTHER", "Wanted home trial — we don't offer it"], createdDaysAgo: 15 },
+    { owner: tl, name: "Mahbuba Khatun", phone: "01755123420", source: "FACEBOOK_AD", campaign: "Eid Collection", interest: "Two kurtis for her daughters", status: "NEGOTIATING", createdDaysAgo: 2, followUps: [{ inHours: -5, note: "Confirm both sizes" }] },
+    { owner: tl, name: "Sabina Yasmin", source: "MESSENGER", status: "CONTACTED", createdDaysAgo: 1, followUps: [{ inHours: 26 }] },
+    { owner: tl, name: "Nasrin Begum", phone: "01755123422", source: "REPEAT_CUSTOMER", status: "LOST", lost: ["BOUGHT_ELSEWHERE"], createdDaysAgo: 7 },
+    { owner: manager, name: "Corporate order — Dhaka office", phone: "01755123430", source: "OTHER", interest: "30 matching kurtis for an event", status: "NEGOTIATING", createdDaysAgo: 5, followUps: [{ inHours: 48, note: "Send quotation" }] },
+  ];
+
+  for (const demo of leads) {
+    const createdAt = ago(demo.createdDaysAgo, 2);
+    const customer = demo.phone ? await prisma.customer.findUnique({ where: { phone: demo.phone } }) : null;
+    const lead = await prisma.lead.create({
+      data: {
+        name: demo.name,
+        phone: demo.phone ?? null,
+        customerId: customer?.id ?? null,
+        source: demo.source,
+        campaign: demo.campaign ?? null,
+        interest: demo.interest ?? null,
+        status: demo.status,
+        lostReason: demo.lost?.[0] ?? null,
+        lostNote: demo.lost?.[1] ?? null,
+        lostAt: demo.lost ? ago(Math.max(0, demo.createdDaysAgo - 1)) : null,
+        createdById: demo.owner.id,
+        teamId: demo.owner.teamId,
+        createdAt,
+      },
+    });
+    for (const d of demo.done ?? []) {
+      await prisma.leadFollowUp.create({ data: { leadId: lead.id, dueAt: ago(d.daysAgo, 1), completedAt: ago(d.daysAgo), completedById: demo.owner.id, outcome: d.outcome, createdById: demo.owner.id, createdAt } });
+    }
+    for (const f of demo.followUps ?? []) {
+      await prisma.leadFollowUp.create({ data: { leadId: lead.id, dueAt: new Date(now + f.inHours * HOUR), note: f.note ?? null, createdById: demo.owner.id, createdAt } });
+    }
+  }
+
+  // Converted leads: the demo orders an executive/TL already placed, each
+  // linked back to the lead it came from (order.leadId).
+  const sources = ["FACEBOOK_AD", "MESSENGER", "WHATSAPP", "FACEBOOK_AD", "REPEAT_CUSTOMER"] as const;
+  const campaigns = ["Eid Collection", null, null, "Puja Special", null];
+  for (const owner of [se, tl]) {
+    const orders = await prisma.order.findMany({
+      where: { createdById: owner.id, channel: "ONLINE", leadId: null, deletedAt: null, customerId: { not: null } },
+      include: { customer: true },
+      orderBy: { createdAt: "asc" },
+      take: owner.id === se.id ? 5 : 1,
+    });
+    for (const [i, order] of orders.entries()) {
+      const lead = await prisma.lead.create({
+        data: {
+          name: order.customer!.name,
+          phone: order.customer!.phone,
+          customerId: order.customerId,
+          source: sources[i % sources.length],
+          campaign: campaigns[i % campaigns.length],
+          status: "CONVERTED",
+          convertedAt: order.createdAt,
+          createdById: owner.id,
+          teamId: owner.teamId,
+          createdAt: new Date(order.createdAt.getTime() - DAY),
+        },
+      });
+      await prisma.order.update({ where: { id: order.id }, data: { leadId: lead.id } });
+    }
+  }
+
+  // Quick-entry counts for three busy days (Dhaka midnight, as UTC).
+  const dhakaMidnight = (daysAgo: number) => {
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(ago(daysAgo));
+    return new Date(`${day}T00:00:00+06:00`);
+  };
+  const counts: { owner: typeof se; daysAgo: number; rows: [DemoLead["source"], string | null, number, number][] }[] = [
+    { owner: se, daysAgo: 3, rows: [["MESSENGER", null, 12, 3], ["FACEBOOK_AD", "Eid Collection", 9, 2], ["WHATSAPP", null, 4, 1]] },
+    { owner: se, daysAgo: 5, rows: [["MESSENGER", null, 8, 2], ["INSTAGRAM", null, 3, 0]] },
+    { owner: tl, daysAgo: 3, rows: [["FACEBOOK_AD", "Eid Collection", 6, 2], ["MESSENGER", null, 5, 1]] },
+  ];
+  for (const c of counts) {
+    await prisma.leadDailyCount.createMany({
+      data: c.rows.map(([source, campaign, leadCount, convertedCount]) => ({
+        countDate: dhakaMidnight(c.daysAgo),
+        userId: c.owner.id,
+        teamId: c.owner.teamId,
+        source,
+        campaign,
+        leadCount,
+        convertedCount,
+        createdById: c.owner.id,
+      })),
+    });
+  }
+}
+
 async function main() {
   const roleIds = await seedPermissionsAndRoles();
   await seedCatalogMasters();
@@ -1718,6 +1847,7 @@ async function main() {
   await seedReturnsDemo();
   await seedStoreCreditDemo();
   await seedSetsAndPackagingDemo();
+  await seedLeadsDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

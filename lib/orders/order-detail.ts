@@ -13,6 +13,8 @@ const orderDetailInclude = {
   courier: { select: { id: true, name: true } },
   courierZone: { select: { id: true, zone: true } },
   createdBy: { select: { id: true, name: true } },
+  // P4.1 — the lead this order converted, if any.
+  lead: { select: { id: true, name: true, source: true } },
   items: {
     include: {
       variant: {
@@ -102,6 +104,7 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
     internalNote: order.internalNote,
     deliveryNote: order.deliveryNote,
     exchangedFromOrderId: order.exchangedFromOrderId,
+    lead: order.lead,
     items: order.items.map((item) => ({
       id: item.id,
       variantId: item.variantId,
