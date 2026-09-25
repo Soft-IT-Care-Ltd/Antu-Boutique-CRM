@@ -42,7 +42,7 @@ function collectKeys(value: unknown, keys: Set<string>): void {
 
 describe("packing serializers never carry a money-shaped field", () => {
   it("the packing queue's serialized items have no forbidden key anywhere in the tree", async () => {
-    const { orders } = await loadPackingQueuePage({ page: 1, pageSize: 20 });
+    const { orders } = await loadPackingQueuePage({ page: 1, pageSize: 20 }, 24);
     expect(orders.length).toBeGreaterThan(0);
 
     const keys = new Set<string>();
@@ -54,7 +54,7 @@ describe("packing serializers never carry a money-shaped field", () => {
   });
 
   it("the packing order detail has no forbidden key anywhere in the tree", async () => {
-    const { orders } = await loadPackingQueuePage({ page: 1, pageSize: 1 });
+    const { orders } = await loadPackingQueuePage({ page: 1, pageSize: 1 }, 24);
     expect(orders.length).toBeGreaterThan(0);
 
     const keys = new Set<string>();

@@ -4,9 +4,11 @@ import { z } from "zod";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { loadPackingQueuePage, serializePackingQueueItem } from "@/lib/packing/queue";
 import { getPackingSlaHours } from "@/lib/settings/get";
+import { PACKING_VIEWS } from "@/lib/packing/types";
 
 const querySchema = z.object({
   q: z.string().trim().optional(),
+  view: z.enum(PACKING_VIEWS).default("queue"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -23,10 +25,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
 
-  const [{ total, orders }, slaHours] = await Promise.all([
-    loadPackingQueuePage(parsed.data),
-    getPackingSlaHours(),
-  ]);
+  const slaHours = await getPackingSlaHours();
+  const { total, orders } = await loadPackingQueuePage(parsed.data, slaHours);
 
   return NextResponse.json({
     items: orders.map((order) => serializePackingQueueItem(order, slaHours)),

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requirePermission } from "@/lib/auth/require-permission";
-import { EXPENSE_KIND_VALUES, EXPENSE_NATURE_VALUES } from "@/lib/expenses/constants";
+import { EXPENSE_KIND_FILTER_VALUES, EXPENSE_NATURE_VALUES } from "@/lib/expenses/constants";
 import { listExpenses } from "@/lib/expenses/queries";
 import { createExpense } from "@/lib/expenses/service";
 import { badRequest, dayString, financeErrorResponse, idString, money, moneyDayString } from "@/lib/finance/http";
@@ -13,7 +13,7 @@ import { prisma } from "@/lib/prisma";
 const querySchema = z.object({
   q: z.string().trim().max(100).optional(),
   categoryId: idString.optional(),
-  kind: z.enum(EXPENSE_KIND_VALUES).optional(),
+  kind: z.enum(EXPENSE_KIND_FILTER_VALUES).optional(),
   nature: z.enum(EXPENSE_NATURE_VALUES).optional(),
   walletId: idString.optional(),
   from: dayString.optional(),

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { CourierWorkspace } from "@/components/courier/courier-workspace";
 import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
@@ -5,8 +7,9 @@ import { scopedWhere } from "@/lib/auth/scope";
 import { prisma } from "@/lib/prisma";
 import { listWalletOptions } from "@/lib/wallets/service";
 
-export default async function CourierPage() {
+export default async function CourierPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await guardPage("/courier");
+  const initialTab = z.enum(["shipments", "returns", "cod", "steadfast"]).optional().catch(undefined).parse((await searchParams).tab);
   const [canViewShipments, canSend, canSync, canReconcile, canCheckReturns, canEditSettings, canSeeCost] = await Promise.all([
     can(user, ["courier.view", "courier.create_shipment", "courier.reconcile", "courier.manage"]),
     can(user, "courier.create_shipment"),
@@ -29,6 +32,8 @@ export default async function CourierPage() {
         <p className="text-sm text-muted-foreground">Steadfast bookings, parcel tracking, returns coming back, and the integration itself.</p>
       </div>
       <CourierWorkspace
+        key={initialTab ?? ""}
+        initialTab={initialTab}
         canViewShipments={canViewShipments}
         canSend={canSend}
         canSync={canSync}

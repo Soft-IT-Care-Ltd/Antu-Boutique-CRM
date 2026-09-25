@@ -32,11 +32,14 @@ const PAGE_SIZE = 20;
 // where it stands, plus the exchange report. Approve/reject/cancel inline.
 export function ReturnsWorkspace({
   permissions,
+  initial = {},
 }: {
   permissions: { canApproveReturn: boolean; canApproveExchange: boolean; canRequestReturn: boolean; canRequestExchange: boolean; canCounterExchange: boolean; seesBothTypes: boolean };
+  /** From a dashboard link (P4.3). */
+  initial?: { view?: Tab | "report"; type?: ReturnCaseTypeValue };
 }) {
-  const [view, setView] = useState<Tab | "report">(permissions.canApproveReturn || permissions.canApproveExchange ? "requested" : "approved");
-  const [type, setType] = useState<ReturnCaseTypeValue | "ALL">("ALL");
+  const [view, setView] = useState<Tab | "report">(initial.view ?? (permissions.canApproveReturn || permissions.canApproveExchange ? "requested" : "approved"));
+  const [type, setType] = useState<ReturnCaseTypeValue | "ALL">(initial.type ?? "ALL");
   const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");

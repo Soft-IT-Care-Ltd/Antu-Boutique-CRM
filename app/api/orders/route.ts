@@ -20,6 +20,10 @@ import { reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
 import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
+import { ORDER_DATE_BASES, ORDER_LIST_PRESETS } from "@/lib/orders/list-presets";
+import { dateBasisWhere, dhakaDaysRange, presetWhere } from "@/lib/orders/list-where";
+import { dayString } from "@/lib/finance/http";
+import { getPackingSlaHours } from "@/lib/settings/get";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
 import { SetError } from "@/lib/sets/service";
@@ -34,8 +38,12 @@ const querySchema = z.object({
   status: z.enum(ORDER_STATUS_VALUES).optional(),
   channel: z.enum(ORDER_CHANNEL_VALUES).optional(),
   createdById: z.string().cuid().optional(),
-  from: z.string().trim().optional(),
-  to: z.string().trim().optional(),
+  // Dhaka calendar days, inclusive, read against `dateBy` (default: placed).
+  from: dayString.optional(),
+  to: dayString.optional(),
+  dateBy: z.enum(ORDER_DATE_BASES).default("placed"),
+  // P4.3 — the named slices the dashboards link to (lib/orders/list-presets.ts).
+  preset: z.enum(ORDER_LIST_PRESETS).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -48,17 +56,17 @@ export async function GET(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
-  const { q, status, channel, createdById, from, to, page, pageSize } = parsed.data;
+  const { q, status, channel, createdById, from, to, dateBy, preset, page, pageSize } = parsed.data;
 
   const andConditions: Prisma.OrderWhereInput[] = [{ deletedAt: null }];
+  if (preset) andConditions.push(presetWhere(preset, { packingSlaHours: preset === "stuck" ? await getPackingSlaHours() : 0, now: new Date() }));
   if (status) andConditions.push({ status });
   if (channel) andConditions.push({ channel });
   // Client-sent createdById is safe here: scopedWhere() ANDs the mandatory
   // scope clause in afterward, so an SE sending someone else's id just gets
   // zero rows back, never a wider result (CLAUDE.md rule 6).
   if (createdById) andConditions.push({ createdById });
-  if (from) andConditions.push({ createdAt: { gte: new Date(from) } });
-  if (to) andConditions.push({ createdAt: { lte: new Date(to) } });
+  if (from || to) andConditions.push(dateBasisWhere(dateBy, dhakaDaysRange(from, to)));
   if (q) {
     andConditions.push({
       OR: [
@@ -71,8 +79,10 @@ export async function GET(request: NextRequest) {
 
   const where: Prisma.OrderWhereInput = scopedWhere({ AND: andConditions }, guard.user);
 
-  const [total, orders] = await Promise.all([
+  const [total, sums, orders] = await Promise.all([
     prisma.order.count({ where }),
+    // Shown under the list so a dashboard figure can be checked against it.
+    prisma.order.aggregate({ where, _sum: { total: true, dueAmount: true } }),
     prisma.order.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -85,6 +95,8 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     items: orders.map(serializeOrderListItem),
     total,
+    totalValue: (sums._sum.total ?? 0).toString(),
+    totalDue: (sums._sum.dueAmount ?? 0).toString(),
     page,
     pageSize,
   });

@@ -193,3 +193,16 @@ export async function codSummary(user: SessionUser): Promise<CodSummary> {
     steadfastEnabled: integration?.isEnabled ?? false,
   };
 }
+
+/**
+ * P4.3 (PRD §4.16) — COD the courier collected at the door more than `days`
+ * ago and still hasn't paid out: the owner's "COD not received" alert. The
+ * same parcels as the COD tab's awaiting list, cut at the delivery date.
+ */
+export async function codOverdueSummary(user: SessionUser, days: number, now = new Date()): Promise<{ count: number; amount: string }> {
+  const rows = await prisma.shipment.findMany({
+    where: { AND: [awaitingWhere(user), { deliveredAt: { lt: new Date(now.getTime() - days * 86_400_000) } }] },
+    select: { codAmount: true, codCollected: true },
+  });
+  return { count: rows.length, amount: round2(rows.reduce((sum, s) => sum + toNumber(s.codCollected ?? s.codAmount), 0)).toFixed(2) };
+}

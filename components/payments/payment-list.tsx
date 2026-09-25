@@ -40,7 +40,20 @@ const EMPTY: Record<PaymentListView, { title: string; body: string }> = {
  * refunds awaiting approval, and payment history. Money is only counted in
  * a wallet's balance once verified (payments) or approved (refunds).
  */
-export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { view: PaymentListView; wallets: WalletOption[]; canVerify: boolean; canDecideRefund: boolean }) {
+export function PaymentList({
+  view,
+  wallets,
+  canVerify,
+  canDecideRefund,
+  initialFilters = {},
+}: {
+  view: PaymentListView;
+  wallets: WalletOption[];
+  canVerify: boolean;
+  canDecideRefund: boolean;
+  /** From a dashboard link (P4.3). */
+  initialFilters?: { from?: string; to?: string };
+}) {
   const [data, setData] = useState<ListResponse | null>(null);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
@@ -49,8 +62,8 @@ export function PaymentList({ view, wallets, canVerify, canDecideRefund }: { vie
   const [walletId, setWalletId] = useState("");
   const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [refundStatus, setRefundStatus] = useState<RefundStatusValue | "all">(view === "refunds" ? "PENDING" : "all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(initialFilters.from ?? "");
+  const [to, setTo] = useState(initialFilters.to ?? "");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());

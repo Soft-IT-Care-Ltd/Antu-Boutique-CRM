@@ -19,12 +19,17 @@ import { parse } from "acorn";
 const root = process.argv[2] ?? ".next/static/chunks";
 
 // Filled by lib/browser/polyfills.ts, so a call is fine.
-const POLYFILLED = { "Array/String .at()": /\.at\((?!\s*\))/g, "Object.hasOwn": /Object\.hasOwn\s*\(/g, "findLast/findLastIndex": /\.findLast(?:Index)?\s*\(/g };
+const POLYFILLED = {
+  "Array/String .at()": /\.at\((?!\s*\))/g,
+  "Object.hasOwn": /Object\.hasOwn\s*\(/g,
+  "findLast/findLastIndex": /\.findLast(?:Index)?\s*\(/g,
+  // P4.3 — Errors and plain data only (Recharts' es-toolkit clones an Error with it).
+  structuredClone: /\bstructuredClone\s*\(/g,
+};
 // Not polyfilled: a call must sit next to a typeof check for the same name.
 const GUARDED = { "crypto.randomUUID": /\.randomUUID\s*\(/g };
 // Not polyfilled and not guardable here: any call fails the check.
 const FORBIDDEN = {
-  structuredClone: /\bstructuredClone\s*\(/g,
   "toSorted/toReversed/toSpliced": /\.(?:toSorted|toReversed|toSpliced)\s*\(/g,
   "Object.groupBy/Map.groupBy": /\b(?:Object|Map)\.groupBy\s*\(/g,
   "Promise.withResolvers": /Promise\.withResolvers\s*\(/g,

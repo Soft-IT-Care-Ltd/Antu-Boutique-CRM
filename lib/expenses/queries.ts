@@ -3,7 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import type { Db } from "@/lib/db/tx";
-import type { AdPlatformValue, ExpenseCategoryOption, ExpenseKindValue, ExpenseNatureValue } from "@/lib/expenses/constants";
+import { NON_OPERATING_EXPENSE_KINDS, OPERATING_EXPENSE_FILTER, type AdPlatformValue, type ExpenseCategoryOption, type ExpenseKindFilter, type ExpenseKindValue, type ExpenseNatureValue } from "@/lib/expenses/constants";
 import { expenseSource } from "@/lib/expenses/service";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { prisma } from "@/lib/prisma";
@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 export type ExpenseListQuery = {
   q?: string;
   categoryId?: string;
-  kind?: ExpenseKindValue;
+  kind?: ExpenseKindFilter;
   nature?: ExpenseNatureValue;
   walletId?: string;
   from?: Date;
@@ -50,7 +50,8 @@ export async function listExpenseCategories(db: Db = prisma): Promise<ExpenseCat
 function expenseWhere(query: Omit<ExpenseListQuery, "page" | "pageSize">): Prisma.ExpenseWhereInput {
   const and: Prisma.ExpenseWhereInput[] = [{ deletedAt: null }];
   if (query.categoryId) and.push({ categoryId: query.categoryId });
-  if (query.kind) and.push({ category: { kind: query.kind } });
+  if (query.kind === OPERATING_EXPENSE_FILTER) and.push({ category: { kind: { notIn: NON_OPERATING_EXPENSE_KINDS } } });
+  else if (query.kind) and.push({ category: { kind: query.kind } });
   if (query.nature) and.push({ nature: query.nature });
   if (query.walletId) and.push({ walletId: query.walletId });
   if (query.from) and.push({ expenseDate: { gte: query.from } });

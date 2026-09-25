@@ -27,7 +27,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <LeadsHeader title="Leads" description="Every enquiry from Messenger, WhatsApp, ads and the showroom — until it becomes an order or is lost." />
-      <LeadList canCreate={canCreate} people={people} campaigns={campaigns} initialFilters={filters} />
+      <LeadList key={JSON.stringify(filters)} canCreate={canCreate} people={people} campaigns={campaigns} initialFilters={filters} />
     </div>
   );
 }

@@ -73,6 +73,13 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
+  /* P4.3 dashboard charts — validated categorical steps (dataviz reference
+     palette): online/walk-in, returns/exchanges, and a loss day. */
+  --viz-online: #2a78d6;
+  --viz-walk-in: #eb6834;
+  --viz-returns: #1baf7a;
+  --viz-exchanges: #4a3aa7;
+  --viz-loss: #e34948;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -107,6 +114,11 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  --viz-online: #3987e5;
+  --viz-walk-in: #d95926;
+  --viz-returns: #199e70;
+  --viz-exchanges: #9085e9;
+  --viz-loss: #e66767;
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

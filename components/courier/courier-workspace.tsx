@@ -20,13 +20,18 @@ export type CourierWorkspaceProps = {
   openReturns: number;
   /** Where a courier payout can land (P2.3 wallets). */
   payoutWallets: WalletOption[];
+  /** A dashboard link's ?tab= (P4.3) — ignored when this user can't open that tab. */
+  initialTab?: CourierTab;
 };
+
+export type CourierTab = "shipments" | "returns" | "cod" | "steadfast";
 
 // CORRECTIONS Courier §2: the Courier page IS the Steadfast page — shipments,
 // the return condition check, and the integration itself. The schema stays
 // multi-courier; only Steadfast is shown.
 export function CourierWorkspace(props: CourierWorkspaceProps) {
-  const defaultTab = props.canViewShipments ? "shipments" : props.canViewReturns ? "returns" : "steadfast";
+  const allowed: Record<CourierTab, boolean> = { shipments: props.canViewShipments, returns: props.canViewReturns, cod: props.canReconcile, steadfast: props.canSeeIntegration };
+  const defaultTab = props.initialTab && allowed[props.initialTab] ? props.initialTab : props.canViewShipments ? "shipments" : props.canViewReturns ? "returns" : "steadfast";
   return (
     <Tabs defaultValue={defaultTab}>
       <TabsList>

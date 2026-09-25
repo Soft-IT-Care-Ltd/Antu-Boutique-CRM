@@ -5,7 +5,8 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hoursSince, isOverdue } from "@/lib/packing/sla";
 import type { OrderStatusValue } from "@/lib/orders/constants";
-import type { PackingOrderDetail, PackingQueueItem } from "@/lib/packing/types";
+import type { PackingOrderDetail, PackingQueueItem, PackingView } from "@/lib/packing/types";
+import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
 import { onlineOrderCustomer } from "@/lib/orders/customer";
 import { packagingForDisplay, type PackagingNeed } from "@/lib/packaging/consume";
 
@@ -72,7 +73,8 @@ function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueue
     })),
     createdAt: order.createdAt.toISOString(),
     hoursOpen: Math.round(hoursSince(order.createdAt) * 10) / 10,
-    isOverdue: isOverdue(order.createdAt, slaHours),
+    isOverdue: order.status === "CONFIRMED" && isOverdue(order.createdAt, slaHours),
+    packedAt: order.status === "CONFIRMED" ? null : (order.statusHistory[0]?.createdAt.toISOString() ?? null),
   };
 }
 
@@ -95,7 +97,6 @@ export function serializePackingOrderDetail(order: PackingOrderRow & { packaging
       thana: customer.thana,
       addressDetail: customer.addressDetail,
     },
-    packedAt: packedEntry?.createdAt.toISOString() ?? null,
     packedBy: packedEntry?.changedBy ?? null,
     packaging: (order.packaging ?? []).map((p) => ({ label: p.label, sku: p.sku, qty: p.qty })),
   };
@@ -103,19 +104,39 @@ export function serializePackingOrderDetail(order: PackingOrderRow & { packaging
 
 export type PackingQueuePageParams = {
   q?: string;
+  view?: PackingView;
   page: number;
   pageSize: number;
 };
+
+/**
+ * P4.3 — one packing view's orders. Online parcels only: a walk-in sale
+ * leaves over the counter and never reaches Packing. The Packing
+ * dashboard counts with this same where, so its numbers match the screen.
+ */
+export function packingViewWhere(view: PackingView, slaHours: number, now = new Date()): Prisma.OrderWhereInput {
+  const base: Prisma.OrderWhereInput = { deletedAt: null, channel: "ONLINE" };
+  switch (view) {
+    case "queue":
+      return { ...base, status: "CONFIRMED" };
+    case "overdue":
+      return { ...base, status: "CONFIRMED", createdAt: { lt: new Date(now.getTime() - slaHours * 60 * 60 * 1000) } };
+    case "ready":
+      return { ...base, status: "PACKED" };
+    case "packed_today":
+      return { ...base, statusHistory: { some: { toStatus: "PACKED", createdAt: { gte: dhakaDayStartUtc(todayInDhaka()) } } } };
+  }
+}
 
 // PRD §4.8: "packing queue — all CONFIRMED orders, oldest first." Not
 // scoped via lib/auth/scope.ts (SE-own/TL-team) — Packing works every
 // order regardless of who created it, same as Accounts' order.view_all
 // today, just without a money-carrying permission attached (see the
 // comment on ROLE_TEMPLATES.PACKING).
-export async function loadPackingQueuePage(params: PackingQueuePageParams) {
-  const { q, page, pageSize } = params;
+export async function loadPackingQueuePage(params: PackingQueuePageParams, slaHours: number) {
+  const { q, page, pageSize, view = "queue" } = params;
 
-  const where: Prisma.OrderWhereInput = { status: "CONFIRMED", deletedAt: null };
+  const where: Prisma.OrderWhereInput = packingViewWhere(view, slaHours);
   if (q) {
     where.OR = [
       { orderNo: { contains: q, mode: "insensitive" } },
@@ -128,7 +149,8 @@ export async function loadPackingQueuePage(params: PackingQueuePageParams) {
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      orderBy: { createdAt: "asc" },
+      // The queue is worked oldest first; what's been packed today reads newest first.
+      orderBy: { createdAt: view === "packed_today" ? "desc" : "asc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: packingOrderInclude,

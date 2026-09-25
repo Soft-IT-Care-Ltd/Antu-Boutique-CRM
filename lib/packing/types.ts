@@ -14,6 +14,19 @@ export const PACKING_CHECKLIST_KEYS = ["itemsMatch", "imageMatched", "qualityChe
 export type PackingChecklistKey = (typeof PACKING_CHECKLIST_KEYS)[number];
 export type PackingChecklist = Record<PackingChecklistKey, boolean>;
 
+// P4.3 — the packing screen's views, each one a number on the Packing
+// dashboard: the queue itself, the part of it past the SLA, parcels packed
+// and waiting for the courier, and what was packed today.
+export const PACKING_VIEWS = ["queue", "overdue", "ready", "packed_today"] as const;
+export type PackingView = (typeof PACKING_VIEWS)[number];
+
+export const PACKING_VIEW_LABELS: Record<PackingView, string> = {
+  queue: "To pack",
+  overdue: "Overdue",
+  ready: "Ready to hand over",
+  packed_today: "Packed today",
+};
+
 export type PackingImageView = {
   id: string;
   filePath: string;
@@ -43,6 +56,8 @@ export type PackingQueueItem = {
   createdAt: string;
   hoursOpen: number;
   isOverdue: boolean;
+  /** Once packed: when (the latest PACKED move) — the ready / packed-today views show it instead of the SLA. */
+  packedAt: string | null;
 };
 
 export type PackingOrderDetail = PackingQueueItem & {
@@ -54,7 +69,6 @@ export type PackingOrderDetail = PackingQueueItem & {
     thana: string | null;
     addressDetail: string | null;
   };
-  packedAt: string | null;
   packedBy: { id: string; name: string } | null;
   /** P3.3 — bags, boxes, tissue and tags: used (once packed) or to use. */
   packaging: { label: string; sku: string; qty: number }[];

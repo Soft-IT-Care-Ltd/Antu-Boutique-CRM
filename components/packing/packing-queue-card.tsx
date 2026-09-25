@@ -7,6 +7,7 @@ import { ImageOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ImageLightbox } from "@/components/packing/image-lightbox";
+import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { packingUploadUrl } from "@/lib/packing/types";
 import type { PackingQueueItem } from "@/lib/packing/types";
 
@@ -24,9 +25,13 @@ export function PackingQueueCard({ order }: { order: PackingQueueItem }) {
           <Link href={`/packing/${order.id}`} className="font-mono text-sm font-semibold hover:underline">
             {order.orderNo}
           </Link>
-          <Badge variant={order.isOverdue ? "destructive" : "secondary"}>
-            {order.isOverdue ? "Overdue" : `${Math.max(0, Math.round(order.hoursOpen))}h`}
-          </Badge>
+          {order.packedAt ? (
+            <Badge variant="outline">Packed {formatDhakaDateTime(order.packedAt)}</Badge>
+          ) : (
+            <Badge variant={order.isOverdue ? "destructive" : "secondary"}>
+              {order.isOverdue ? "Overdue" : `${Math.max(0, Math.round(order.hoursOpen))}h`}
+            </Badge>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {order.images.length > 0 ? (

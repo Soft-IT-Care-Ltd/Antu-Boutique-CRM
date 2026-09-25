@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, ShoppingBag, X } from "lucide-react";
 
 import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,18 @@ import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ORDER_STATUS_LABELS, ORDER_STATUS_VALUES } from "@/lib/orders/constants";
 import type { OrderListItem } from "@/lib/orders/types";
 import type { OrderStatusValue } from "@/lib/orders/constants";
+import { ORDER_DATE_BASIS_LABELS, ORDER_LIST_PRESET_HINTS, ORDER_LIST_PRESET_LABELS, type OrderDateBasis, type OrderListPreset } from "@/lib/orders/list-presets";
+
+/** Filters a link (a dashboard number) can open the list with. */
+export type OrderListInitialFilters = {
+  status?: OrderStatusValue;
+  channel?: "ONLINE" | "WALK_IN";
+  createdById?: string;
+  from?: string;
+  to?: string;
+  dateBy?: OrderDateBasis;
+  preset?: OrderListPreset;
+};
 
 const PAGE_SIZE = 20;
 
@@ -37,18 +49,21 @@ const STATUS_BADGE_VARIANT: Partial<Record<OrderStatusValue, "default" | "second
   PARTIAL_DELIVERED: "outline",
 };
 
-export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; canFilterBySe: boolean }) {
+export function OrderList({ canCreate, canFilterBySe, initialFilters = {} }: { canCreate: boolean; canFilterBySe: boolean; initialFilters?: OrderListInitialFilters }) {
   const router = useRouter();
   const [items, setItems] = useState<OrderListItem[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [sums, setSums] = useState<{ value: string; due: string } | null>(null);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [status, setStatus] = useState("all");
-  const [channel, setChannel] = useState<ChannelFilterValue>("all");
-  const [createdById, setCreatedById] = useState("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [status, setStatus] = useState<string>(initialFilters.status ?? "all");
+  const [channel, setChannel] = useState<ChannelFilterValue>(initialFilters.channel ?? "all");
+  const [createdById, setCreatedById] = useState(initialFilters.createdById ?? "all");
+  const [from, setFrom] = useState(initialFilters.from ?? "");
+  const [to, setTo] = useState(initialFilters.to ?? "");
+  const [dateBy, setDateBy] = useState<OrderDateBasis>(initialFilters.dateBy ?? "placed");
+  const [preset, setPreset] = useState<OrderListPreset | null>(initialFilters.preset ?? null);
   const [salesExecutives, setSalesExecutives] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,17 +87,20 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
     if (createdById !== "all") params.set("createdById", createdById);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if ((from || to) && dateBy !== "placed") params.set("dateBy", dateBy);
+    if (preset) params.set("preset", preset);
     params.set("page", String(page));
     params.set("pageSize", String(PAGE_SIZE));
 
-    fetchJson<{ items: OrderListItem[]; total: number }>(`/api/orders?${params.toString()}`)
+    fetchJson<{ items: OrderListItem[]; total: number; totalValue: string; totalDue: string }>(`/api/orders?${params.toString()}`)
       .then((data) => {
         setItems(data.items);
         setTotal(data.total);
+        setSums({ value: data.totalValue, due: data.totalDue });
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load orders."));
-  }, [debouncedQ, status, channel, createdById, from, to, page]);
+  }, [debouncedQ, status, channel, createdById, from, to, dateBy, preset, page]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
@@ -148,6 +166,28 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
         ) : null}
       </div>
 
+      {preset || ((from || to) && dateBy !== "placed") ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {preset ? (
+            <Badge variant="secondary" className="h-auto gap-1 py-1 whitespace-normal">
+              <span title={ORDER_LIST_PRESET_HINTS[preset]}>{ORDER_LIST_PRESET_LABELS[preset]}</span>
+              <button type="button" aria-label="Clear this filter" className="rounded-sm hover:bg-foreground/10" onClick={() => updateFilter(setPreset, null)}>
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ) : null}
+          {(from || to) && dateBy !== "placed" ? (
+            <Badge variant="secondary" className="h-auto gap-1 py-1">
+              Dates are when it was {ORDER_DATE_BASIS_LABELS[dateBy].toLowerCase()}
+              <button type="button" aria-label="Filter by the day it was placed instead" className="rounded-sm hover:bg-foreground/10" onClick={() => updateFilter(setDateBy, "placed")}>
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ) : null}
+          {preset ? <span className="text-muted-foreground">{ORDER_LIST_PRESET_HINTS[preset]}</span> : null}
+        </div>
+      ) : null}
+
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {!items ? (
@@ -207,6 +247,12 @@ export function OrderList({ canCreate, canFilterBySe }: { canCreate: boolean; ca
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             Page {page} of {totalPages} · {total} orders
+            {sums ? (
+              <>
+                {" "}
+                · {formatBDT(sums.value)} total · {formatBDT(sums.due)} due
+              </>
+            ) : null}
           </span>
           <div className="flex gap-1">
             <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>

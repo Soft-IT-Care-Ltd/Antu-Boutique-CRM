@@ -19,6 +19,17 @@ export const EXPENSE_KIND_LABELS: Record<ExpenseKindValue, string> = {
   MISC: "Misc",
 };
 
+/**
+ * Paying a supplier is cash out, never P&L: stock cost reaches profit as
+ * COGS (PRD §4.12 P&L rule). Everything else is an operating expense.
+ */
+export const NON_OPERATING_EXPENSE_KINDS: ExpenseKindValue[] = ["PURCHASE"];
+
+/** List filter: every heading except supplier payments (P4.3 — what the dashboard's "Expenses" adds up). */
+export const OPERATING_EXPENSE_FILTER = "OPERATING";
+export const EXPENSE_KIND_FILTER_VALUES = [...EXPENSE_KIND_VALUES, OPERATING_EXPENSE_FILTER] as const;
+export type ExpenseKindFilter = (typeof EXPENSE_KIND_FILTER_VALUES)[number];
+
 export const EXPENSE_NATURE_VALUES = ["FIXED", "VARIABLE"] as const;
 export type ExpenseNatureValue = (typeof EXPENSE_NATURE_VALUES)[number];
 

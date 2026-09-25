@@ -40,6 +40,27 @@ describe("polyfills for iOS Safari 15.0–15.3", () => {
     for (const k in []) throw new Error(`polyfill ${k} is enumerable`);
   });
 
+  it("fills structuredClone for Errors and plain data (Recharts' es-toolkit), refusing what it can't copy", async () => {
+    remove(globalThis, "structuredClone");
+    await import("@/lib/browser/polyfills");
+
+    const err = new TypeError("boom", { cause: { code: 7 } });
+    const errCopy = structuredClone(err);
+    expect(errCopy).not.toBe(err);
+    expect(errCopy).toBeInstanceOf(TypeError);
+    expect([errCopy.message, errCopy.name, (errCopy.cause as { code: number }).code]).toEqual(["boom", "TypeError", 7]);
+
+    const data = { a: [1, { b: new Date(0) }], m: new Map([["k", new Set([1])]]) };
+    const copy = structuredClone(data);
+    expect(copy).toEqual(data);
+    expect(copy.a).not.toBe(data.a);
+    const loop: Record<string, unknown> = {};
+    loop.self = loop;
+    const loopCopy = structuredClone(loop);
+    expect(loopCopy.self).toBe(loopCopy);
+    expect(() => structuredClone({ f: () => 1 })).toThrow(TypeError);
+  });
+
   it("never replaces a built-in that exists", async () => {
     const native = Array.prototype.at;
     await import("@/lib/browser/polyfills");

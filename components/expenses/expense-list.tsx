@@ -27,6 +27,8 @@ import { WalletSelect } from "@/components/wallets/wallet-select";
 import {
   EXPENSE_KIND_LABELS,
   EXPENSE_KIND_VALUES,
+  OPERATING_EXPENSE_FILTER,
+  type ExpenseKindFilter,
   EXPENSE_NATURE_LABELS,
   EXPENSE_NATURE_VALUES,
   type ExpenseCategoryOption,
@@ -58,6 +60,8 @@ type ExpenseItem = {
   createdByName: string | null;
 };
 
+const OPERATING_LABEL = "All but supplier payments";
+
 const uploadUrl = (path: string) => `/uploads/${path}`;
 const dhakaYmd = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date(iso));
 
@@ -68,22 +72,25 @@ export function ExpenseList({
   canCreate,
   canEdit,
   canDelete,
+  initialFilters = {},
 }: {
   categories: ExpenseCategoryOption[];
   wallets: WalletOption[];
   canCreate: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** From a dashboard link (P4.3). */
+  initialFilters?: { kind?: ExpenseKindFilter; from?: string; to?: string };
 }) {
   const [data, setData] = useState<{ items: ExpenseItem[]; total: number; totalAmount: string } | null>(null);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [kind, setKind] = useState<ExpenseKindValue | "all">("all");
+  const [kind, setKind] = useState<ExpenseKindFilter | "all">(initialFilters.kind ?? "all");
   const [nature, setNature] = useState<ExpenseNatureValue | "all">("all");
   const [walletId, setWalletId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(initialFilters.from ?? "");
+  const [to, setTo] = useState(initialFilters.to ?? "");
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ExpenseItem | "new" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -137,12 +144,13 @@ export function ExpenseList({
           <Input placeholder="Note or category..." value={q} onChange={(e) => filter(setQ, e.target.value)} className="pl-8" />
         </div>
         <div className="grid grid-cols-2 gap-2 lg:flex">
-          <Select value={kind} onValueChange={(v) => filter(setKind, v as ExpenseKindValue | "all")}>
+          <Select value={kind} onValueChange={(v) => filter(setKind, v as ExpenseKindFilter | "all")}>
             <SelectTrigger className="w-full lg:w-48">
-              <SelectValue>{(v: string) => (v === "all" ? "All categories" : EXPENSE_KIND_LABELS[v as ExpenseKindValue])}</SelectValue>
+              <SelectValue>{(v: string) => (v === "all" ? "All categories" : v === OPERATING_EXPENSE_FILTER ? OPERATING_LABEL : EXPENSE_KIND_LABELS[v as ExpenseKindValue])}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All categories</SelectItem>
+              <SelectItem value={OPERATING_EXPENSE_FILTER}>{OPERATING_LABEL}</SelectItem>
               {EXPENSE_KIND_VALUES.map((k) => (
                 <SelectItem key={k} value={k}>
                   {EXPENSE_KIND_LABELS[k]}
