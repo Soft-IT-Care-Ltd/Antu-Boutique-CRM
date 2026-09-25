@@ -8,6 +8,7 @@ import {
   PackageCheck,
   Receipt,
   Repeat2,
+  ScrollText,
   Settings,
   Shirt,
   ShoppingBag,
@@ -114,7 +115,10 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "System",
-    items: [{ label: "Settings", href: "/settings", icon: Settings, permission: "settings.manage" }],
+    items: [
+      { label: "Settings", href: "/settings", icon: Settings, permission: "settings.manage" },
+      { label: "Audit log", href: "/audit-log", icon: ScrollText, permission: "audit.view" },
+    ],
   },
 ];
 

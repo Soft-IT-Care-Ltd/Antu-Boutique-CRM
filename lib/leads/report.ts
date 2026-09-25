@@ -50,7 +50,7 @@ function toRow(key: string, b: Bucket): ConversionRow {
 
 const byLeadsThenLabel = (a: ConversionRow, b: ConversionRow) => b.leads - a.leads || a.label.localeCompare(b.label);
 
-export type ConversionReportFilters = { fromDay: string; toDay: string; ownerId?: string; source?: LeadSourceValue };
+export type ConversionReportFilters = { fromDay: string; toDay: string; ownerId?: string; teamId?: string; source?: LeadSourceValue };
 
 export async function getLeadConversionReport(db: Db, user: SessionUser, filters: ConversionReportFilters): Promise<LeadConversionReport> {
   const from = dhakaDayStartUtc(filters.fromDay);
@@ -61,6 +61,7 @@ export async function getLeadConversionReport(db: Db, user: SessionUser, filters
       deletedAt: null,
       createdAt: { gte: from, lt: to },
       ...(filters.ownerId ? { createdById: filters.ownerId } : {}),
+      ...(filters.teamId ? { teamId: filters.teamId } : {}),
       ...(filters.source ? { source: filters.source } : {}),
     },
     user,
@@ -69,6 +70,7 @@ export async function getLeadConversionReport(db: Db, user: SessionUser, filters
     {
       countDate: { gte: from, lt: to },
       ...(filters.ownerId ? { userId: filters.ownerId } : {}),
+      ...(filters.teamId ? { teamId: filters.teamId } : {}),
       ...(filters.source ? { source: filters.source } : {}),
     },
     user,

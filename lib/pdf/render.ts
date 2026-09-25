@@ -84,7 +84,7 @@ export function formatPdfDate(iso: string): string {
  * A4 unless a page size is given (P3.1 price tags: one label per page, at
  * the label's exact size, so a label printer prints it 1:1).
  */
-export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number; heightMm: number }): Promise<Uint8Array> {
+export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number; heightMm: number }, opts: { landscape?: boolean; marginMm?: number } = {}): Promise<Uint8Array> {
   const browser = await getPdfBrowser();
   const page = await browser.newPage();
   try {
@@ -92,7 +92,10 @@ export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number
     // so there's no network activity to wait out — "load" is enough.
     await page.setContent(html, { waitUntil: "load" });
     const size = pageSize ? { width: `${pageSize.widthMm}mm`, height: `${pageSize.heightMm}mm` } : { format: "A4" as const };
-    return await page.pdf({ ...size, printBackground: true, margin: { top: "0", bottom: "0", left: "0", right: "0" } });
+    // P4.4 reports run to many pages: a margin on every page (not just body
+    // padding, which only pads the first and last).
+    const m = `${opts.marginMm ?? 0}mm`;
+    return await page.pdf({ ...size, landscape: opts.landscape ?? false, printBackground: true, margin: { top: m, bottom: m, left: m, right: m } });
   } finally {
     await page.close();
   }

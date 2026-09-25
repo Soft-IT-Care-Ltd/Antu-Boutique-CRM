@@ -19,3 +19,11 @@ export const salesFloorWhere: Prisma.UserWhereInput = { isActive: true, role: { 
  * every day.
  */
 export const attendanceRosterWhere: Prisma.UserWhereInput = { isActive: true, role: { name: { not: "ADMIN" } } };
+
+/**
+ * P4.4 reports — the people a sales report can be filtered by: everyone who
+ * takes orders (the sales floor, the showroom till, and the owner or a
+ * manager who rings one up). Packing and Accounts never create orders.
+ * Inactive people stay listed: their past sales are still in the period.
+ */
+export const orderTakerWhere: Prisma.UserWhereInput = { role: { name: { notIn: ["PACKING", "ACCOUNTS"] } } };

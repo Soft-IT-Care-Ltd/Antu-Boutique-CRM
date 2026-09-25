@@ -205,6 +205,10 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "target.view_own",
     "attendance.view_own",
     "attendance.mark",
+    // P4.4 (PRD §4.15): "an SE's report shows only their own data" — the
+    // reports they can run follow their module permissions and every one
+    // is scoped to their own records (lib/reports/access.ts). No export.
+    "report.view",
   ],
 
   // PRD §4.8: "must not see customer money data beyond what is printed on
