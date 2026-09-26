@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, readFile, writeFile } from "node:fs/promises";
+import { mkdir, rm, unlink, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import sharp from "sharp";
@@ -95,6 +95,18 @@ export async function deleteUploadedFile(relativePath: string): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+}
+
+/**
+ * P5.1 trash purge: removes a record's whole upload folder (e.g.
+ * orders/<order_no>, products/<id>). Refuses anything that isn't at least
+ * two levels below UPLOAD_ROOT, so a blank id can never take a whole
+ * category of uploads (or the root) with it.
+ */
+export async function deleteUploadDir(subdir: string): Promise<void> {
+  const parts = subdir.split("/").filter(Boolean);
+  if (parts.length < 2 || parts.some((p) => p === "." || p === "..")) throw new Error(`Refusing to delete upload folder "${subdir}"`);
+  await rm(resolveUploadPath(...parts), { recursive: true, force: true });
 }
 
 export async function readUploadedFile(relativePath: string): Promise<Buffer> {

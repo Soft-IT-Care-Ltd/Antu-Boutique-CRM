@@ -14,6 +14,7 @@ import { editTouchesGatedFields, isWithinEditWindow } from "@/lib/orders/edit-wi
 import { generateOrderInvoice } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { getOrderEditWindowMinutes } from "@/lib/settings/get";
+import { TrashError, trashOrder } from "@/lib/trash/service";
 import { DIRECTLY_EDITABLE_STATUSES } from "@/lib/orders/constants";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import type { OrderStatusValue } from "@/lib/orders/constants";
@@ -165,4 +166,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const detail = await loadOrderDetail(id);
   return NextResponse.json(await stripCostFieldsForUser({ order: serializeOrderDetail(detail!) }, guard.user));
+}
+
+// PRD §4.18 — moves the order to the trash (restorable 30 days, then purged).
+// Only an order with no money, stock or courier history can go
+// (lib/trash/policy.ts); anything else is cancelled or returned instead.
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requirePermission("order.delete");
+  if (!guard.ok) return guard.response;
+
+  const id = z.string().cuid().safeParse((await params).id);
+  if (!id.success) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+  try {
+    await trashOrder(prisma, guard.user, id.data, { request });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (error instanceof TrashError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
 }

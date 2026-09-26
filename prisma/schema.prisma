@@ -231,6 +231,7 @@ model User {
   attendance                Attendance[]             @relation("AttendanceUser")
   correctedAttendance       Attendance[]             @relation("AttendanceCorrectedBy")
   leaveRequests             LeaveRequest[]           @relation("LeaveRequestUser")
+  notifications             Notification[]           @relation("NotificationUser")
   decidedLeaveRequests      LeaveRequest[]           @relation("LeaveRequestDecidedBy")
   cancelledLeaveRequests    LeaveRequest[]           @relation("LeaveRequestCancelledBy")
   createdAt                 DateTime                 @default(now())
@@ -318,7 +319,12 @@ model Product {
 
   // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
   // query via `deletedAt: null`; purged by the trash cron after 30 days.
-  deletedAt DateTime?
+  deletedAt  DateTime?
+  // P5.1 — set by the purge when history still points here (a variant was
+  // sold, stocked or used in a set): the row stays so the ledger and past
+  // orders never change, but it has left the trash for good and can't be
+  // restored. Only ever set together with deletedAt (DB CHECK).
+  archivedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -423,7 +429,11 @@ model Customer {
 
   // CLAUDE.md rule 8: soft delete only. Excluded from every list/detail
   // query via `deletedAt: null`; purged by the trash cron after 30 days.
-  deletedAt DateTime?
+  deletedAt  DateTime?
+  // P5.1 — set by the purge when orders, leads or store credit still point
+  // here: kept for history, gone from the trash, not restorable. A new order
+  // on the same phone brings the record back (lib/trash/revive.ts).
+  archivedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2252,4 +2262,51 @@ model LeaveRequest {
   @@index([userId, fromDate])
   @@index([status])
   @@map("leave_requests")
+}
+
+// ---------------------------------------------------------------------------
+// PRD §4.18 — system jobs and in-app alerts (P5.1)
+// ---------------------------------------------------------------------------
+
+// One row per run of a scheduled job: the nightly trash purge, the nightly
+// pg_dump backup (reported by scripts/backup.sh, which runs outside the app)
+// and the daily low-stock alert. Settings reads the latest of each, and the
+// app shell warns an admin when the last good backup is over 48 hours old.
+model JobRun {
+  id         String   @id @default(cuid())
+  // "backup" | "trash-purge" | "low-stock-alert" (lib/system/jobs.ts)
+  job        String
+  ok         Boolean
+  startedAt  DateTime
+  finishedAt DateTime @default(now())
+  // What the run did: counts purged/archived, the dump's file name and size…
+  summary    Json?
+  error      String?
+
+  @@index([job, finishedAt])
+  @@map("job_runs")
+}
+
+enum NotificationKind {
+  LOW_STOCK
+}
+
+// PRD §5 SETTINGS group — an in-app alert for one person (the bell in the
+// top bar). `dedupeKey` makes a daily job safe to run twice: the second run
+// finds the row and writes nothing.
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  kind      NotificationKind
+  title     String
+  body      String
+  href      String?
+  dedupeKey String
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
+  @@map("notifications")
 }

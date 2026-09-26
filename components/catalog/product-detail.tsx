@@ -133,7 +133,7 @@ export function ProductDetail({
                   <AlertDialogHeader>
                     <AlertDialogTitle>Move &quot;{product.name}&quot; to trash?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      It will be restorable for 30 days, then purged automatically.
+                      It can be restored from the Trash for 30 days. After that it is deleted — or, if it has been stocked or sold, kept for the records but no longer restorable. To stop selling it for now, mark it inactive instead.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   {trashError ? <p className="text-sm text-destructive">{trashError}</p> : null}

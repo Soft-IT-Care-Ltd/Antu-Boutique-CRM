@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { NotificationBell } from "@/components/app-shell/notification-bell";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 type TopbarProps = {
@@ -45,6 +46,7 @@ export function Topbar({ userName, userRole, isPreview }: TopbarProps) {
           </Badge>
         ) : null}
       </div>
+      {isPreview ? null : <NotificationBell />}
       <ThemeToggle />
       <DropdownMenu>
         <DropdownMenuTrigger className="flex items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">

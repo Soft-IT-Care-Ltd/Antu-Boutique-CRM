@@ -1,6 +1,6 @@
 import "server-only";
 
-import { escapeHtml, formatPdfDate, getFontFaceCss, renderHtmlToPdf } from "@/lib/pdf/render";
+import { escapeHtml, formatPdfDate, getFontFaceCss, renderHtmlToPdf, SUB_ITEM_MARK } from "@/lib/pdf/render";
 import { loadPackingOrder, serializePackingOrderDetail } from "@/lib/packing/queue";
 import { getPackingSlaHours } from "@/lib/settings/get";
 import { readUploadedFile } from "@/lib/uploads/storage";
@@ -36,7 +36,7 @@ export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceC
   // every component is its own pick line, with its chosen size and colour.
   const itemRow = (item: PackingOrderDetail["items"][number]) => `
       <tr${item.set ? ' class="component"' : ""}>
-        <td>${item.set ? "↳ " : ""}${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
+        <td>${item.set ? SUB_ITEM_MARK : ""}${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
         <td><strong>${escapeHtml(item.sizeName)}</strong></td>
         <td><strong>${escapeHtml(item.colorName)}</strong></td>
         <td class="num">${item.qty}</td>
@@ -87,7 +87,8 @@ export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceC
   .note { border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-bottom: 20px; }
   .note h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin: 0 0 6px; }
   .checklist { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 20px; font-size: 11px; color: #333; }
-  .checklist span::before { content: "\\2713  "; color: #146c2e; font-weight: 700; }
+  /* A tick drawn with borders: the embedded fonts have no tick glyph (P5.1). */
+  .checklist span::before { content: ""; display: inline-block; width: 4px; height: 8px; margin: 0 7px 2px 2px; border: solid #146c2e; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; color: #555; font-size: 10px; display: flex; justify-content: space-between; }
 </style>
 </head>

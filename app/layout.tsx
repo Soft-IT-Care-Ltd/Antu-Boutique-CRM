@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Noto_Sans_Bengali } from "next/font/google";
 
 import { BootMarker } from "@/components/boot-marker";
 import { Providers } from "@/components/providers";
+import { RegisterServiceWorker } from "@/components/pwa/register-service-worker";
 import { BOOT_GUARD_SCRIPT } from "@/lib/browser/boot-guard";
 
 import "./globals.css";
@@ -25,6 +26,20 @@ const notoSansBengali = Noto_Sans_Bengali({
 export const metadata: Metadata = {
   title: "Antu Boutique CRM",
   description: "Internal CRM/ERP for Antu Boutique — leads, orders, stock, packing, courier and money in one place.",
+  applicationName: "Antu Boutique CRM",
+  // P5.1 — installable on phones (app/manifest.ts); iOS reads these instead.
+  appleWebApp: { capable: true, title: "Antu CRM", statusBarStyle: "default" },
+  icons: {
+    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -41,6 +56,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
         <BootMarker />
+        <RegisterServiceWorker />
       </body>
     </html>
   );

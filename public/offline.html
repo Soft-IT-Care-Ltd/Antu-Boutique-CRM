@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#171717" />
+    <title>Offline — Antu Boutique CRM</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; --muted: #6b6b6b; --btn: #171717; --btn-fg: #fafafa; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #0a0a0a; --fg: #fafafa; --muted: #a3a3a3; --btn: #fafafa; --btn-fg: #171717; } }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--bg); color: var(--fg);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Bengali", "Kohinoor Bangla", sans-serif; }
+      main { max-width: 22rem; text-align: center; }
+      img { width: 64px; height: 64px; border-radius: 14px; }
+      h1 { font-size: 1.25rem; margin: 20px 0 4px; }
+      p { color: var(--muted); line-height: 1.5; margin: 8px 0; }
+      .bn { font-size: 1.05rem; color: var(--fg); }
+      button { margin-top: 20px; font: inherit; font-weight: 600; padding: 10px 20px; border: 0; border-radius: 10px; background: var(--btn); color: var(--btn-fg); min-height: 44px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icons/icon-192.png" alt="" />
+      <h1>You're offline</h1>
+      <p class="bn">ইন্টারনেট সংযোগ নেই। সংযোগ ফিরলে আবার চেষ্টা করুন।</p>
+      <p>Check the phone's Wi-Fi or mobile data. Nothing you haven't saved was sent — try again once you're connected.</p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>

@@ -112,7 +112,7 @@ export function CustomerDetail({
                   <AlertDialogHeader>
                     <AlertDialogTitle>Move &quot;{customer.name}&quot; to trash?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      It will be restorable for 30 days, then purged automatically.
+                      It can be restored from the Trash for 30 days. After that it is deleted — or, if they have orders, kept for the records but no longer restorable. A new order on their number brings them back.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   {trashError ? <p className="text-sm text-destructive">{trashError}</p> : null}

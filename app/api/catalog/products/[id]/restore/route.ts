@@ -10,7 +10,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { id } = await params;
   const existing = await prisma.product.findUnique({ where: { id } });
-  if (!existing || !existing.deletedAt) {
+  // Archived by the purge = out of the trash for good (lib/trash/purge.ts).
+  if (!existing || !existing.deletedAt || existing.archivedAt) {
     return NextResponse.json({ error: "Product not found in trash" }, { status: 404 });
   }
 

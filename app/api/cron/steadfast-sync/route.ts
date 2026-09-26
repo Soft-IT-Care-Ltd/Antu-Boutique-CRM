@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { timingSafeEqual } from "@/lib/courier/crypto";
 import { CourierConfigError, getSteadfastIntegration } from "@/lib/courier/integration";
 import { PAYOUTS_SYNC_MIN_GAP_MS, runSteadfastPayoutsSync, type PayoutsSyncSummary } from "@/lib/courier/payouts/sync";
 import { runSteadfastPoll } from "@/lib/courier/poll";
 import { prisma } from "@/lib/prisma";
+import { rejectUnlessCron } from "@/lib/system/jobs";
 
 // The 15-minute polling fallback (STEADFAST_INTEGRATION.md §3B/§3C). Called
 // by system cron / Vercel Cron with "Authorization: Bearer <CRON_SECRET>" —
@@ -17,11 +17,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET?.trim();
-  const presented = request.headers.get("authorization") ?? "";
-  if (!secret || !timingSafeEqual(presented, `Bearer ${secret}`)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const unauthorized = rejectUnlessCron(request);
+  if (unauthorized) return unauthorized;
 
   const integration = await getSteadfastIntegration(prisma);
   if (!integration?.isEnabled) return NextResponse.json({ ok: true, skipped: "Steadfast integration is not enabled" });

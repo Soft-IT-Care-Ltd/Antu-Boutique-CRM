@@ -42,6 +42,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     canApproveReturn,
     canApproveExchange,
     canCounterExchange,
+    canDelete,
   ] =
     await Promise.all([
       can(user, "product.cost.view"),
@@ -61,6 +62,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       can(user, "return.approve"),
       can(user, "exchange.approve"),
       can(user, ["pos.sell", "exchange.create"], "all"),
+      can(user, "order.delete"),
     ]);
   // Names only (no balances) — anyone recording a payment picks the wallet it went into.
   const wallets = canRecordPayment || canEditPayment || canRequestRefund ? await listWalletOptions(prisma) : [];
@@ -91,6 +93,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         canSendToSteadfast={canSendToSteadfast}
         canOverrideCourier={canOverrideCourier}
         returnPermissions={{ canRequestReturn, canRequestExchange, canApproveReturn, canApproveExchange, canCounterExchange }}
+        canDelete={canDelete}
       />
     </div>
   );

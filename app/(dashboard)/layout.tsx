@@ -1,9 +1,12 @@
 import { auth } from "@/auth";
 import { AppSidebar } from "@/components/app-shell/app-sidebar";
+import { BackupBanner } from "@/components/app-shell/backup-banner";
 import { Topbar } from "@/components/app-shell/topbar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import { getEffectivePermissions } from "@/lib/auth/permissions";
+import { prisma } from "@/lib/prisma";
+import { getBackupHealth } from "@/lib/system/jobs";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -19,6 +22,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     ? await getEffectivePermissions(session.user.id)
     : new Set<PermissionKey>();
 
+  // PRD §4.18 backup alert, for whoever looks after Settings. A dev machine
+  // that has never run a backup isn't nagged; production always is.
+  const backup = permissions.has("settings.manage") ? await getBackupHealth(prisma) : null;
+  const showBackupBanner = backup !== null && (backup.state === "stale" || (backup.state === "never" && process.env.NODE_ENV === "production"));
+
   return (
     <SidebarProvider>
       <AppSidebar permissions={[...permissions]} />
@@ -26,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           wide table pushed the whole page past the screen edge on a tablet. */}
       <SidebarInset className="min-w-0">
         <Topbar userName={userName} userRole={userRole} isPreview={isPreview} />
+        {showBackupBanner ? <BackupBanner health={backup} /> : null}
         <div className="flex flex-1 flex-col">{children}</div>
       </SidebarInset>
     </SidebarProvider>

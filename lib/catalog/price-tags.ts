@@ -139,6 +139,12 @@ export async function expandTags(db: Db, request: TagPrintRequest): Promise<TagD
 }
 
 export async function renderPriceTagsPdf(tags: TagData[], stock: LabelStock, dpi: number, startAt: number): Promise<Uint8Array> {
+  const { html, pageW, pageH } = await renderPriceTagsHtml(tags, stock, dpi, startAt);
+  return renderHtmlToPdf(html, { widthMm: pageW, heightMm: pageH });
+}
+
+/** The printable page(s) as HTML, fonts inlined — also what the Bangla PDF check inspects. */
+export async function renderPriceTagsHtml(tags: TagData[], stock: LabelStock, dpi: number, startAt: number): Promise<{ html: string; pageW: number; pageH: number }> {
   const { placed, pages } = placeTags(tags, stock, startAt);
   const pageW = stock.kind === "ROLL" ? stock.width : A4.width;
   const pageH = stock.kind === "ROLL" ? stock.height : A4.height;
@@ -167,5 +173,5 @@ export async function renderPriceTagsPdf(tags: TagData[], stock: LabelStock, dpi
 </head>
 <body>${pageHtml}</body>
 </html>`;
-  return renderHtmlToPdf(html, { widthMm: pageW, heightMm: pageH });
+  return { html, pageW, pageH };
 }

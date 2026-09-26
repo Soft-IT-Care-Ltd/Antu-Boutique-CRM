@@ -46,7 +46,11 @@ export async function getFontFaceCss(): Promise<string> {
           src: url(data:font/woff2;base64,${base64}) format('woff2');
           unicode-range: ${unicodeRange};
         }`;
-      const BENGALI_RANGE = "U+0980-09FE, U+200C-200D, U+25CC";
+      // The danda and double danda (U+0964-0965, "।" "॥") are Bangla's full
+      // stop but sit in the Devanagari block. Without them here Chromium drew
+      // them from a system font — fine on a Mac, an empty box on the server,
+      // which has no Bangla fonts (P5.1 Bangla PDF check).
+      const BENGALI_RANGE = "U+0964-0965, U+0980-09FE, U+200C-200D, U+25CC";
       const LATIN_RANGE = "U+0000-00FF, U+2000-206F, U+20AC";
       return [
         face(400, b64.regularBengali, BENGALI_RANGE),
@@ -71,6 +75,15 @@ async function getPdfBrowser(): Promise<Browser> {
   return browserPromise;
 }
 
+/**
+ * "One piece of the set above" (outfit-set components on the invoice,
+ * packing slip and receipt). Drawn, not typed: the embedded fonts have no
+ * arrow glyph, and the server has no system font to fall back on, so "↳"
+ * printed as an empty box there (P5.1 Bangla PDF check).
+ */
+export const SUB_ITEM_MARK =
+  '<svg width="0.8em" height="0.8em" viewBox="0 0 10 10" style="vertical-align:-0.05em;margin-right:0.25em" aria-hidden="true"><path d="M2 0.5v5.5h6.5M6 3.5l2.5 2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 export function escapeHtml(input: string): string {
   return input.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -88,6 +101,9 @@ export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number
   const browser = await getPdfBrowser();
   const page = await browser.newPage();
   try {
+    // Paper is white whatever the host's theme: a Mac in dark mode otherwise
+    // printed these on a dark page (P5.1).
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     // Fonts are inlined as base64 data: URIs and nothing else is fetched,
     // so there's no network activity to wait out — "load" is enough.
     await page.setContent(html, { waitUntil: "load" });
@@ -112,6 +128,7 @@ export async function renderHtmlToPdfFitHeight(html: string, widthMm: number): P
   try {
     // Lay the page out at the paper's width before measuring its height.
     await page.setViewport({ width: Math.ceil((widthMm * 96) / 25.4), height: 800 });
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     await page.setContent(html, { waitUntil: "load" });
     const heightPx = await page.evaluate(() => Math.ceil(document.documentElement.getBoundingClientRect().height));
     const heightMm = Math.ceil((heightPx * 25.4) / 96) + 2;

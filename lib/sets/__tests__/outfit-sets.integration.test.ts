@@ -13,6 +13,7 @@ import { PACKAGING_USED_CATEGORY_ID } from "@/lib/packaging/consume";
 import { setPackaging } from "@/lib/packaging/service";
 import { loadPackingOrder, serializePackingOrderDetail } from "@/lib/packing/queue";
 import { renderPackingSlipHtml } from "@/lib/packing/slip";
+import { SUB_ITEM_MARK } from "@/lib/pdf/render";
 import { createPosSale } from "@/lib/pos/sale";
 import { createCounterExchange } from "@/lib/returns/cases";
 import { resolveSetLines, writeSetLines } from "@/lib/sets/order-lines";
@@ -125,7 +126,7 @@ describe("outfit sets (PRD §4.2, P3.3)", () => {
         const orderDetail = serializeOrderDetail((await loadOrderDetail(order.id, tx))!);
         const invoice = await renderInvoiceHtml(orderDetail, 1, "");
         expect(invoice).toContain(`Eid set ${kurti.code}`);
-        expect(invoice).toContain(`↳ ${kurti.name}`);
+        expect(invoice).toContain(`${SUB_ITEM_MARK}${kurti.name}`);
         expect(invoice).not.toContain("৳ 1,500");
         await checkDeferredConstraintsNow(tx);
       });

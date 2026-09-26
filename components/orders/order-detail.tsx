@@ -14,6 +14,7 @@ import { OrderImagesField } from "@/components/orders/order-images-field";
 import { OrderPaymentsPanel } from "@/components/orders/order-payments-panel";
 import { OrderShipmentCard } from "@/components/orders/order-shipment-card";
 import { OrderStatusControl } from "@/components/orders/order-status-control";
+import { OrderTrashButton } from "@/components/orders/order-trash-button";
 import { SendToSteadfastDialog } from "@/components/courier/send-to-steadfast-dialog";
 import { OrderReturnsCard, type ReturnPermissions } from "@/components/returns/order-returns-card";
 import type { ShipmentDetailView } from "@/lib/courier/types";
@@ -49,6 +50,7 @@ export function OrderDetail({
   canSendToSteadfast,
   canOverrideCourier,
   returnPermissions,
+  canDelete = false,
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -68,6 +70,8 @@ export function OrderDetail({
   canSendToSteadfast: boolean;
   canOverrideCourier: boolean;
   returnPermissions: ReturnPermissions;
+  /** order.delete — offered only while the order is a lead or cancelled (the server checks the rest). */
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
@@ -126,6 +130,7 @@ export function OrderDetail({
               Edit order
             </Button>
           ) : null}
+          {canDelete && (order.status === "LEAD" || order.status === "CANCELLED") && !order.lead ? <OrderTrashButton orderId={order.id} orderNo={order.orderNo} /> : null}
         </div>
       </div>
 

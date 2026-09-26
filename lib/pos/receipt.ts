@@ -4,7 +4,7 @@ import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
-import { escapeHtml, getFontFaceCss, renderHtmlToPdfFitHeight } from "@/lib/pdf/render";
+import { escapeHtml, getFontFaceCss, renderHtmlToPdfFitHeight, SUB_ITEM_MARK } from "@/lib/pdf/render";
 import type { Db } from "@/lib/db/tx";
 
 // P3.1 — the 80 mm thermal receipt for a walk-in sale, printed at the
@@ -62,7 +62,7 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
       const discount = toPaisa(set.lineDiscount);
       const inside = order.items
         .filter((i) => i.setLineId === set.id)
-        .map((i) => `<div class="muted">↳ ${i.qty} × ${escapeHtml(i.variant.product.name)} · ${escapeHtml(i.variant.size.name)} · ${escapeHtml(i.variant.color.name)}</div>`)
+        .map((i) => `<div class="muted">${SUB_ITEM_MARK}${i.qty} × ${escapeHtml(i.variant.product.name)} · ${escapeHtml(i.variant.size.name)} · ${escapeHtml(i.variant.color.name)}</div>`)
         .join("");
       return `
       <div class="item">

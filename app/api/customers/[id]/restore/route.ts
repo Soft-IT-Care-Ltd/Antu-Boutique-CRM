@@ -11,7 +11,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { id } = await params;
   const existing = await prisma.customer.findFirst({ where: scopedWhere({ id }, guard.user) });
-  if (!existing || !existing.deletedAt) {
+  // Archived by the purge = out of the trash for good (lib/trash/purge.ts).
+  if (!existing || !existing.deletedAt || existing.archivedAt) {
     return NextResponse.json({ error: "Customer not found in trash" }, { status: 404 });
   }
 

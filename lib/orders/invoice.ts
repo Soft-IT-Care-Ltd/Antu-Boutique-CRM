@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { prisma } from "@/lib/prisma";
 import { formatBDT } from "@/lib/money";
-import { escapeHtml, formatPdfDate as formatInvoiceDate, getFontFaceCss, renderHtmlToPdf } from "@/lib/pdf/render";
+import { escapeHtml, formatPdfDate as formatInvoiceDate, getFontFaceCss, renderHtmlToPdf, SUB_ITEM_MARK } from "@/lib/pdf/render";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
@@ -74,7 +74,7 @@ export async function renderInvoiceHtml(order: OrderDetail, version: number, fon
         .map(
           (i) => `
       <tr class="component">
-        <td>↳ ${escapeHtml(i.productName)}<div class="muted">${escapeHtml(i.sku)}${i.returnedQty > 0 ? ` · ${i.returnedQty} returned` : ""}</div></td>
+        <td>${SUB_ITEM_MARK}${escapeHtml(i.productName)}<div class="muted">${escapeHtml(i.sku)}${i.returnedQty > 0 ? ` · ${i.returnedQty} returned` : ""}</div></td>
         <td>${escapeHtml(i.sizeName)}</td>
         <td>${escapeHtml(i.colorName)}</td>
         <td class="num">${i.qty - i.returnedQty}</td>

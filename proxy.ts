@@ -37,6 +37,8 @@ export default auth((req) => {
 // scheduler have no session, so the login redirect must never touch them.
 // Each of those routes authenticates itself with its own Bearer secret
 // (the Steadfast webhook token / CRON_SECRET) before reading anything.
+// P5.1: the PWA files (manifest, service worker, offline page, icons) are
+// fetched by the browser without cookies and hold nothing private.
 export const config = {
-  matcher: ["/((?!api/auth|api/webhooks|api/cron|_next/static|_next/image|favicon.ico|uploads).*)"],
+  matcher: ["/((?!api/auth|api/webhooks|api/cron|_next/static|_next/image|favicon.ico|uploads|manifest.webmanifest|sw.js|offline.html|icons/).*)"],
 };

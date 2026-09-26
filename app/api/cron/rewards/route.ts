@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { timingSafeEqual } from "@/lib/courier/crypto";
 import { prisma } from "@/lib/prisma";
+import { rejectUnlessCron } from "@/lib/system/jobs";
 import { evaluateLastMonthIfDue } from "@/lib/targets/rewards";
 
 // PRD §4.13 "auto-evaluated at month end". Works out last month's rewards
@@ -16,11 +16,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET?.trim();
-  const presented = request.headers.get("authorization") ?? "";
-  if (!secret || !timingSafeEqual(presented, `Bearer ${secret}`)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const unauthorized = rejectUnlessCron(request);
+  if (unauthorized) return unauthorized;
   try {
     return NextResponse.json({ ok: true, ...(await evaluateLastMonthIfDue(prisma)) });
   } catch (error) {

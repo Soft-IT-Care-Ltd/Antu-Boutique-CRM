@@ -21,6 +21,7 @@ import { spendStoreCredit } from "@/lib/store-credit/ledger";
 import { consumePackaging } from "@/lib/packaging/consume";
 import { resolveSetLines, writeSetLines } from "@/lib/sets/order-lines";
 import type { SetLineInput } from "@/lib/sets/types";
+import { reviveCustomer } from "@/lib/trash/service";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // PRD §4.7 — a showroom sale, start to finish, in ONE transaction:
@@ -88,7 +89,11 @@ export async function resolveCounterCustomer(
   // form does. The existing record is linked, never edited or shown here —
   // it may belong to another executive.
   const existing = await tx.customer.findUnique({ where: { phone: normalized }, select: { id: true, name: true } });
-  if (existing) return existing;
+  if (existing) {
+    // P5.1 — a deleted (or archived) customer back at the counter comes back.
+    await reviveCustomer(tx, existing.id, ctx.user.id, "Back at the counter on this phone");
+    return existing;
+  }
   if (!ctx.canCreateCustomer) throw new PosSaleError("You don't have permission to add a new customer.", 403);
   const created = await tx.customer.create({
     data: { name: input?.name?.trim() || WALK_IN_CUSTOMER_LABEL, phone: normalized, createdById: ctx.user.id, teamId: ctx.user.teamId },

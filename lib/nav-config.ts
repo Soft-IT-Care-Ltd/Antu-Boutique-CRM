@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Store,
   Tags,
+  Trash2,
   Trophy,
   Truck,
   UserRound,
@@ -118,6 +119,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Settings", href: "/settings", icon: Settings, permission: "settings.manage" },
       { label: "Audit log", href: "/audit-log", icon: ScrollText, permission: "audit.view" },
+      // PRD §4.18 — whoever can delete a kind of record can restore it.
+      { label: "Trash", href: "/trash", icon: Trash2, permission: ["order.delete", "customer.delete", "product.delete", "lead.delete"] },
     ],
   },
 ];

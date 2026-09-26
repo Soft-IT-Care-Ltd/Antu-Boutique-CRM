@@ -106,10 +106,13 @@ export async function POST(request: NextRequest) {
 
   const clash = await prisma.customer.findUnique({ where: { phone: normalizedPhone } });
   if (clash) {
-    return NextResponse.json(
-      { error: "A customer with this phone number already exists", customerId: clash.deletedAt ? undefined : clash.id },
-      { status: 409 },
-    );
+    // A deleted customer still owns their number (it's unique). Their
+    // record comes back when they order again (lib/trash/service.ts
+    // reviveCustomer), or from the Trash within 30 days.
+    const error = clash.deletedAt
+      ? "This number belongs to a deleted customer. Place an order with it and their record comes back, or restore them from the Trash."
+      : "A customer with this phone number already exists";
+    return NextResponse.json({ error, customerId: clash.deletedAt ? undefined : clash.id }, { status: 409 });
   }
 
   const customer = await prisma.customer.create({

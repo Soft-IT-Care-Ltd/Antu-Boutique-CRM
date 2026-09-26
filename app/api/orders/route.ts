@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { writeAuditLog } from "@/lib/audit/log";
+import { reviveCustomer } from "@/lib/trash/service";
 import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require-permission";
@@ -336,6 +337,8 @@ export async function POST(request: NextRequest) {
         await markLeadConverted(tx, { leadId, customerId: resolvedCustomerId, orderId: created.id, actorId: guard.user.id, request });
       }
 
+      // P5.1 — a deleted (or archived) customer ordering again comes back.
+      await reviveCustomer(tx, resolvedCustomerId, guard.user.id, `New order ${orderNo} on this phone`, { request });
       const itemIds: string[] = [];
       for (const item of items) {
         const variant = variantById.get(item.variantId)!;
