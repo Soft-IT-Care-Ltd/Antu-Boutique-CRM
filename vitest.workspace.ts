@@ -2,6 +2,9 @@ import path from "node:path";
 import { defineWorkspace } from "vitest/config";
 
 const INTEGRATION = "**/*.integration.test.ts";
+// Claude Code worktrees under .claude/ hold whole checkouts of older commits:
+// their tests must never run against this tree's database or code.
+const NEVER = ["**/node_modules/**", "**/.claude/**", "**/.next/**"];
 
 export default defineWorkspace([
   {
@@ -13,7 +16,7 @@ export default defineWorkspace([
     test: {
       name: "unit",
       include: ["**/*.test.ts"],
-      exclude: ["**/node_modules/**", INTEGRATION],
+      exclude: [...NEVER, INTEGRATION],
     },
   },
   {
@@ -23,7 +26,7 @@ export default defineWorkspace([
     test: {
       name: "integration",
       include: [INTEGRATION],
-      exclude: ["**/node_modules/**"],
+      exclude: NEVER,
       globalSetup: ["./lib/test/global-setup.ts"],
       setupFiles: ["./vitest.integration-setup.ts"],
       // One fork runs every integration file in turn. (`fileParallelism`
