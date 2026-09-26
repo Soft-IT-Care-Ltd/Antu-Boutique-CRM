@@ -13,6 +13,8 @@ import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
 import { fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
+import { filterEnabledMethods } from "@/lib/payments/method-settings";
+import { useEnabledPaymentMethods } from "@/lib/payments/use-enabled-methods";
 import { POS_PAYMENT_METHODS, type PosPaymentMethod, type PosTenderMethod } from "@/lib/pos/constants";
 import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
 
@@ -82,6 +84,7 @@ export function PosCheckout({
   phoneRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const [found, setFound] = useState<{ phone: string; customer: CustomerListItem | null } | null>(null);
+  const enabledMethods = useEnabledPaymentMethods();
   const [credit, setCredit] = useState<{ phone: string; balance: string } | null>(null);
   const phoneOk = customer.phone.trim() !== "" && isValidBdPhone(customer.phone);
   // Only a lookup for the number now in the box counts.
@@ -190,7 +193,7 @@ export function PosCheckout({
       <section className="flex flex-col gap-2 rounded-xl border p-3">
         <p className="text-sm font-medium">Payment</p>
         <div className="grid grid-cols-4 gap-2">
-          {POS_PAYMENT_METHODS.map((m) => {
+          {filterEnabledMethods(POS_PAYMENT_METHODS, enabledMethods).map((m) => {
             const Icon = METHOD_ICON[m];
             const blocked = m === "CASH" && !cashAllowed;
             return (

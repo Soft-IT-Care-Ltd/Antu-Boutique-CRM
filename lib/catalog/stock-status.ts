@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/catalog/constants";
+import { LOW_STOCK_DEFAULT_SQL } from "@/lib/catalog/low-stock-threshold";
 
 export type StockStatus = "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK";
 
@@ -32,7 +32,7 @@ export async function getProductStockSummaries(
       ? Prisma.sql`
           SELECT "productId",
                  SUM("stockQty" - "reservedQty") AS available,
-                 BOOL_OR(("stockQty" - "reservedQty") <= COALESCE("lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})) AS "hasLow"
+                 BOOL_OR(("stockQty" - "reservedQty") <= COALESCE("lowStockThreshold", ${LOW_STOCK_DEFAULT_SQL})) AS "hasLow"
           FROM product_variants
           WHERE "isActive" = true AND "productId" IN (${Prisma.join(productIds)})
           GROUP BY "productId"
@@ -40,7 +40,7 @@ export async function getProductStockSummaries(
       : Prisma.sql`
           SELECT "productId",
                  SUM("stockQty" - "reservedQty") AS available,
-                 BOOL_OR(("stockQty" - "reservedQty") <= COALESCE("lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})) AS "hasLow"
+                 BOOL_OR(("stockQty" - "reservedQty") <= COALESCE("lowStockThreshold", ${LOW_STOCK_DEFAULT_SQL})) AS "hasLow"
           FROM product_variants
           WHERE "isActive" = true
           GROUP BY "productId"

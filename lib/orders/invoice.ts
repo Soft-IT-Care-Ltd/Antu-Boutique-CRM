@@ -10,6 +10,9 @@ import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { keptLine } from "@/lib/orders/totals";
+import { getDocumentBranding } from "@/lib/settings/business-profile";
+import { DEFAULT_DOCUMENT_BRANDING, type DocumentBranding } from "@/lib/settings/business-profile-shape";
+import { BRAND_BLOCK_CSS, brandBlockHtml } from "@/lib/pdf/branding";
 import { resolveUploadPath } from "@/lib/uploads/storage";
 import type { OrderDetail } from "@/lib/orders/types";
 
@@ -22,7 +25,7 @@ import type { OrderDetail } from "@/lib/orders/types";
 // The font-loading/browser plumbing itself lives in lib/pdf/render.ts,
 // shared with lib/packing/slip.ts's packing slip.
 
-export async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string): Promise<string> {
+export async function renderInvoiceHtml(order: OrderDetail, version: number, fontFaceCss: string, branding: DocumentBranding = DEFAULT_DOCUMENT_BRANDING): Promise<string> {
   // Same rule as due_amount: a refund only counts once approved.
   const paid = order.payments.filter((p) => p.kind === "PAYMENT" || p.refundStatus === "APPROVED").reduce((sum, p) => sum + Number(p.amount), 0);
   // P3.1 — a showroom sale: no delivery address, maybe no customer at all.
@@ -124,14 +127,12 @@ export async function renderInvoiceHtml(order: OrderDetail, version: number, fon
   .totals .grand { font-weight: 700; border-top: 1px solid #111; margin-top: 4px; padding-top: 8px; }
   .totals .due { font-weight: 700; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; color: #555; font-size: 10px; text-align: center; }
+  ${BRAND_BLOCK_CSS}
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="business">
-      Antu Boutique
-      <div class="tag">অনলাইন ও শোরুম ফ্যাশন বুটিক</div>
-    </div>
+    <div class="business">${brandBlockHtml(branding, { contact: true })}</div>
     <div class="invoice-title">
       <h1>Invoice</h1>
       <div class="version">${escapeHtml(order.orderNo)} &middot; Version ${version}</div>
@@ -178,7 +179,7 @@ export async function renderInvoiceHtml(order: OrderDetail, version: number, fon
   </div>
 
   <div class="footer">
-    Antu Boutique &middot; ধন্যবাদ আমাদের সাথে কেনাকাটা করার জন্য &middot; This is a system-generated invoice.
+    ${[branding.name, branding.invoiceFooter].filter(Boolean).map(escapeHtml).join(" &middot; ")} &middot; This is a system-generated invoice.
   </div>
 </body>
 </html>`;
@@ -200,8 +201,8 @@ export async function generateOrderInvoice(orderId: string, generatedById: strin
   const maxVersion = await prisma.invoice.aggregate({ where: { orderId }, _max: { version: true } });
   const version = (maxVersion._max.version ?? 0) + 1;
 
-  const fontFaceCss = await getFontFaceCss();
-  const html = await renderInvoiceHtml(order, version, fontFaceCss);
+  const [fontFaceCss, branding] = await Promise.all([getFontFaceCss(), getDocumentBranding(prisma)]);
+  const html = await renderInvoiceHtml(order, version, fontFaceCss, branding);
   const pdfBuffer = await renderHtmlToPdf(html);
 
   const subdir = `orders/${order.orderNo}/invoices`;

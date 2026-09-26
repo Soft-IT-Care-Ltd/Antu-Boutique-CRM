@@ -105,13 +105,16 @@ Deployment follows the same shape as the Gift Valy server runbook: VPS + Node 20
 - [ ] DNS points at the VPS **before** running `certbot`; SSL issued.
 - [ ] Production `.env` has fresh `NEXTAUTH_SECRET`, `COURIER_ENCRYPTION_KEY` and `CRON_SECRET`, and `NEXTAUTH_URL=https://<your-domain>`.
 - [ ] **`STEADFAST_LIVE_API=enabled`** in the production `.env` — production only. Without it, "Send to Steadfast" and the status sync are refused (only Test Connection and the balance work).
-- [ ] Steadfast API key + secret entered on the **Courier → Steadfast** page, **Test Connection** passes, integration switched on.
+- [ ] Production database seeded **without demo data**: `SEED_ADMIN_NAME="…" SEED_ADMIN_PHONE=01XXXXXXXXX SEED_ADMIN_PASSWORD='…' npm run db:seed:base` (never `npm run db:seed` — that one adds demo people, orders and money). The Admin changes the password at first sign-in.
+- [ ] **Settings**, top to bottom: business profile and logo; categories, sizes and colours; couriers and zone charges; payment methods; orders, stock & hours; reward rules; staff accounts and teams (each gets a temporary password); roles & permissions if the starting templates need changing.
+- [ ] **Settings → Import opening data**, in this order, each sheet checked before it is imported (templates on the page; save from Excel as *CSV UTF-8*): products with sizes, colours and opening stock → customers (fill `owner_phone` so each Sales Executive keeps their customers) → wallet opening balances (the day each was counted).
+- [ ] Steadfast API key + secret entered in **Settings → Steadfast** (also on the Courier page), **Test Connection** passes, integration switched on.
 - [ ] Webhook token generated on the same page. In the Steadfast panel → Webhook Integration, set the callback URL `https://<your-domain>/api/webhooks/steadfast` and paste the Bearer token.
-- [ ] Courier cost rates (Inside / Sub / Outside Dhaka) filled in on the Courier page.
+- [ ] Courier cost rates (Inside / Sub / Outside Dhaka) filled in on **Settings → Steadfast**.
 - [ ] Crontab: Steadfast sync every 15 minutes —
       `*/15 * * * * curl -fsS -m 60 -H "Authorization: Bearer $CRON_SECRET" https://<your-domain>/api/cron/steadfast-sync`
       — plus the nightly trash purge, the daily low-stock alert and the nightly backup (exact lines in `docs/BACKUPS.md`).
-- [ ] `postgresql-client-18` installed (Neon runs PostgreSQL 18; an older `pg_dump` refuses), `BACKUP_DIR` set, `scripts/backup.sh` run once by hand, and the backup card in **Settings** shows it green.
+- [ ] `postgresql-client-18` installed (Neon runs PostgreSQL 18; an older `pg_dump` refuses), `BACKUP_DIR` set, `scripts/backup.sh` run once by hand, and **Settings → Backups & nightly jobs** shows it green.
 - [ ] "Last webhook received" and "Last sync" on the Courier page start filling after the first real parcel.
-- [ ] **Payments & Wallets → Wallets:** set each wallet's real opening balance and opening date (the day it was counted); deactivate any wallet the business doesn't use.
+- [ ] Wallets: real opening balance and opening date set (by the import, or **Settings → Payments & wallets**); any wallet the business doesn't use deactivated.
 - [ ] After the first real Steadfast payout, check its stored raw data (`courier_statements.rawPayload` / `rawDetailPayload`) to confirm whether `due_bills` include return charges, and that nothing was booked twice (return charges from the condition check vs. the statement's delivery-charge expense).

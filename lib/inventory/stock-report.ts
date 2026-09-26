@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/catalog/constants";
+import { LOW_STOCK_DEFAULT_SQL } from "@/lib/catalog/low-stock-threshold";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { variantStockStatus, type StockStatusFilter } from "@/lib/inventory/constants";
 import { rollUpProductStock } from "@/lib/inventory/low-stock";
@@ -44,9 +44,10 @@ type RawRow = {
 };
 
 const AVAILABLE = Prisma.sql`(v."stockQty" - v."reservedQty")`;
-// ::int — a bound JS number arrives as bigint, and COALESCE would then hand
-// back a BigInt that JSON can't carry (every stock route 500'd on it).
-const THRESHOLD = Prisma.sql`COALESCE(v."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD}::int)`;
+// ::int (inside LOW_STOCK_DEFAULT_SQL) — a bound JS number arrives as bigint,
+// and COALESCE would then hand back a BigInt that JSON can't carry (every
+// stock route 500'd on it).
+const THRESHOLD = Prisma.sql`COALESCE(v."lowStockThreshold", ${LOW_STOCK_DEFAULT_SQL})`;
 
 function whereClause(query: Pick<StockReportQuery, "q" | "categoryId" | "status">): Prisma.Sql {
   // An inactive variant still shows while it physically holds stock —
@@ -157,7 +158,7 @@ export async function getLowStockAlerts(): Promise<LowStockProductAlert[]> {
       AND p."id" IN (
         SELECT v2."productId" FROM "product_variants" v2
         WHERE v2."isActive" = true
-          AND (v2."stockQty" - v2."reservedQty") <= COALESCE(v2."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD}::int)
+          AND (v2."stockQty" - v2."reservedQty") <= COALESCE(v2."lowStockThreshold", ${LOW_STOCK_DEFAULT_SQL})
       )
     ORDER BY p."name" ASC, s."sortOrder" ASC, c."sortOrder" ASC
   `;

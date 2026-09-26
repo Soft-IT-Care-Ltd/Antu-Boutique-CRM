@@ -31,6 +31,8 @@ import { LEAD_SOURCE_LABELS, type LeadSourceValue } from "@/lib/leads/constants"
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
+import { filterEnabledMethods } from "@/lib/payments/method-settings";
+import { useEnabledPaymentMethods } from "@/lib/payments/use-enabled-methods";
 import type { PaymentMethodValue } from "@/lib/orders/constants";
 import type { CourierCompanyOption, OrderDetail, OrderImageView } from "@/lib/orders/types";
 import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
@@ -242,7 +244,9 @@ export function OrderForm({
     return () => clearTimeout(timer);
   }, [customer.phone, isEdit]);
   const creditBalance = credit && credit.phone === customer.phone.trim() && isValidBdPhone(customer.phone) ? Number(credit.balance) : 0;
-  const advanceMethods: PaymentMethodValue[] = creditBalance > 0 ? [...PAYMENT_METHOD_VALUES, "STORE_CREDIT"] : [...PAYMENT_METHOD_VALUES];
+  const enabledMethods = useEnabledPaymentMethods();
+  const handMethods = filterEnabledMethods(PAYMENT_METHOD_VALUES, enabledMethods);
+  const advanceMethods: PaymentMethodValue[] = creditBalance > 0 ? [...handMethods, "STORE_CREDIT"] : handMethods;
 
   function selectExistingCustomer(match: CustomerListItem) {
     setCustomer({

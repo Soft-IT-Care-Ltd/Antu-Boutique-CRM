@@ -28,7 +28,6 @@ const rewardText = (amount: string | null, note: string | null) => [amount ? for
 /** PRD §4.13 — the reward-rules table and a month's rewards, worked out at month end. */
 export function RewardsView({ rules, awards, canManage, isClosedMonth }: { rules: RewardRuleView[]; awards: MonthAwards; canManage: boolean; isClosedMonth: boolean }) {
   const router = useRouter();
-  const [editing, setEditing] = useState<RewardRuleView | "new" | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -115,6 +114,17 @@ export function RewardsView({ rules, awards, canManage, isClosedMonth }: { rules
         </CardContent>
       </Card>
 
+      <RewardRulesCard rules={rules} canManage={canManage} />
+    </div>
+  );
+}
+
+/** The reward-rules table with add/edit — on Targets → Rewards and in Settings (PRD §4.17). */
+export function RewardRulesCard({ rules, canManage }: { rules: RewardRuleView[]; canManage: boolean }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState<RewardRuleView | "new" | null>(null);
+  return (
+    <>
       <Card>
         <CardHeader>
           <CardTitle>Reward rules</CardTitle>
@@ -182,6 +192,6 @@ export function RewardsView({ rules, awards, canManage, isClosedMonth }: { rules
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }

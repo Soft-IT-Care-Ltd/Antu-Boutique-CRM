@@ -6,6 +6,9 @@ import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
 import { escapeHtml, getFontFaceCss, renderHtmlToPdfFitHeight, SUB_ITEM_MARK } from "@/lib/pdf/render";
 import type { Db } from "@/lib/db/tx";
+import { prisma } from "@/lib/prisma";
+import { getDocumentBranding } from "@/lib/settings/business-profile";
+import { DEFAULT_DOCUMENT_BRANDING, type DocumentBranding } from "@/lib/settings/business-profile-shape";
 
 // P3.1 — the 80 mm thermal receipt for a walk-in sale, printed at the
 // counter right after the sale (the A4 invoice stays available as an
@@ -55,7 +58,7 @@ function maskPhone(phone: string): string {
 
 const row = (left: string, right: string, cls = "") => `<div class="row ${cls}"><span>${left}</span><span>${right}</span></div>`;
 
-export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): string {
+export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string, branding: DocumentBranding = DEFAULT_DOCUMENT_BRANDING): string {
   const setsHtml = order.setLines
     .map((set) => {
       const gross = set.qty * toPaisa(set.unitPrice);
@@ -116,7 +119,8 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
   html, body { margin: 0; padding: 0; background: #fff; }
   body { width: ${RECEIPT_PAPER_MM}mm; padding: 3mm ${(RECEIPT_PAPER_MM - PRINTABLE_MM) / 2}mm 4mm; font-family: 'Invoice Sans', sans-serif; font-size: 9pt; line-height: 1.35; color: #000; }
   .center { text-align: center; }
-  .shop { font-size: 14pt; font-weight: 700; letter-spacing: 0.04em; }
+  .shop { font-size: 14pt; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .logo { max-width: 40mm; max-height: 18mm; object-fit: contain; filter: grayscale(1); margin-bottom: 1mm; }
   .muted { color: #333; font-size: 8pt; }
   .rule { border-top: 1px dashed #000; margin: 2mm 0; }
   .row { display: flex; justify-content: space-between; gap: 2mm; }
@@ -130,8 +134,9 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
 </head>
 <body>
   <div class="center">
-    <div class="shop">ANTU BOUTIQUE</div>
-    <div class="muted">অনলাইন ও শোরুম ফ্যাশন বুটিক</div>
+    ${branding.logoDataUri ? `<img class="logo" src="${branding.logoDataUri}" alt="" />` : ""}
+    <div class="shop">${escapeHtml(branding.name)}</div>
+    ${[branding.tagline, branding.address, branding.phone].filter(Boolean).map((l) => `<div class="muted">${escapeHtml(l)}</div>`).join("")}
     <div class="muted">Showroom receipt</div>
   </div>
   <div class="rule"></div>
@@ -150,7 +155,7 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
   ${change > 0 ? row("Change", formatBDT(fromPaisa(change)), "change") : ""}
   <div class="rule"></div>
   <div class="center thanks">
-    <div>আমাদের সাথে কেনাকাটার জন্য ধন্যবাদ!</div>
+    ${branding.invoiceFooter ? `<div>${escapeHtml(branding.invoiceFooter)}</div>` : ""}
     <div>Thank you for shopping with us!</div>
   </div>
 </body>
@@ -158,5 +163,6 @@ export function renderReceiptHtml(order: ReceiptOrder, fontFaceCss: string): str
 }
 
 export async function renderReceiptPdf(order: ReceiptOrder): Promise<Uint8Array> {
-  return renderHtmlToPdfFitHeight(renderReceiptHtml(order, await getFontFaceCss()), RECEIPT_PAPER_MM);
+  const [fontFaceCss, branding] = await Promise.all([getFontFaceCss(), getDocumentBranding(prisma)]);
+  return renderHtmlToPdfFitHeight(renderReceiptHtml(order, fontFaceCss, branding), RECEIPT_PAPER_MM);
 }

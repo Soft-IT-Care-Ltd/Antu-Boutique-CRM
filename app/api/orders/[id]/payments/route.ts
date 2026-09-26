@@ -11,6 +11,7 @@ import { formatBDT } from "@/lib/money";
 import { createPaymentSchema, storeCreditPaymentSchema } from "@/lib/orders/payment-validation";
 import { spendStoreCredit, StoreCreditError } from "@/lib/store-credit/ledger";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { assertPaymentMethodEnabled } from "@/lib/payments/methods";
 import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 // PRD §4.10: multiple payments per order (advance, partial, COD collection,
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   try {
     const payment = await prisma.$transaction(async (tx) => {
+      await assertPaymentMethodEnabled(tx, method);
       const created = await tx.payment.create({
         data: {
           orderId: id,

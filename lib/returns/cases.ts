@@ -22,6 +22,7 @@ import { getStoreCreditBalance, issueStoreCredit, spendStoreCredit } from "@/lib
 import type { ReturnSettlementValue } from "@/lib/store-credit/constants";
 import { completeConditionCheck, openReturnInspection } from "@/lib/returns/condition-check";
 import { RETURN_REASON_LABELS, RETURNABLE_ORDER_STATUSES, type CourierChargeBearerValue, type ReturnReasonValue } from "@/lib/returns/constants";
+import { assertPaymentMethodEnabled } from "@/lib/payments/methods";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // ============ Returns and exchanges (PRD §4.11, P3.2) ============
@@ -764,6 +765,7 @@ export async function createCounterExchange(
     }
     for (const t of input.tenders) {
       if (t.method === "STORE_CREDIT") continue;
+      await assertPaymentMethodEnabled(tx, t.method);
       const change = t.method === "CASH" && t.tendered != null ? toPaisa(t.tendered) - toPaisa(t.amount) : 0;
       await tx.payment.create({
         data: {

@@ -1,7 +1,9 @@
-// Falls back for a variant whose low_stock_threshold is null. PRD §4.2 calls
-// this "default from settings" — Settings isn't built until Phase 5, so this
-// constant stands in until that screen can override it per variant.
+// PRD §4.2 "low_stock_threshold — per variant, default from settings": a
+// variant with no threshold of its own uses Settings → Orders & stock
+// (`low_stock_default`), and this when that has never been set. Every
+// stock query reads the setting in SQL (lib/catalog/low-stock-threshold.ts).
 export const DEFAULT_LOW_STOCK_THRESHOLD = 5;
+export const LOW_STOCK_DEFAULT_SETTING_KEY = "low_stock_default";
 
 export const MAX_PRODUCT_IMAGES = 10;
 

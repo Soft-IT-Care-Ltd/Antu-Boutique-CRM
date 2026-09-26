@@ -115,7 +115,17 @@ const DEMO_USERS: SeedUser[] = [
   { name: "Sumaiya Khan", phone: "01711000009", email: "sumaiya@antuboutique.com", role: "SALES_EXECUTIVE" },
 ];
 
+// P5.2 — role permissions are edited in Settings → Roles & permissions, so
+// re-running the seed must not undo those edits. A role gets its whole
+// ROLE_TEMPLATES set only when the seed creates it; an existing role only
+// gains the template's keys for permissions this run added (a new feature's
+// permission reaches the roles it was designed for). SEED_RESET_ROLE_PERMISSIONS=1
+// puts every role back to its template (dev only — it discards Settings edits).
+const RESET_ROLE_PERMISSIONS = process.env.SEED_RESET_ROLE_PERMISSIONS === "1";
+
 async function seedPermissionsAndRoles() {
+  const knownKeys = new Set((await prisma.permission.findMany({ select: { key: true } })).map((p) => p.key));
+  const knownRoles = new Set((await prisma.role.findMany({ select: { name: true } })).map((r) => r.name));
   for (const permission of PERMISSIONS) {
     await prisma.permission.upsert({
       where: { key: permission.key },
@@ -140,8 +150,9 @@ async function seedPermissionsAndRoles() {
 
   for (const roleName of Object.keys(ROLE_TEMPLATES) as RoleName[]) {
     const roleId = roleIds[roleName];
-    await prisma.rolePermission.deleteMany({ where: { roleId } });
-    const keys = ROLE_TEMPLATES[roleName];
+    const fresh = RESET_ROLE_PERMISSIONS || !knownRoles.has(roleName);
+    if (RESET_ROLE_PERMISSIONS) await prisma.rolePermission.deleteMany({ where: { roleId } });
+    const keys = fresh ? ROLE_TEMPLATES[roleName] : ROLE_TEMPLATES[roleName].filter((key) => !knownKeys.has(key));
     await prisma.rolePermission.createMany({
       data: keys
         .map((key) => permissionIdByKey.get(key))
@@ -513,17 +524,19 @@ const DEMO_COURIERS: DemoCourier[] = [
   },
 ];
 
-async function seedCouriers() {
-  for (const courier of DEMO_COURIERS) {
+// Zone charges are edited in Settings → Couriers & zones (P5.2): the seed
+// only fills in a zone that doesn't exist yet, never overwrites one.
+async function seedCouriers(couriers: DemoCourier[] = DEMO_COURIERS) {
+  for (const courier of couriers) {
     const row = await prisma.courierCompany.upsert({
       where: { name: courier.name },
-      update: { contact: courier.contact, provider: courier.provider ?? null },
+      update: { provider: courier.provider ?? null },
       create: { name: courier.name, contact: courier.contact, provider: courier.provider ?? null },
     });
     for (const zone of courier.zones) {
       await prisma.courierZone.upsert({
         where: { courierId_zone: { courierId: row.id, zone: zone.zone } },
-        update: { charge: zone.charge, codChargePercent: zone.codChargePercent, returnCharge: zone.returnCharge },
+        update: {},
         create: {
           courierId: row.id,
           zone: zone.zone,
@@ -2030,7 +2043,48 @@ async function seedTargetsAndAttendanceDemo() {
   }
 }
 
+// P5.2 go-live: `npm run db:seed:base` (SEED_MODE=base) seeds only what a
+// real database needs — permissions and roles, the size/colour/category
+// masters, the Steadfast courier, the wallets, default settings and the
+// first Admin (from SEED_ADMIN_*) — and no demo people, customers, stock or
+// money. Real data then goes in through Settings → Import opening data.
+async function seedFirstAdmin(roleIds: Record<RoleName, string>) {
+  const admins = await prisma.user.count({ where: { roleId: roleIds.ADMIN, isActive: true } });
+  if (admins > 0) {
+    console.log("An active Admin already exists — SEED_ADMIN_* not used.");
+    return;
+  }
+  const name = process.env.SEED_ADMIN_NAME?.trim();
+  const phone = process.env.SEED_ADMIN_PHONE?.trim();
+  const password = process.env.SEED_ADMIN_PASSWORD ?? "";
+  if (!name || !phone || !/^01[3-9]\d{8}$/.test(phone) || password.length < 8) {
+    throw new Error("Set SEED_ADMIN_NAME, SEED_ADMIN_PHONE (01XXXXXXXXX) and SEED_ADMIN_PASSWORD (8+ characters) to create the first Admin.");
+  }
+  await prisma.user.create({
+    data: {
+      name,
+      phone,
+      email: process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase() || null,
+      passwordHash: await bcrypt.hash(password, 12),
+      roleId: roleIds.ADMIN,
+      // Changed on first sign-in (PRD §4.1), so the password in the shell history stops working.
+      mustChangePassword: true,
+    },
+  });
+  console.log(`First Admin created: ${name} (${phone}). They must change the password at first sign-in.`);
+}
+
 async function main() {
+  if (process.env.SEED_MODE === "base") {
+    const roleIds = await seedPermissionsAndRoles();
+    await seedCatalogMasters();
+    await seedFirstAdmin(roleIds);
+    await seedCouriers(DEMO_COURIERS.filter((c) => c.provider === "STEADFAST"));
+    await seedWallets();
+    await seedSettings();
+    console.log("\nBase seed complete — no demo data. Next: sign in, fill Settings, then Settings → Import opening data.\n");
+    return;
+  }
   const roleIds = await seedPermissionsAndRoles();
   await seedCatalogMasters();
   await seedCatalogProducts();

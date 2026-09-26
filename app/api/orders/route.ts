@@ -30,6 +30,7 @@ import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets
 import { SetError } from "@/lib/sets/service";
 import { setLineSchema } from "@/lib/sets/validation";
 import { spendStoreCredit, StoreCreditError } from "@/lib/store-credit/ledger";
+import { assertPaymentMethodEnabled } from "@/lib/payments/methods";
 import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 const VIEW_PERMISSIONS: PermissionKey[] = ["order.view_own", "order.view_team", "order.view_all"];
@@ -336,9 +337,9 @@ export async function POST(request: NextRequest) {
       if (leadId) {
         await markLeadConverted(tx, { leadId, customerId: resolvedCustomerId, orderId: created.id, actorId: guard.user.id, request });
       }
-
       // P5.1 — a deleted (or archived) customer ordering again comes back.
       await reviveCustomer(tx, resolvedCustomerId, guard.user.id, `New order ${orderNo} on this phone`, { request });
+
       const itemIds: string[] = [];
       for (const item of items) {
         const variant = variantById.get(item.variantId)!;
@@ -385,6 +386,7 @@ export async function POST(request: NextRequest) {
       if (advancePayment?.method === "STORE_CREDIT") {
         await spendStoreCredit(tx, { customerId: resolvedCustomerId, orderId: created.id, amountPaisa: Math.round(advancePayment.amount * 100), actorId: guard.user.id });
       } else if (advancePayment) {
+        await assertPaymentMethodEnabled(tx, advancePayment.method);
         await tx.payment.create({
           data: {
             orderId: created.id,

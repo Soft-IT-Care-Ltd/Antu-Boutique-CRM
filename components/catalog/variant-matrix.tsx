@@ -23,7 +23,6 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
-import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/catalog/constants";
 import type { ColorMaster, ProductVariant, SizeMaster } from "@/lib/catalog/types";
 
 type EditableFields = {
@@ -43,6 +42,7 @@ export function VariantMatrix({
   canGenerate,
   canEdit,
   hasCostView,
+  lowStockDefault,
   onVariantsChange,
   onProductCodeChange,
 }: {
@@ -54,6 +54,8 @@ export function VariantMatrix({
   canGenerate: boolean;
   canEdit: boolean;
   hasCostView: boolean;
+  /** Settings → low-stock default, for variants without their own threshold. */
+  lowStockDefault: number;
   onVariantsChange?: (variants: ProductVariant[]) => void;
   onProductCodeChange?: (code: string) => void;
 }) {
@@ -246,7 +248,7 @@ export function VariantMatrix({
             <TableBody>
               {variants.map((variant) => {
                 const available = variant.stockQty - variant.reservedQty;
-                const threshold = variant.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
+                const threshold = variant.lowStockThreshold ?? lowStockDefault;
                 const isLow = available <= threshold;
                 return (
                   <TableRow key={variant.id}>
@@ -283,7 +285,7 @@ export function VariantMatrix({
                       <Input
                         type="number"
                         min={0}
-                        placeholder={String(DEFAULT_LOW_STOCK_THRESHOLD)}
+                        placeholder={String(lowStockDefault)}
                         value={fieldValue(variant, "lowStockThreshold") as string}
                         disabled={!canEdit}
                         onChange={(e) => setField(variant, "lowStockThreshold", e.target.value)}

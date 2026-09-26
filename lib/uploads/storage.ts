@@ -131,3 +131,18 @@ export async function saveReceipt(buffer: Buffer, mimeType: string, subdir: stri
   await deleteUploadedFile(saved.thumbPath);
   return { filePath: saved.filePath, mimeType: saved.mimeType };
 }
+
+/**
+ * P5.2 business logo (Settings → Business profile): always stored as a PNG
+ * (keeps transparency, and the PDFs inline it as one known type), capped at
+ * 600 × 300 — it prints at most a few centimetres wide.
+ */
+export async function saveLogo(buffer: Buffer, mimeType: string): Promise<string> {
+  if (!isAllowedImageMime(mimeType)) throw new Error(`Unsupported image type: ${mimeType}`);
+  const png = await sharp(buffer).rotate().resize({ width: 600, height: 300, fit: "inside", withoutEnlargement: true }).png().toBuffer();
+  const dir = resolveUploadPath("branding");
+  await mkdir(dir, { recursive: true });
+  const filename = `logo-${randomUUID()}.png`;
+  await writeFile(path.join(/* turbopackIgnore: true */ dir, filename), png);
+  return path.posix.join("branding", filename);
+}

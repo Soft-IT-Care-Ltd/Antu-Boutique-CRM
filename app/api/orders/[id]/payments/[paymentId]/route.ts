@@ -9,6 +9,7 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { updatePaymentSchema } from "@/lib/orders/payment-validation";
 import { recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { assertPaymentMethodEnabled } from "@/lib/payments/methods";
 import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 // P2.3: a refund is never edited or deleted here — it's approved or
@@ -57,6 +58,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const after = await prisma.$transaction(async (tx) => {
       const nextMethod = method ?? payment.method;
+      if (nextMethod !== payment.method) await assertPaymentMethodEnabled(tx, nextMethod);
       // A method change without a wallet re-picks the default for the new method.
       const nextWalletId = await resolvePaymentWalletId(tx, nextMethod, walletId ?? (method && method !== payment.method ? undefined : payment.walletId));
       const nextTransactionId = transactionId === undefined ? payment.transactionId : transactionId || null;

@@ -37,6 +37,7 @@ export function ProductDetail({
   canDelete,
   hasCostView,
   canPrintTags = false,
+  lowStockDefault,
 }: {
   product: ProductDetailType;
   categories: Category[];
@@ -47,6 +48,7 @@ export function ProductDetail({
   canDelete: boolean;
   hasCostView: boolean;
   canPrintTags?: boolean;
+  lowStockDefault: number;
 }) {
   const router = useRouter();
   const [product, setProduct] = useState(initialProduct);
@@ -197,6 +199,7 @@ export function ProductDetail({
             canGenerate={canGenerateVariants}
             canEdit={canEdit}
             hasCostView={hasCostView}
+            lowStockDefault={lowStockDefault}
             onVariantsChange={handleVariantsChange}
             onProductCodeChange={(code) => setProduct((prev) => (prev.code === code ? prev : { ...prev, code }))}
           />

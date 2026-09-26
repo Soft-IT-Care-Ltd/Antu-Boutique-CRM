@@ -22,6 +22,7 @@ import { consumePackaging } from "@/lib/packaging/consume";
 import { resolveSetLines, writeSetLines } from "@/lib/sets/order-lines";
 import type { SetLineInput } from "@/lib/sets/types";
 import { reviveCustomer } from "@/lib/trash/service";
+import { assertPaymentMethodEnabled } from "@/lib/payments/methods";
 import { resolvePaymentWalletId } from "@/lib/wallets/service";
 
 // PRD §4.7 — a showroom sale, start to finish, in ONE transaction:
@@ -259,6 +260,7 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     }
     for (const t of input.tenders) {
       if (t.method === "STORE_CREDIT") continue;
+      await assertPaymentMethodEnabled(tx, t.method);
       const change = t.method === "CASH" && t.tendered != null ? toPaisa(t.tendered) - toPaisa(t.amount) : 0;
       const payment = await tx.payment.create({
         data: {

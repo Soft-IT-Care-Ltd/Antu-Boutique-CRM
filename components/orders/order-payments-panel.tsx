@@ -27,7 +27,9 @@ import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import type { PaymentMethodValue } from "@/lib/orders/constants";
 import type { OrderDetail, PaymentView } from "@/lib/orders/types";
+import { filterEnabledMethods } from "@/lib/payments/method-settings";
 import { REFUND_STATUS_LABELS } from "@/lib/payments/types";
+import { useEnabledPaymentMethods } from "@/lib/payments/use-enabled-methods";
 import { walletsForMethod, type WalletOption } from "@/lib/wallets/constants";
 
 function toDateInputValue(iso: string): string {
@@ -99,6 +101,7 @@ export function OrderPaymentsPanel({
   const [creditBalance, setCreditBalance] = useState<string | null>(null);
   const [creditDialog, setCreditDialog] = useState<"use" | "giveBack" | null>(null);
   const [creditAmount, setCreditAmount] = useState("");
+  const enabledMethods = useEnabledPaymentMethods();
   const [creditNote, setCreditNote] = useState("");
   const customerPhone = order.customer?.phone ?? null;
 
@@ -402,7 +405,8 @@ export function OrderPaymentsPanel({
                   <SelectValue>{(value: PaymentMethodValue) => PAYMENT_METHOD_LABELS[value]}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_METHOD_VALUES.map((m) => (
+                  {/* An existing payment keeps its method even if it has since been switched off. */}
+                  {PAYMENT_METHOD_VALUES.filter((m) => m === form.method || filterEnabledMethods([m], enabledMethods).length > 0).map((m) => (
                     <SelectItem key={m} value={m}>
                       {PAYMENT_METHOD_LABELS[m]}
                     </SelectItem>

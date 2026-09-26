@@ -2,6 +2,10 @@ import "server-only";
 
 import { escapeHtml, formatPdfDate, getFontFaceCss, renderHtmlToPdf, SUB_ITEM_MARK } from "@/lib/pdf/render";
 import { loadPackingOrder, serializePackingOrderDetail } from "@/lib/packing/queue";
+import { BRAND_BLOCK_CSS, brandBlockHtml } from "@/lib/pdf/branding";
+import { prisma } from "@/lib/prisma";
+import { getDocumentBranding } from "@/lib/settings/business-profile";
+import { DEFAULT_DOCUMENT_BRANDING, type DocumentBranding } from "@/lib/settings/business-profile-shape";
 import { getPackingSlaHours } from "@/lib/settings/get";
 import { readUploadedFile } from "@/lib/uploads/storage";
 import type { PackingOrderDetail } from "@/lib/packing/types";
@@ -27,7 +31,7 @@ async function inlineThumbnail(relativePath: string): Promise<string | null> {
   }
 }
 
-export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: string): Promise<string> {
+export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceCss: string, branding: DocumentBranding = DEFAULT_DOCUMENT_BRANDING): Promise<string> {
   const address = [order.customer.addressDetail, order.customer.thana, order.customer.district, order.customer.division]
     .filter(Boolean)
     .join(", ");
@@ -90,14 +94,12 @@ export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceC
   /* A tick drawn with borders: the embedded fonts have no tick glyph (P5.1). */
   .checklist span::before { content: ""; display: inline-block; width: 4px; height: 8px; margin: 0 7px 2px 2px; border: solid #146c2e; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; color: #555; font-size: 10px; display: flex; justify-content: space-between; }
+  ${BRAND_BLOCK_CSS}
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="business">
-      Antu Boutique
-      <div class="tag">অনলাইন ও শোরুম ফ্যাশন বুটিক</div>
-    </div>
+    <div class="business">${brandBlockHtml(branding, { contact: false })}</div>
     <div class="slip-title">
       <h1>Packing Slip</h1>
       <div class="order-no">${escapeHtml(order.orderNo)}</div>
@@ -154,7 +156,7 @@ export async function generatePackingSlipPdf(orderId: string): Promise<Uint8Arra
   const slaHours = await getPackingSlaHours();
   const order = serializePackingOrderDetail(loaded, slaHours);
 
-  const fontFaceCss = await getFontFaceCss();
-  const html = await renderPackingSlipHtml(order, fontFaceCss);
+  const [fontFaceCss, branding] = await Promise.all([getFontFaceCss(), getDocumentBranding(prisma)]);
+  const html = await renderPackingSlipHtml(order, fontFaceCss, branding);
   return renderHtmlToPdf(html);
 }

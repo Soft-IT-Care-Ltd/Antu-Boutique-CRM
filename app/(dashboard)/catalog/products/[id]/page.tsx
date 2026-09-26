@@ -5,6 +5,7 @@ import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { loadProductDetail, serializeProductDetail } from "@/lib/catalog/product-detail";
+import { getLowStockDefault } from "@/lib/catalog/low-stock-threshold";
 import { getProductStockSummaries, summaryFor } from "@/lib/catalog/stock-status";
 import { prisma } from "@/lib/prisma";
 
@@ -15,7 +16,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   const productRow = await loadProductDetail(id);
   if (!productRow) notFound();
 
-  const [summaries, categories, sizes, colors, canEdit, canGenerateVariants, canDelete, hasCostView, canPrintTags] = await Promise.all([
+  const [summaries, categories, sizes, colors, canEdit, canGenerateVariants, canDelete, hasCostView, canPrintTags, lowStockDefault] = await Promise.all([
     getProductStockSummaries([id]),
     prisma.category.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     prisma.size.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
@@ -25,6 +26,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     can(user, "product.delete"),
     can(user, "product.cost.view"),
     can(user, "product.tags.print"),
+    getLowStockDefault(prisma),
   ]);
 
   const serialized = serializeProductDetail(productRow, summaryFor(summaries, id).available);
@@ -42,6 +44,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         canDelete={canDelete}
         hasCostView={hasCostView}
         canPrintTags={canPrintTags}
+        lowStockDefault={lowStockDefault}
       />
     </div>
   );

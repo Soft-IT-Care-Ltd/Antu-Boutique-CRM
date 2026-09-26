@@ -14,6 +14,8 @@ import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PAYMENT_METHOD_LABELS } from "@/lib/orders/constants";
 import { isValidBdPhone } from "@/lib/customers/phone";
+import { filterEnabledMethods } from "@/lib/payments/method-settings";
+import { useEnabledPaymentMethods } from "@/lib/payments/use-enabled-methods";
 import { POS_PAYMENT_METHODS, type PosTenderMethod } from "@/lib/pos/constants";
 import { RETURN_REASON_LABELS, RETURN_REASON_VALUES, type ReturnReasonValue } from "@/lib/returns/constants";
 import type { CounterLookup } from "@/lib/returns/types";
@@ -47,6 +49,7 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
   // Keyed by the lines it priced, so a stale quote is never shown for changed lines.
   const [quoted, setQuoted] = useState<{ key: string; quote: Quote | null; error: string | null } | null>(null);
   const [payMethod, setPayMethod] = useState<PosTenderMethod>("CASH");
+  const enabledMethods = useEnabledPaymentMethods();
   const [tendered, setTendered] = useState("");
   const [trxId, setTrxId] = useState("");
   const [phone, setPhone] = useState("");
@@ -109,7 +112,8 @@ export function CounterExchangeDialog({ initialOrderNo, onClose, onDone }: { ini
   const toCredit = Number(quote?.toCredit ?? 0);
   // Store credit pays the difference only when the customer has enough.
   const creditAvailable = order?.hasCustomer ? Number(order.storeCredit ?? 0) : 0;
-  const payMethods = creditAvailable >= toPay && toPay > 0 ? [...POS_PAYMENT_METHODS, "STORE_CREDIT" as const] : POS_PAYMENT_METHODS;
+  const handMethods = filterEnabledMethods(POS_PAYMENT_METHODS, enabledMethods);
+  const payMethods = creditAvailable >= toPay && toPay > 0 ? [...handMethods, "STORE_CREDIT" as const] : handMethods;
   const tenderInvalid = toPay > 0 && ((payMethod === "CASH" && tendered !== "" && Number(tendered) < toPay) || ((payMethod === "BKASH" || payMethod === "NAGAD") && !trxId.trim()) || (payMethod === "STORE_CREDIT" && creditAvailable < toPay));
   const needsPhone = toCredit > 0 && order !== null && !order.hasCustomer;
   const phoneInvalid = needsPhone && !isValidBdPhone(phone);

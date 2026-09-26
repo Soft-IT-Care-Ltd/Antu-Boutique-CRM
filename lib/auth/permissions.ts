@@ -88,3 +88,53 @@ export async function viewLevel(
   if (permissions.has(keys.own)) return "own";
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// P5.2 — staff and permission editing (Settings → Users, Roles & permissions)
+// ---------------------------------------------------------------------------
+
+/** What it takes to run the system: edit settings AND hand out permissions. */
+export const ADMINISTRATION_KEYS: PermissionKey[] = ["settings.manage", "permission.manage"];
+
+/**
+ * Keys in `target` the actor does not hold. Someone may only create, edit,
+ * reset or deactivate a person — or hand out a role — whose permissions are
+ * all their own, unless they hold permission.manage. Without this a Manager
+ * (user.edit) could reset the owner's password, or make themselves Admin.
+ */
+export function permissionsBeyond(actor: ReadonlySet<PermissionKey>, target: Iterable<PermissionKey>): PermissionKey[] {
+  if (actor.has("permission.manage")) return [];
+  return [...new Set(target)].filter((key) => !actor.has(key));
+}
+
+/** A role's template permissions as stored (the DB, not ROLE_TEMPLATES — Settings edits it). */
+export async function loadRolePermissions(db: Db, roleId: string): Promise<Set<PermissionKey>> {
+  const rows = await db.rolePermission.findMany({ where: { roleId }, select: { permission: { select: { key: true } } } });
+  return new Set(rows.map((r) => r.permission.key as PermissionKey));
+}
+
+/**
+ * How many active people could still run the system. Every change that can
+ * take permissions away (a role's permissions, a user's role or overrides,
+ * deactivating someone) checks this inside its transaction and refuses a
+ * change that would leave nobody — the owner must never lock themselves out.
+ */
+export async function countAdministrators(db: Db): Promise<number> {
+  const keys = ADMINISTRATION_KEYS as string[];
+  // One query for everyone: role grants and the person's overrides for just these keys.
+  const users = await db.user.findMany({
+    where: { isActive: true },
+    select: {
+      role: { select: { permissions: { where: { permission: { key: { in: keys } } }, select: { permission: { select: { key: true } } } } } },
+      permissionOverrides: { where: { permission: { key: { in: keys } } }, select: { effect: true, permission: { select: { key: true } } } },
+    },
+  });
+  return users.filter((user) => {
+    const held = new Set(user.role.permissions.map((rp) => rp.permission.key));
+    for (const o of user.permissionOverrides) {
+      if (o.effect === "GRANT") held.add(o.permission.key);
+      else held.delete(o.permission.key);
+    }
+    return keys.every((key) => held.has(key));
+  }).length;
+}
