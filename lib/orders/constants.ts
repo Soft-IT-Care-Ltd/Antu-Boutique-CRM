@@ -95,8 +95,11 @@ export const ORDER_EDIT_REQUEST_STATUS_LABELS: Record<OrderEditRequestStatusValu
 // PRD §4.6 section 3.
 export const MAX_ORDER_IMAGES = 5;
 
+/**
+ * "2610" for an order placed in October 2026 — Dhaka's month, never the
+ * server's (a UTC server put 00:30 on 1 October Dhaka time in September).
+ */
 export function orderNumberYearMonth(date: Date): string {
-  const yy = String(date.getFullYear()).slice(-2);
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  return `${yy}${mm}`;
+  const dhaka = new Date(date.getTime() + 6 * 60 * 60 * 1000).toISOString();
+  return `${dhaka.slice(2, 4)}${dhaka.slice(5, 7)}`;
 }

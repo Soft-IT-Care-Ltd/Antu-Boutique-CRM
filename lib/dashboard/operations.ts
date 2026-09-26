@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { scopedWhere } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
 import { codOverdueSummary, codSummary } from "@/lib/courier/cod-queries";
+import { COD_OVERDUE_DAYS } from "@/lib/courier/constants";
 import { dashboardRanges, type DashboardRanges } from "@/lib/dashboard/ranges";
 import type { Db } from "@/lib/db/tx";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
@@ -20,8 +21,8 @@ import { getWalletBalances, type WalletBalance } from "@/lib/wallets/ledger";
 // counts the owner's dashboard shares with them. Each figure is computed
 // with the same where as the screen it links to.
 
-/** Owner alert: COD the courier has held longer than this (the COD tab ambers a parcel past it too). */
-export const COD_OVERDUE_DAYS = 7;
+
+export { COD_OVERDUE_DAYS };
 
 export type LowStockSummary = { products: number; variants: number; out: number; top: { productId: string; name: string; message: string; out: boolean }[] };
 

@@ -25,6 +25,11 @@ const awaitingWhere = (user: SessionUser): Prisma.ShipmentWhereInput => ({
   order: { AND: [orderScope(user), { status: { in: ["DELIVERED", "PARTIAL_DELIVERED", "COMPLETED"] } }] },
 });
 
+/** Awaiting payout, delivered more than `days` ago — the owner's "COD not received" alert and the COD tab's overdue filter. */
+const overdueWhere = (user: SessionUser, days: number, now: Date): Prisma.ShipmentWhereInput => ({
+  AND: [awaitingWhere(user), { deliveredAt: { lt: new Date(now.getTime() - days * 86_400_000) } }],
+});
+
 const OPEN_LINE_STATUSES = ["MISMATCH", "UNMATCHED", "DISPUTED"] as const;
 
 function dhakaMonthStartUtc(now = new Date()): Date {
@@ -37,8 +42,11 @@ async function feePercentByZone(): Promise<Map<string, number>> {
   return new Map(zones.map((z) => [`${z.courierId}:${z.zone}`, toNumber(z.codChargePercent)]));
 }
 
-export async function listAwaitingPayout(user: SessionUser, opts: { page: number; pageSize: number }): Promise<{ items: AwaitingPayoutRow[]; total: number }> {
-  const where = awaitingWhere(user);
+export async function listAwaitingPayout(
+  user: SessionUser,
+  opts: { page: number; pageSize: number; overdueDays?: number; now?: Date },
+): Promise<{ items: AwaitingPayoutRow[]; total: number }> {
+  const where = opts.overdueDays ? overdueWhere(user, opts.overdueDays, opts.now ?? new Date()) : awaitingWhere(user);
   const [total, rows, fees] = await Promise.all([
     prisma.shipment.count({ where }),
     prisma.shipment.findMany({
@@ -201,7 +209,7 @@ export async function codSummary(user: SessionUser): Promise<CodSummary> {
  */
 export async function codOverdueSummary(user: SessionUser, days: number, now = new Date()): Promise<{ count: number; amount: string }> {
   const rows = await prisma.shipment.findMany({
-    where: { AND: [awaitingWhere(user), { deliveredAt: { lt: new Date(now.getTime() - days * 86_400_000) } }] },
+    where: overdueWhere(user, days, now),
     select: { codAmount: true, codCollected: true },
   });
   return { count: rows.length, amount: round2(rows.reduce((sum, s) => sum + toNumber(s.codCollected ?? s.codAmount), 0)).toFixed(2) };

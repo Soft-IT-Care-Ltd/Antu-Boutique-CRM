@@ -9,7 +9,10 @@ import { listWalletOptions } from "@/lib/wallets/service";
 
 export default async function CourierPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await guardPage("/courier");
-  const initialTab = z.enum(["shipments", "returns", "cod", "steadfast"]).optional().catch(undefined).parse((await searchParams).tab);
+  const params = await searchParams;
+  const initialTab = z.enum(["shipments", "returns", "cod", "steadfast"]).optional().catch(undefined).parse(params.tab);
+  // The owner's "COD not received" alert opens the COD tab on just those parcels.
+  const codOverdueOnly = initialTab === "cod" && params.overdue === "1";
   const [canViewShipments, canSend, canSync, canReconcile, canCheckReturns, canEditSettings, canSeeCost] = await Promise.all([
     can(user, ["courier.view", "courier.create_shipment", "courier.reconcile", "courier.manage"]),
     can(user, "courier.create_shipment"),
@@ -32,8 +35,9 @@ export default async function CourierPage({ searchParams }: { searchParams: Prom
         <p className="text-sm text-muted-foreground">Steadfast bookings, parcel tracking, returns coming back, and the integration itself.</p>
       </div>
       <CourierWorkspace
-        key={initialTab ?? ""}
+        key={`${initialTab ?? ""}${codOverdueOnly ? ":overdue" : ""}`}
         initialTab={initialTab}
+        codOverdueOnly={codOverdueOnly}
         canViewShipments={canViewShipments}
         canSend={canSend}
         canSync={canSync}

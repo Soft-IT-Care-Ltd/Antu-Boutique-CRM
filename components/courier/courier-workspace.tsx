@@ -22,6 +22,8 @@ export type CourierWorkspaceProps = {
   payoutWallets: WalletOption[];
   /** A dashboard link's ?tab= (P4.3) — ignored when this user can't open that tab. */
   initialTab?: CourierTab;
+  /** Open the COD tab on parcels past COD_OVERDUE_DAYS only (the owner's alert). */
+  codOverdueOnly?: boolean;
 };
 
 export type CourierTab = "shipments" | "returns" | "cod" | "steadfast";
@@ -56,7 +58,7 @@ export function CourierWorkspace(props: CourierWorkspaceProps) {
       ) : null}
       {props.canReconcile ? (
         <TabsContent value="cod" className="pt-4">
-          <CodReconciliation canSyncPayouts={props.canReconcile || props.canSync} payoutWallets={props.payoutWallets} />
+          <CodReconciliation canSyncPayouts={props.canReconcile || props.canSync} payoutWallets={props.payoutWallets} initialOverdueOnly={props.codOverdueOnly} />
         </TabsContent>
       ) : null}
       {props.canSeeIntegration ? (

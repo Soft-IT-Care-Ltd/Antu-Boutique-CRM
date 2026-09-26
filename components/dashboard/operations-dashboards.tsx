@@ -5,7 +5,7 @@ import { AlertRow, SectionTitle, StatTile, TileGrid } from "@/components/dashboa
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SessionUser } from "@/lib/auth/types";
-import { collectionHref, expensesHref, ordersHref, packingHref } from "@/lib/dashboard/links";
+import { codHref, collectionHref, expensesHref, ordersHref, packingHref } from "@/lib/dashboard/links";
 import { COD_OVERDUE_DAYS, getAccountsNumbers, getLowStockSummary, getPackingNumbers } from "@/lib/dashboard/operations";
 import type { DashboardPanels } from "@/lib/dashboard/panels";
 import { dashboardRanges } from "@/lib/dashboard/ranges";
@@ -78,7 +78,7 @@ export async function AccountsDashboard({ user, panels }: { user: SessionUser; p
           <StatTile
             label="COD pending"
             value={formatBDT(n.cod.amount)}
-            href="/courier?tab=cod"
+            href={codHref()}
             sub={n.cod.overdueCount > 0 ? `${n.cod.count} parcels · ${n.cod.overdueCount} over ${COD_OVERDUE_DAYS} days` : `${n.cod.count} parcels delivered, not paid out`}
             tone={n.cod.overdueCount > 0 ? "danger" : undefined}
           />

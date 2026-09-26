@@ -9,7 +9,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import type { SessionUser } from "@/lib/auth/types";
 import { attendanceViewLevel } from "@/lib/attendance/http";
 import { getTodayBoard } from "@/lib/attendance/sheet";
-import { collectionHref, expensesHref, leadsHref, ordersHref, profitHref, returnsHref, targetsHref, type DayRange } from "@/lib/dashboard/links";
+import { codHref, collectionHref, expensesHref, followUpsHref, leadsHref, ordersHref, profitHref, returnsHref, targetsHref, type DayRange } from "@/lib/dashboard/links";
 import { COD_OVERDUE_DAYS, getLowStockSummary } from "@/lib/dashboard/operations";
 import { getOwnerNumbers, type PeriodRow } from "@/lib/dashboard/owner";
 import type { DashboardPanels } from "@/lib/dashboard/panels";
@@ -172,12 +172,12 @@ export async function OwnerDashboard({ user, panels }: { user: SessionUser; pane
                   active={lowStock.variants > 0}
                 />
               ) : null}
-              {followUps ? <AlertRow icon={BellRing} label="Overdue follow-ups" count={followUps.overdue} detail={`${followUps.dueToday} more due later today`} href={leadsHref({ followUp: "overdue" })} active={followUps.overdue > 0} /> : null}
+              {followUps ? <AlertRow icon={BellRing} label="Overdue follow-ups" count={followUps.overdue} detail={`${followUps.dueToday} more due later today`} href={followUpsHref()} active={followUps.overdue > 0} /> : null}
               {unverified ? (
                 <AlertRow icon={HandCoins} label="Unverified payments" count={unverified.unverified} detail={formatBDT(unverified.unverifiedAmount)} href="/payments" active={unverified.unverified > 0} />
               ) : null}
               {codLate ? (
-                <AlertRow icon={Truck} label={`COD not received after ${COD_OVERDUE_DAYS} days`} count={codLate.count} detail={formatBDT(codLate.amount)} href="/courier?tab=cod" active={codLate.count > 0} />
+                <AlertRow icon={Truck} label={`COD not received after ${COD_OVERDUE_DAYS} days`} count={codLate.count} detail={formatBDT(codLate.amount)} href={codHref({ overdue: true })} active={codLate.count > 0} />
               ) : null}
               <AlertRow
                 icon={stuckTotal > 0 ? AlertTriangle : Clock}

@@ -24,6 +24,7 @@ import {
   type StatementRow,
 } from "@/lib/courier/cod-types";
 import { WalletSelect } from "@/components/wallets/wallet-select";
+import { COD_OVERDUE_DAYS } from "@/lib/courier/constants";
 import { formatDhakaDate, formatDhakaDateTime, todayInDhaka } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
@@ -46,8 +47,10 @@ const LINE_BADGE: Record<StatementLineView["status"], "default" | "secondary" | 
 
 // PRD §4.9 COD reconciliation + Gift Valy Round 2 §2.7 payouts, for ACCOUNTS:
 // every taka the courier pays out is justified against our orders.
-export function CodReconciliation({ canSyncPayouts, payoutWallets }: { canSyncPayouts: boolean; payoutWallets: WalletOption[] }) {
+export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdueOnly = false }: { canSyncPayouts: boolean; payoutWallets: WalletOption[]; initialOverdueOnly?: boolean }) {
   const [view, setView] = useState<View>("awaiting");
+  // Awaiting payout, narrowed to parcels delivered over COD_OVERDUE_DAYS ago.
+  const [overdueOnly, setOverdueOnly] = useState(initialOverdueOnly);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ListResponse | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -59,13 +62,13 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets }: { canSyncPa
   const [resolving, setResolving] = useState<StatementLineView | null>(null);
 
   useEffect(() => {
-    fetchJson<ListResponse>(`/api/courier/cod?view=${view}&page=${page}&pageSize=${PAGE_SIZE}`)
+    fetchJson<ListResponse>(`/api/courier/cod?view=${view}&page=${page}&pageSize=${PAGE_SIZE}${view === "awaiting" && overdueOnly ? "&overdue=1" : ""}`)
       .then((res) => {
         setData(res);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load COD data."));
-  }, [view, page, reloadKey]);
+  }, [view, page, reloadKey, overdueOnly]);
 
   const reload = () => setReloadKey((k) => k + 1);
   const items = data?.view === view ? data.items : null;
@@ -123,6 +126,20 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets }: { canSyncPa
               {VIEW_LABELS[v]}
             </Button>
           ))}
+          {view === "awaiting" ? (
+            <Button
+              size="sm"
+              variant={overdueOnly ? "secondary" : "ghost"}
+              aria-pressed={overdueOnly}
+              onClick={() => {
+                setOverdueOnly((o) => !o);
+                setPage(1);
+              }}
+            >
+              <AlertTriangle />
+              Over {COD_OVERDUE_DAYS} days only
+            </Button>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {canSyncPayouts ? (
@@ -152,7 +169,9 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets }: { canSyncPa
           <HandCoins className="size-8 text-muted-foreground" />
           <p className="max-w-sm text-sm text-muted-foreground">
             {view === "awaiting"
-              ? "No delivered parcels are waiting on a courier payout."
+              ? overdueOnly
+                ? `Nothing delivered over ${COD_OVERDUE_DAYS} days ago is still waiting on a courier payout.`
+                : "No delivered parcels are waiting on a courier payout."
               : view === "statements"
                 ? "No courier statements yet. Sync Steadfast payouts, or import a statement."
                 : "No open discrepancies — every payout line is justified."}

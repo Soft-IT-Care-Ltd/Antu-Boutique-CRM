@@ -3,6 +3,9 @@
 
 import type { DeliveryZoneValue } from "@/lib/orders/constants";
 
+/** COD the courier has held longer than this after delivery is overdue (the owner's alert, the COD tab's filter). */
+export const COD_OVERDUE_DAYS = 7;
+
 export const SHIPMENT_SUB_STATUS_VALUES = [
   "PENDING",
   "DELIVERY_APPROVAL_PENDING",

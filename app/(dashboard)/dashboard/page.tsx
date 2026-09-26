@@ -12,7 +12,7 @@ import { can } from "@/lib/auth/permissions";
 import type { SessionUser } from "@/lib/auth/types";
 import { getMyDay } from "@/lib/attendance/sheet";
 import { dashboardPanels } from "@/lib/dashboard/panels";
-import { leadsHref } from "@/lib/dashboard/links";
+import { followUpsHref } from "@/lib/dashboard/links";
 import { listDueFollowUps, listLeadPeople } from "@/lib/leads/queries";
 import { prisma } from "@/lib/prisma";
 import { formatDhakaDate } from "@/lib/inventory/constants";
@@ -31,11 +31,11 @@ async function FollowUpsDueCard({ user }: { user: SessionUser }) {
       <CardHeader>
         <CardTitle>{mine ? "My follow-ups due today" : "Follow-ups due today"}</CardTitle>
         <CardDescription>
-          <Link href={leadsHref({ followUp: "overdue" })} className={due.overdue > 0 ? "font-medium text-destructive underline-offset-4 hover:underline" : "underline-offset-4 hover:underline"}>
+          <Link href={followUpsHref()} className={due.overdue > 0 ? "font-medium text-destructive underline-offset-4 hover:underline" : "underline-offset-4 hover:underline"}>
             {due.overdue} overdue
           </Link>
           {" · "}
-          <Link href={leadsHref({ followUp: "today" })} className="underline-offset-4 hover:underline">
+          <Link href={followUpsHref()} className="underline-offset-4 hover:underline">
             {due.dueToday} later today
           </Link>
         </CardDescription>

@@ -32,6 +32,12 @@ export const leadsHref = (f: { status?: string; followUp?: "overdue" | "today"; 
 
 export const packingHref = (view: PackingView = "queue") => (view === "queue" ? "/packing" : `/packing?view=${view}`);
 
+/** The COD tab's awaiting-payout list; `overdue` = only parcels past COD_OVERDUE_DAYS (the owner's alert). */
+export const codHref = (f: { overdue?: boolean } = {}) => withQuery("/courier", { tab: "cod", overdue: f.overdue ? "1" : undefined });
+
+/** The follow-ups screen, whose Overdue / Later today counts are the dashboard's (lib/leads/queries.ts listDueFollowUps). */
+export const followUpsHref = () => "/leads/follow-ups";
+
 export const collectionHref = (range: DayRange) => withQuery("/payments/collection", range);
 
 export const expensesHref = (range: DayRange, kind?: string) => withQuery("/expenses", { kind, ...range });
