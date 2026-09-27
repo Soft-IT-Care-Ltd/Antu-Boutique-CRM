@@ -15,7 +15,7 @@ export default async function CatalogPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Catalog</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Catalog</h1>
         <p className="text-sm text-muted-foreground">Products, outfit sets, packaging, size/colour variants and category masters.</p>
       </div>
       <CatalogWorkspace canCreateProduct={canCreateProduct} canManageMasters={canManageMasters} canEditProduct={canEditProduct} canDeleteProduct={canDeleteProduct} hasCostAccess={hasCostAccess} />

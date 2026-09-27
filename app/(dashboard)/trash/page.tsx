@@ -38,7 +38,7 @@ export default async function TrashPage({ searchParams }: { searchParams: Promis
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-4xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Trash</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Trash</h1>
         <p className="text-sm text-muted-foreground">
           Deleted records stay here for {TRASH_RETENTION_DAYS} days and can be restored. Then the nightly purge removes them — anything with sales, stock or money behind it is kept for the records, just no longer restorable.
         </p>

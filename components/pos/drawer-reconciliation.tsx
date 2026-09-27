@@ -86,7 +86,7 @@ export function DrawerReconciliation({ drawer }: { drawer: DrawerSummary }) {
       {drawer.rows.length === 0 ? (
         <p className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No cash has moved through the drawer yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>

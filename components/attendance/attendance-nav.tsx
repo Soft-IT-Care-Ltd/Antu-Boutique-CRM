@@ -16,7 +16,7 @@ export function AttendanceNav() {
   return (
     <nav className="-mx-4 flex gap-1 overflow-x-auto px-4 md:mx-0 md:px-0" aria-label="Attendance sections">
       {LINKS.map((link) => (
-        <Button key={link.href} size="sm" variant={pathname === link.href ? "secondary" : "ghost"} className="shrink-0" render={<Link href={link.href} />} nativeButton={false}>
+        <Button key={link.href} size="sm" variant={pathname === link.href ? "nav" : "ghost"} className="shrink-0" render={<Link href={link.href} />} nativeButton={false}>
           {link.label}
         </Button>
       ))}

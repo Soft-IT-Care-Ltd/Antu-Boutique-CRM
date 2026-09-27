@@ -53,7 +53,7 @@ export default async function ProfitBreakdownPage({ searchParams }: { searchPara
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Profit breakdown</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Profit breakdown</h1>
           <p className="text-sm text-muted-foreground">Orders that went out in the period, what they cost, and the period&apos;s operating expenses.</p>
         </div>
         <form className="flex flex-wrap items-center gap-2" method="get">

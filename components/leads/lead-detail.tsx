@@ -67,7 +67,7 @@ export function LeadDetail({ lead: initial, campaigns, permissions }: { lead: Le
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">{lead.name}</h1>
+            <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">{lead.name}</h1>
             <LeadStatusBadge status={lead.status} />
           </div>
           <p className="text-sm text-muted-foreground">

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShoppingBag } from "lucide-react";
 
 import {
   Sidebar,
@@ -35,12 +34,11 @@ export function AppSidebar({ permissions }: { permissions: PermissionKey[] }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/dashboard" />}>
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <ShoppingBag className="size-4" />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element -- a 32px static badge; next/image adds nothing here */}
+              <img src="/logo-badge.jpeg" alt="Antu Boutique" className="size-8 rounded-full" />
               <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">Antu Boutique</span>
-                <span className="text-xs text-muted-foreground">CRM</span>
+                <span className="font-semibold text-white">Antu Boutique</span>
+                <span className="text-xs text-sidebar-foreground/70">CRM</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -73,7 +71,7 @@ export function AppSidebar({ permissions }: { permissions: PermissionKey[] }) {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <div className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+        <div className="px-2 py-1 text-xs text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden">
           v0.1 — Foundation
         </div>
       </SidebarFooter>

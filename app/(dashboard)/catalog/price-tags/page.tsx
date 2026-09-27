@@ -36,7 +36,7 @@ export default async function PriceTagsPage({ searchParams }: { searchParams: Pr
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Price tags</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Price tags</h1>
         <p className="text-sm text-muted-foreground">Name, size, colour, price and a scannable barcode of the SKU — for a label printer or A4 sticker sheets.</p>
       </div>
       <PriceTagPrinter initialItems={initialItems} initialSource={initialSource} />

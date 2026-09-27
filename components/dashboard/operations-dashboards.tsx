@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, Boxes, PackageCheck, PackageOpen, Truck } from "lucide-react";
+import { AlertTriangle, Banknote, Boxes, PackageCheck, PackageOpen, Receipt, ShieldCheck, Truck, Wallet } from "lucide-react";
 
 import { AlertRow, SectionTitle, StatTile, TileGrid } from "@/components/dashboard/parts";
 import { Button } from "@/components/ui/button";
@@ -72,18 +72,19 @@ export async function AccountsDashboard({ user, panels }: { user: SessionUser; p
     <section className="flex flex-col gap-3">
       <SectionTitle title="Accounts" description="Money waiting to be checked, and where it stands today." />
       <TileGrid className="xl:grid-cols-4">
-        <StatTile label="Unverified payments" value={n.unverified.count} href="/payments" sub={formatBDT(n.unverified.amount)} tone={n.unverified.count > 0 ? "warning" : undefined} />
-        <StatTile label="Today's collection" value={formatBDT(n.collectedToday.amount)} href={collectionHref(today)} sub={`${n.collectedToday.count} payment${n.collectedToday.count === 1 ? "" : "s"}`} />
+        <StatTile label="Unverified payments" value={n.unverified.count} href="/payments" sub={formatBDT(n.unverified.amount)} icon={ShieldCheck} tone={n.unverified.count > 0 ? "warning" : undefined} />
+        <StatTile label="Today's collection" value={formatBDT(n.collectedToday.amount)} href={collectionHref(today)} sub={`${n.collectedToday.count} payment${n.collectedToday.count === 1 ? "" : "s"}`} icon={Wallet} />
         {n.cod ? (
           <StatTile
             label="COD pending"
             value={formatBDT(n.cod.amount)}
             href={codHref()}
             sub={n.cod.overdueCount > 0 ? `${n.cod.count} parcels · ${n.cod.overdueCount} over ${COD_OVERDUE_DAYS} days` : `${n.cod.count} parcels delivered, not paid out`}
+            icon={Truck}
             tone={n.cod.overdueCount > 0 ? "danger" : undefined}
           />
         ) : null}
-        {panels.can.expenses ? <StatTile label="Today's expenses" value={formatBDT(n.expensesToday.amount)} href={expensesHref(today)} sub={`${n.expensesToday.count} entr${n.expensesToday.count === 1 ? "y" : "ies"}`} /> : null}
+        {panels.can.expenses ? <StatTile label="Today's expenses" value={formatBDT(n.expensesToday.amount)} href={expensesHref(today)} sub={`${n.expensesToday.count} entr${n.expensesToday.count === 1 ? "y" : "ies"}`} icon={Receipt} /> : null}
       </TileGrid>
       {n.wallets ? (
         <Card>
@@ -136,7 +137,7 @@ export async function CounterDashboard({ user }: { user: SessionUser }) {
     <section className="flex flex-col gap-3">
       <SectionTitle title="At the counter" />
       <TileGrid className="xl:grid-cols-4">
-        <StatTile label="My sales today" value={formatBDT(today._sum.total ?? 0)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${today._count._all} sale${today._count._all === 1 ? "" : "s"}`} />
+        <StatTile label="My sales today" value={formatBDT(today._sum.total ?? 0)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${today._count._all} sale${today._count._all === 1 ? "" : "s"}`} icon={Banknote} />
       </TileGrid>
     </section>
   );

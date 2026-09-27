@@ -48,7 +48,7 @@ export function DrawerHistory() {
       ) : data.items.length === 0 ? (
         <p className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No drawer has been opened yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>

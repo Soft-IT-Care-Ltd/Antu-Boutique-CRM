@@ -141,7 +141,7 @@ export function ProductForm({
                     key={k}
                     type="button"
                     aria-pressed={values.kind === k}
-                    className={`h-9 px-3 text-sm ${values.kind === k ? "bg-primary text-primary-foreground" : "bg-background"}`}
+                    className={`h-9 px-3 text-sm ${values.kind === k ? "bg-primary text-primary-foreground" : "bg-card"}`}
                     onClick={() => setValues({ ...values, kind: k, basePrice: k === "COMPONENT_ONLY" ? "0" : values.basePrice === "0" ? "" : values.basePrice })}
                   >
                     {k === "SELLABLE" ? "For sale" : "Packaging material"}

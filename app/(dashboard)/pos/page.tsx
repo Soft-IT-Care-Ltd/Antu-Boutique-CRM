@@ -30,7 +30,7 @@ export default async function PosPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">POS</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">POS</h1>
         <p className="text-sm text-muted-foreground">Showroom sale — scan or search, take payment, done. Stock leaves the shelf the moment the sale completes.</p>
       </div>
       <PosScreen initialDrawer={initialDrawer} drawerError={drawerError} wallets={wallets} canSellOutOfStock={canSellOutOfStock} canManageDrawer={canManageDrawer} canExchange={canExchange} />

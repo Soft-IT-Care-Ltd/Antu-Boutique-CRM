@@ -42,7 +42,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Orders</h1>
           <p className="text-sm text-muted-foreground">Lead to packed — the online order form, items, and reference images.</p>
         </div>
         {canReviewEditRequests ? (

@@ -138,7 +138,7 @@ export function PosCheckout({
                   key={mode}
                   type="button"
                   aria-pressed={cartDiscountMode === mode}
-                  className={`h-10 w-10 text-sm ${cartDiscountMode === mode ? "bg-primary text-primary-foreground" : "bg-background"}`}
+                  className={`h-10 w-10 text-sm ${cartDiscountMode === mode ? "bg-primary text-primary-foreground" : "bg-card"}`}
                   onClick={() => onCartDiscount(cartDiscount, mode)}
                 >
                   {mode === "AMOUNT" ? "৳" : "%"}

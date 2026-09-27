@@ -390,7 +390,7 @@ export function PosScreen({
       </div>
 
       {/* Phone / portrait tablet: the total and the way to pay stay in reach. */}
-      <div className="sticky bottom-0 z-20 -mx-4 flex items-center justify-between gap-3 border-t bg-background/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6 lg:hidden">
+      <div className="sticky bottom-0 z-20 -mx-4 flex items-center justify-between gap-3 border-t bg-card/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6 lg:hidden">
         <div>
           <p className="text-xs text-muted-foreground">
             {itemCount} item{itemCount === 1 ? "" : "s"}

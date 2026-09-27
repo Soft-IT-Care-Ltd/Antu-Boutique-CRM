@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarClock, ClipboardEdit, Repeat2, Undo2 } from "lucide-react";
+import { Banknote, CalendarClock, CalendarDays, ClipboardEdit, PauseCircle, Repeat2, Undo2, Users } from "lucide-react";
 
 import { AlertRow, CountBars, StatTile, TileGrid } from "@/components/dashboard/parts";
 import { pct, QualityCell } from "@/components/targets/quality";
@@ -38,14 +38,15 @@ export async function SalesDashboard({ user, panels, followUps }: { user: Sessio
   return (
     <div className="flex flex-col gap-6">
       <TileGrid className="xl:grid-cols-4">
-        <StatTile label={`${my} value this month`} value={formatBDT(numbers.month.value)} href={ordersHref({ preset: "sales", range: ranges.mtdRange })} sub={`${numbers.month.orders} orders · ${monthLabel(ranges.month)}`} />
-        <StatTile label="Today" value={formatBDT(numbers.today.value)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${numbers.today.orders} orders placed`} />
-        {panels.can.leads ? <StatTile label={`${my} open leads`} value={numbers.leadsOpen} href={leadsHref({ status: "open" })} sub="still being worked" /> : null}
+        <StatTile label={`${my} value this month`} value={formatBDT(numbers.month.value)} href={ordersHref({ preset: "sales", range: ranges.mtdRange })} sub={`${numbers.month.orders} orders · ${monthLabel(ranges.month)}`} icon={CalendarDays} />
+        <StatTile label="Today" value={formatBDT(numbers.today.value)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${numbers.today.orders} orders placed`} icon={Banknote} />
+        {panels.can.leads ? <StatTile label={`${my} open leads`} value={numbers.leadsOpen} href={leadsHref({ status: "open" })} sub="still being worked" icon={Users} /> : null}
         <StatTile
           label="On hold"
           value={numbers.openOrders.find((o) => o.status === "ON_HOLD")?.count ?? 0}
           href={ordersHref({ status: "ON_HOLD" })}
           sub="orders waiting on something"
+          icon={PauseCircle}
           tone={(numbers.openOrders.find((o) => o.status === "ON_HOLD")?.count ?? 0) > 0 ? "warning" : undefined}
         />
       </TileGrid>

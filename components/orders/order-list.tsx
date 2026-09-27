@@ -16,6 +16,8 @@ import { formatBDT } from "@/lib/money";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ORDER_STATUS_LABELS, ORDER_STATUS_VALUES } from "@/lib/orders/constants";
+import { ORDER_STATUS_TONE } from "@/lib/ui/status-tone";
+import { cn } from "@/lib/utils";
 import type { OrderListItem } from "@/lib/orders/types";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import { ORDER_DATE_BASIS_LABELS, ORDER_LIST_PRESET_HINTS, ORDER_LIST_PRESET_LABELS, type OrderDateBasis, type OrderListPreset } from "@/lib/orders/list-presets";
@@ -32,22 +34,6 @@ export type OrderListInitialFilters = {
 };
 
 const PAGE_SIZE = 20;
-
-const STATUS_BADGE_VARIANT: Partial<Record<OrderStatusValue, "default" | "secondary" | "destructive" | "outline">> = {
-  LEAD: "outline",
-  CONFIRMED: "secondary",
-  PACKED: "secondary",
-  HANDED_TO_COURIER: "secondary",
-  IN_TRANSIT: "secondary",
-  DELIVERED: "default",
-  COMPLETED: "default",
-  ON_HOLD: "outline",
-  CANCELLED: "destructive",
-  RETURNED: "destructive",
-  REFUNDED: "destructive",
-  EXCHANGE_REQUESTED: "outline",
-  PARTIAL_DELIVERED: "outline",
-};
 
 export function OrderList({ canCreate, canFilterBySe, initialFilters = {} }: { canCreate: boolean; canFilterBySe: boolean; initialFilters?: OrderListInitialFilters }) {
   const router = useRouter();
@@ -209,8 +195,8 @@ export function OrderList({ canCreate, canFilterBySe, initialFilters = {} }: { c
               <TableHead>Order no.</TableHead>
               <TableHead>Customer</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Total</TableHead>
-              <TableHead>Due</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead className="text-right">Due</TableHead>
               <TableHead>Sales executive</TableHead>
               <TableHead>Placed</TableHead>
             </TableRow>
@@ -218,7 +204,7 @@ export function OrderList({ canCreate, canFilterBySe, initialFilters = {} }: { c
           <TableBody>
             {items.map((order) => (
               <TableRow key={order.id} className="cursor-pointer" onClick={() => router.push(`/orders/${order.id}`)}>
-                <TableCell className="font-mono font-medium">{order.orderNo}</TableCell>
+                <TableCell className="font-mono text-xs font-medium">{order.orderNo}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
                     {order.customer?.name ?? <span className="text-muted-foreground">{WALK_IN_CUSTOMER_LABEL}</span>}
@@ -227,10 +213,10 @@ export function OrderList({ canCreate, canFilterBySe, initialFilters = {} }: { c
                   {order.customer ? <div className="font-mono text-xs text-muted-foreground">{order.customer.phone}</div> : null}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_BADGE_VARIANT[order.status] ?? "outline"}>{ORDER_STATUS_LABELS[order.status]}</Badge>
+                  <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
                 </TableCell>
-                <TableCell>{formatBDT(order.total)}</TableCell>
-                <TableCell className={Number(order.dueAmount) > 0 ? "text-amber-600" : "text-muted-foreground"}>
+                <TableCell className="text-right font-semibold">{formatBDT(order.total)}</TableCell>
+                <TableCell className={cn("text-right", Number(order.dueAmount) > 0 ? "text-amber-600" : "text-muted-foreground")}>
                   {formatBDT(order.dueAmount)}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{order.createdBy?.name ?? "—"}</TableCell>

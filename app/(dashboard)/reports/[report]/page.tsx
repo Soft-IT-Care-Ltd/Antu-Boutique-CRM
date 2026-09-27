@@ -37,7 +37,7 @@ export default async function ReportPage({ params, searchParams }: { params: Pro
         <Link href="/reports" className="flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ChevronLeft className="size-4" /> Reports
         </Link>
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">
           <span className="mr-2 font-mono text-base font-medium text-muted-foreground">{def.code}</span>
           {def.title}
         </h1>

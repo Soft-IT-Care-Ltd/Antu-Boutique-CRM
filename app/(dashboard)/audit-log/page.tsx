@@ -42,7 +42,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Audit log</h1>
         <p className="text-sm text-muted-foreground">Every sensitive change — orders, prices, payments, stock, permissions, images, approvals — with who made it, before and after.</p>
       </div>
 

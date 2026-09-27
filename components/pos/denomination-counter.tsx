@@ -31,7 +31,7 @@ export function DenominationCounter({ value, onChange }: { value: CountState; on
             key={mode}
             type="button"
             aria-pressed={value.mode === mode}
-            className={`h-10 flex-1 ${value.mode === mode ? "bg-primary text-primary-foreground" : "bg-background"}`}
+            className={`h-10 flex-1 ${value.mode === mode ? "bg-primary text-primary-foreground" : "bg-card"}`}
             onClick={() => onChange({ ...value, mode })}
           >
             {mode === "NOTES" ? "Count notes & coins" : "Type the total"}

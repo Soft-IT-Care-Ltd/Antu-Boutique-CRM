@@ -28,6 +28,7 @@ import { COD_OVERDUE_DAYS } from "@/lib/courier/constants";
 import { formatDhakaDate, formatDhakaDateTime, todayInDhaka } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
+import type { BadgeTone } from "@/lib/ui/status-tone";
 import type { WalletOption } from "@/lib/wallets/constants";
 
 type View = "awaiting" | "statements" | "discrepancies";
@@ -36,13 +37,13 @@ const VIEW_LABELS: Record<View, string> = { awaiting: "Awaiting payout", stateme
 
 type ListResponse = { view: View; items: (AwaitingPayoutRow | StatementRow | StatementLineView)[]; total: number; summary: CodSummary };
 
-const LINE_BADGE: Record<StatementLineView["status"], "default" | "secondary" | "destructive" | "outline"> = {
-  PENDING: "outline",
-  MATCHED: "secondary",
-  ACCEPTED: "secondary",
+const LINE_BADGE: Record<StatementLineView["status"], BadgeTone> = {
+  PENDING: "warning",
+  MATCHED: "success",
+  ACCEPTED: "success",
   MISMATCH: "destructive",
   UNMATCHED: "destructive",
-  DISPUTED: "outline",
+  DISPUTED: "warning",
 };
 
 // PRD §4.9 COD reconciliation + Gift Valy Round 2 §2.7 payouts, for ACCOUNTS:

@@ -8,28 +8,41 @@ import { cn } from "@/lib/utils";
 // it summarises (PRD §4.16) — these components make that the only way to
 // put a number on the screen.
 
-/** A headline figure: the whole tile is the link. */
+/** A headline figure: the whole tile is the link. An icon sits in a disc
+ *  tinted with the tile's accent (set by TileGrid's position cycle). */
 export function StatTile({ label, value, href, sub, icon: Icon, tone }: { label: string; value: ReactNode; href: string; sub?: ReactNode; icon?: LucideIcon; tone?: "danger" | "warning" }) {
   return (
     <Link
       href={href}
       className={cn(
-        "group flex min-w-0 flex-col gap-1 rounded-xl border bg-card p-3 text-card-foreground transition-colors hover:border-foreground/25 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:p-4",
+        "group flex min-w-0 flex-col gap-1.5 rounded-xl border bg-card p-3 text-card-foreground transition-colors hover:border-primary/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4.5 sm:py-4",
         tone === "danger" && "border-destructive/40",
       )}
     >
-      <span className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground sm:text-sm">
+      <span className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
         <span className="truncate">{label}</span>
-        {Icon ? <Icon className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />}
+        {Icon ? (
+          <span className="relative flex size-8 shrink-0 items-center justify-center rounded-full text-foreground">
+            <span className="absolute inset-0 rounded-full bg-(--tile-accent,var(--chart-1)) opacity-20" aria-hidden />
+            <Icon className="relative size-4" />
+          </span>
+        ) : (
+          <ChevronRight className="size-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+        )}
       </span>
-      <span className={cn("truncate text-xl font-semibold tabular-nums sm:text-2xl", tone === "danger" && "text-destructive", tone === "warning" && "text-amber-600 dark:text-amber-500")}>{value}</span>
+      <span className={cn("truncate text-xl leading-tight font-semibold tabular-nums sm:text-2xl", tone === "danger" && "text-destructive", tone === "warning" && "text-amber-600 dark:text-amber-500")}>{value}</span>
       {sub ? <span className="truncate text-xs text-muted-foreground">{sub}</span> : null}
     </Link>
   );
 }
 
+// Chart series order (violet, orange, teal, yellow, lime) — the only other
+// place the accents appear is a KPI tile's icon disc.
+const ACCENT_CYCLE =
+  "[&>*:nth-child(5n+1)]:[--tile-accent:var(--chart-1)] [&>*:nth-child(5n+2)]:[--tile-accent:var(--chart-2)] [&>*:nth-child(5n+3)]:[--tile-accent:var(--chart-3)] [&>*:nth-child(5n+4)]:[--tile-accent:var(--chart-4)] [&>*:nth-child(5n+5)]:[--tile-accent:var(--chart-5)]";
+
 export function TileGrid({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6", className)}>{children}</div>;
+  return <div className={cn("grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-6", ACCENT_CYCLE, className)}>{children}</div>;
 }
 
 export function SectionTitle({ title, description, action }: { title: string; description?: ReactNode; action?: ReactNode }) {

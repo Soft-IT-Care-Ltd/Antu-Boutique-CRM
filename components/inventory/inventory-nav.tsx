@@ -18,7 +18,7 @@ export function InventoryNav({ links }: { links: InventoryNavLink[] }) {
         <Button
           key={link.href}
           size="sm"
-          variant={isActive(link.href) ? "secondary" : "ghost"}
+          variant={isActive(link.href) ? "nav" : "ghost"}
           className="shrink-0"
           render={<Link href={link.href} />}
           nativeButton={false}

@@ -36,7 +36,7 @@ export default async function CashDrawerPage() {
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Cash drawer</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Cash drawer</h1>
           <p className="text-sm text-muted-foreground">Opening count, cash sales, cash out, and the day-end count — the Showroom Cash wallet, counted.</p>
         </div>
         {canSell ? (

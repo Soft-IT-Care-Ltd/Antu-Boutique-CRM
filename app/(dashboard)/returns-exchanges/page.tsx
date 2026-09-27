@@ -28,7 +28,7 @@ export default async function ReturnsExchangesPage({ searchParams }: { searchPar
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-5xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Returns &amp; Exchanges</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Returns &amp; Exchanges</h1>
         <p className="text-sm text-muted-foreground">
           Customer returns and size/colour exchanges. Nothing goes back into stock until Packing has checked the item.
         </p>

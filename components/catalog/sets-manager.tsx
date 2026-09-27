@@ -154,7 +154,7 @@ export function SetsManager({ canCreate, canEdit, canDelete, hasCostAccess }: { 
       ) : report.length === 0 ? (
         <p className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">No outfit sets yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>

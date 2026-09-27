@@ -25,7 +25,7 @@ export type CaseActions = {
 
 type Pending = { kind: "approve" | "reject" | "cancel"; returnCase: ReturnCaseView };
 
-const STATUS_VARIANT = { REQUESTED: "secondary", APPROVED: "default", COMPLETED: "outline", REJECTED: "destructive", CANCELLED: "outline" } as const;
+const STATUS_VARIANT = { REQUESTED: "warning", APPROVED: "info", COMPLETED: "success", REJECTED: "destructive", CANCELLED: "neutral" } as const;
 
 function Variant({ v }: { v: VariantLabel }) {
   return (

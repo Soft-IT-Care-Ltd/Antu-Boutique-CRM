@@ -41,7 +41,7 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-4xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Edit {order.orderNo}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Edit {order.orderNo}</h1>
         <p className="text-sm text-muted-foreground">Items, delivery, and money — the customer and photos are managed separately.</p>
       </div>
       <OrderForm order={order} hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} />

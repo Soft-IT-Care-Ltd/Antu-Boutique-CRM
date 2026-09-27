@@ -18,7 +18,7 @@ export function SectionHeader({ title, description, links, actions }: { title: s
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">{title}</h1>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
         {actions}
@@ -28,7 +28,7 @@ export function SectionHeader({ title, description, links, actions }: { title: s
           <Button
             key={link.href}
             size="sm"
-            variant={isActive(link.href) ? "secondary" : "ghost"}
+            variant={isActive(link.href) ? "nav" : "ghost"}
             className="shrink-0"
             render={<Link href={link.href} />}
             nativeButton={false}

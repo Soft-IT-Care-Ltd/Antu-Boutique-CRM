@@ -18,7 +18,7 @@ export default async function NewProductPage({ searchParams }: { searchParams: P
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-2xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New product</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">New product</h1>
         <p className="text-sm text-muted-foreground">Add sizes and colours from the product page after saving.</p>
       </div>
       <ProductForm categories={categories.map((c) => ({ ...c }))} initialKind={kind === "COMPONENT_ONLY" ? "COMPONENT_ONLY" : "SELLABLE"} />

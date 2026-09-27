@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, BellRing, Boxes, Clock, HandCoins, Trophy, Truck } from "lucide-react";
+import { AlertTriangle, Banknote, BellRing, Boxes, Clock, HandCoins, Receipt, ShoppingBag, TrendingUp, Trophy, Truck } from "lucide-react";
 
 import { ChannelSplitChart, ProfitTrendChart, ReturnsChart, SalesTrendChart } from "@/components/dashboard/owner-charts";
 import { AlertRow, SectionTitle, StatTile, TileGrid } from "@/components/dashboard/parts";
@@ -36,16 +36,17 @@ function PeriodTiles({ row, range, label }: { row: PeriodRow; range: DayRange; l
   const profit = toNumber(row.profit);
   return (
     <TileGrid>
-      <StatTile label={`${label} orders`} value={row.orders} href={ordersHref({ preset: "sales", range })} sub="not cancelled or returned" />
-      <StatTile label="Value" value={formatBDT(row.value)} href={ordersHref({ preset: "sales", range })} sub="order totals" />
-      <StatTile label="Collected" value={formatBDT(row.collected)} href={collectionHref(range)} sub="money received" />
-      <StatTile label="Due" value={formatBDT(row.due)} href={ordersHref({ preset: "due", range })} sub="still unpaid on these orders" tone={toNumber(row.due) > 0 ? "warning" : undefined} />
-      <StatTile label="Expenses" value={formatBDT(row.expenses)} href={expensesHref(range, OPERATING_EXPENSE_FILTER)} sub="not counting stock bought" />
+      <StatTile label={`${label} orders`} value={row.orders} href={ordersHref({ preset: "sales", range })} sub="not cancelled or returned" icon={ShoppingBag} />
+      <StatTile label="Value" value={formatBDT(row.value)} href={ordersHref({ preset: "sales", range })} sub="order totals" icon={Banknote} />
+      <StatTile label="Collected" value={formatBDT(row.collected)} href={collectionHref(range)} sub="money received" icon={HandCoins} />
+      <StatTile label="Due" value={formatBDT(row.due)} href={ordersHref({ preset: "due", range })} sub="still unpaid on these orders" icon={Clock} tone={toNumber(row.due) > 0 ? "warning" : undefined} />
+      <StatTile label="Expenses" value={formatBDT(row.expenses)} href={expensesHref(range, OPERATING_EXPENSE_FILTER)} sub="not counting stock bought" icon={Receipt} />
       <StatTile
         label="Profit"
         value={formatBDT(row.profit)}
         href={profitHref(range)}
         sub={`on ${formatBDT(row.revenueOut)} sent out (${row.ordersOut})`}
+        icon={TrendingUp}
         tone={profit < 0 ? "danger" : undefined}
       />
     </TileGrid>

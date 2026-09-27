@@ -11,6 +11,7 @@ import { PackChecklistDialog } from "@/components/packing/pack-checklist-dialog"
 import { ORDER_STATUS_LABELS } from "@/lib/orders/constants";
 import { packingUploadUrl } from "@/lib/packing/types";
 import type { PackingOrderDetail as PackingOrderDetailData } from "@/lib/packing/types";
+import { ORDER_STATUS_TONE } from "@/lib/ui/status-tone";
 
 export function PackingOrderDetail({ order: initialOrder, canPack }: { order: PackingOrderDetailData; canPack: boolean }) {
   const [order, setOrder] = useState(initialOrder);
@@ -24,9 +25,9 @@ export function PackingOrderDetail({ order: initialOrder, canPack }: { order: Pa
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-mono text-2xl font-semibold tracking-tight">{order.orderNo}</h1>
+          <h1 className="font-mono text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">{order.orderNo}</h1>
           <div className="mt-1 flex items-center gap-2">
-            <Badge variant={order.status === "CONFIRMED" ? "secondary" : "default"}>{ORDER_STATUS_LABELS[order.status]}</Badge>
+            <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
             {order.status === "CONFIRMED" && order.isOverdue ? <Badge variant="destructive">Overdue</Badge> : null}
           </div>
         </div>

@@ -26,9 +26,9 @@ import { formatBDT, formatLakh } from "@/lib/money";
 
 const PAGE_SIZE = 25;
 
-const STATUS_BADGE: Record<VariantStockStatus, { label: string; variant: "secondary" | "outline" | "destructive" }> = {
-  OK: { label: "In stock", variant: "secondary" },
-  LOW: { label: "Low", variant: "outline" },
+const STATUS_BADGE: Record<VariantStockStatus, { label: string; variant: "success" | "warning" | "destructive" }> = {
+  OK: { label: "In stock", variant: "success" },
+  LOW: { label: "Low", variant: "warning" },
   OUT: { label: "Out", variant: "destructive" },
 };
 

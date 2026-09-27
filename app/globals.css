@@ -46,48 +46,61 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --color-brand-orange: var(--brand-orange);
+  --color-brand-yellow: var(--brand-yellow);
+  --color-brand-lime: var(--brand-lime);
+  --color-brand-teal: var(--brand-teal);
+  --color-brand-violet-light: var(--brand-violet-light);
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  /* P4.3 dashboard charts — validated categorical steps (dataviz reference
-     palette): online/walk-in, returns/exchanges, and a loss day. */
-  --viz-online: #2a78d6;
-  --viz-walk-in: #eb6834;
-  --viz-returns: #1baf7a;
-  --viz-exchanges: #4a3aa7;
+  --radius: 0.5rem;
+  --background: #F7F6FB;
+  --foreground: #151320;
+  --card: #FFFFFF;
+  --card-foreground: #151320;
+  --popover: #FFFFFF;
+  --popover-foreground: #151320;
+  --primary: #7C4DDB;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F3F2F7;
+  --secondary-foreground: #221F31;
+  --muted: #F3F2F7;
+  --muted-foreground: #6B6780;
+  --accent: #ECE3FC;
+  --accent-foreground: #5A30AD;
+  --destructive: #B3202E;
+  --border: #E6E4EE;
+  --input: #E6E4EE;
+  --ring: #D6C4F8;
+  --chart-1: #7C4DDB;
+  --chart-2: #F28C28;
+  --chart-3: #45B5A6;
+  --chart-4: #FFD23F;
+  --chart-5: #C5DC5A;
+  --sidebar: #1F1830;
+  --sidebar-foreground: rgba(255,255,255,0.72);
+  --sidebar-primary: #7C4DDB;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: rgba(255,255,255,0.07);
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255,255,255,0.08);
+  --sidebar-ring: #A87DF5;
+
+  /* Extra accents (Funnel Liner colour combo) */
+  --brand-orange: #F28C28;
+  --brand-yellow: #FFD23F;
+  --brand-lime: #C5DC5A;
+  --brand-teal: #45B5A6;
+  --brand-violet-light: #A87DF5;
+
+  /* P4.3 dashboard chart series, on the ERP series order (violet, orange,
+     teal, yellow). A loss stays semantic red, never an accent. */
+  --viz-online: var(--chart-1);
+  --viz-walk-in: var(--chart-2);
+  --viz-returns: var(--chart-3);
+  --viz-exchanges: var(--chart-4);
   --viz-loss: #e34948;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {

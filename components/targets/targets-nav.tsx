@@ -21,7 +21,7 @@ export function TargetsNav() {
         <Button
           key={link.href}
           size="sm"
-          variant={pathname === link.href ? "secondary" : "ghost"}
+          variant={pathname === link.href ? "nav" : "ghost"}
           className="shrink-0"
           render={<Link href={month ? `${link.href}?month=${month}` : link.href} />}
           nativeButton={false}

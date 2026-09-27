@@ -30,9 +30,9 @@ const STOCK_LABEL: Record<StockStatus, string> = {
   OUT_OF_STOCK: "Out of stock",
 };
 
-const STOCK_VARIANT: Record<StockStatus, "secondary" | "destructive" | "outline"> = {
-  IN_STOCK: "secondary",
-  LOW_STOCK: "outline",
+const STOCK_VARIANT: Record<StockStatus, "success" | "warning" | "destructive"> = {
+  IN_STOCK: "success",
+  LOW_STOCK: "warning",
   OUT_OF_STOCK: "destructive",
 };
 
@@ -162,9 +162,9 @@ export function ProductList({ canCreate }: { canCreate: boolean }) {
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>Category</TableHead>
-              <TableHead>Price</TableHead>
-              <TableHead>Variants</TableHead>
-              <TableHead>Stock</TableHead>
+              <TableHead className="text-right">Price</TableHead>
+              <TableHead className="text-right">Variants</TableHead>
+              <TableHead className="text-right">Stock</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -177,7 +177,7 @@ export function ProductList({ canCreate }: { canCreate: boolean }) {
               >
                 <TableCell>
                   <div className="flex items-center gap-3">
-                    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+                    <div className="flex h-12 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
                       {product.images[0] ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={uploadUrl(product.images[0].thumbPath)} alt="" className="size-full object-cover" />
@@ -187,14 +187,14 @@ export function ProductList({ canCreate }: { canCreate: boolean }) {
                     </div>
                     <div className="min-w-0">
                       <p className="truncate font-medium">{product.name}</p>
-                      <p className="text-xs text-muted-foreground">{product.code}{product.brand ? ` · ${product.brand}` : ""}</p>
+                      <p className="text-xs text-muted-foreground"><span className="font-mono">{product.code}</span>{product.brand ? ` · ${product.brand}` : ""}</p>
                     </div>
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{product.category?.name ?? "—"}</TableCell>
-                <TableCell>{product.kind === "COMPONENT_ONLY" ? <span className="text-xs text-muted-foreground">Packaging</span> : formatBDT(product.basePrice)}</TableCell>
-                <TableCell>{product._count.variants}</TableCell>
-                <TableCell>{product.stock.available}</TableCell>
+                <TableCell className="text-right">{product.kind === "COMPONENT_ONLY" ? <span className="text-xs text-muted-foreground">Packaging</span> : formatBDT(product.basePrice)}</TableCell>
+                <TableCell className="text-right">{product._count.variants}</TableCell>
+                <TableCell className="text-right">{product.stock.available}</TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
                     <Badge variant={STOCK_VARIANT[product.stock.status]}>{STOCK_LABEL[product.stock.status]}</Badge>

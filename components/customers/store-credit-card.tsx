@@ -143,7 +143,7 @@ export function StoreCreditCard({ customerId, initial, canAdjust }: { customerId
                   key={d}
                   type="button"
                   aria-pressed={direction === d}
-                  className={`h-9 px-3 text-sm ${direction === d ? "bg-primary text-primary-foreground" : "bg-background"}`}
+                  className={`h-9 px-3 text-sm ${direction === d ? "bg-primary text-primary-foreground" : "bg-card"}`}
                   onClick={() => setDirection(d)}
                 >
                   {d === "add" ? "Add credit" : "Take away"}

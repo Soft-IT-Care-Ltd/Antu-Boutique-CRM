@@ -25,6 +25,7 @@ import { DELIVERY_ZONE_LABELS, ORDER_STATUS_LABELS } from "@/lib/orders/constant
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { orderUploadUrl } from "@/lib/orders/types";
 import type { OrderDetail as OrderDetailType } from "@/lib/orders/types";
+import { ORDER_STATUS_TONE } from "@/lib/ui/status-tone";
 import type { WalletOption } from "@/lib/wallets/constants";
 
 function formatDateTime(iso: string): string {
@@ -93,8 +94,8 @@ export function OrderDetail({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="font-mono text-2xl font-semibold tracking-tight">{order.orderNo}</h1>
-            <Badge>{ORDER_STATUS_LABELS[order.status]}</Badge>
+            <h1 className="font-mono text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">{order.orderNo}</h1>
+            <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
             <Badge variant="outline">{order.channel === "ONLINE" ? "Online" : "Walk-in"}</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -226,11 +227,11 @@ export function OrderDetail({
             <TableHeader>
               <TableRow>
                 <TableHead>Item</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Unit price</TableHead>
-                <TableHead>Discount</TableHead>
-                {hasCostAccess ? <TableHead>Cost</TableHead> : null}
-                <TableHead>Line total</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+                <TableHead className="text-right">Unit price</TableHead>
+                <TableHead className="text-right">Discount</TableHead>
+                {hasCostAccess ? <TableHead className="text-right">Cost</TableHead> : null}
+                <TableHead className="text-right">Line total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -245,11 +246,11 @@ export function OrderDetail({
                       </div>
                       <div className="text-xs text-muted-foreground">Outfit set — its pieces are listed below</div>
                     </TableCell>
-                    <TableCell>{row.qty}</TableCell>
-                    <TableCell>{formatBDT(row.unitPrice)}</TableCell>
-                    <TableCell>{formatBDT(row.lineDiscount)}</TableCell>
+                    <TableCell className="text-right">{row.qty}</TableCell>
+                    <TableCell className="text-right">{formatBDT(row.unitPrice)}</TableCell>
+                    <TableCell className="text-right">{formatBDT(row.lineDiscount)}</TableCell>
                     {hasCostAccess ? <TableCell /> : null}
-                    <TableCell className="font-medium">
+                    <TableCell className="text-right font-semibold">
                       {formatBDT(String(order.items.filter((i) => i.setLineId === row.id).reduce((sum, i) => sum + Math.round(Number(i.lineTotal) * 100), 0) / 100))}
                     </TableCell>
                   </TableRow>
@@ -269,14 +270,14 @@ export function OrderDetail({
                       </Badge>
                     ) : null}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-right">
                     {row.qty}
                     {row.returnedQty > 0 ? <div className="text-xs text-amber-600">{row.returnedQty} returned</div> : null}
                   </TableCell>
-                  <TableCell>{formatBDT(row.unitPrice)}</TableCell>
-                  <TableCell>{formatBDT(row.lineDiscount)}</TableCell>
-                  {hasCostAccess ? <TableCell className="text-muted-foreground">{row.unitCostSnapshot ? formatBDT(row.unitCostSnapshot) : "—"}</TableCell> : null}
-                  <TableCell className="font-medium">{formatBDT(row.lineTotal)}</TableCell>
+                  <TableCell className="text-right">{formatBDT(row.unitPrice)}</TableCell>
+                  <TableCell className="text-right">{formatBDT(row.lineDiscount)}</TableCell>
+                  {hasCostAccess ? <TableCell className="text-right text-muted-foreground">{row.unitCostSnapshot ? formatBDT(row.unitCostSnapshot) : "—"}</TableCell> : null}
+                  <TableCell className="text-right font-semibold">{formatBDT(row.lineTotal)}</TableCell>
                 </TableRow>
                 ),
               )}

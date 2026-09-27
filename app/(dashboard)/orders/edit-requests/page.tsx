@@ -11,7 +11,7 @@ export default async function OrderEditRequestsPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Edit requests</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Edit requests</h1>
         <p className="text-sm text-muted-foreground">
           Order edits made after the edit window has closed, waiting on your approval.
         </p>

@@ -52,7 +52,7 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-4xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New order</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">New order</h1>
         <p className="text-sm text-muted-foreground">One person, their items, an optional photo, and the delivery details.</p>
       </div>
       <OrderForm lead={lead} hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} wallets={wallets} />

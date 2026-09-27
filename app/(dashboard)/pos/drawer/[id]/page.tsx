@@ -22,7 +22,7 @@ export default async function DrawerDayPage({ params }: { params: Promise<{ id: 
           <ChevronLeft />
           Cash drawer
         </Button>
-        <h1 className="text-2xl font-semibold tracking-tight">Cash reconciliation</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Cash reconciliation</h1>
       </div>
       <DrawerReconciliation drawer={drawer} />
     </div>

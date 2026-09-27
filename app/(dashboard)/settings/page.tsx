@@ -67,7 +67,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-6xl md:p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Settings</h1>
         <p className="text-sm text-muted-foreground">Business profile, masters, money, people and permissions, integrations and go-live data.</p>
       </div>
       <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-start md:gap-6">
