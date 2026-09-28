@@ -318,14 +318,14 @@ Report findings, fix them, merge and push.
 - The order screen shows, for each item, how many are at each location.
 - **Packed** deducts the units (and the default packaging materials) from the **hub's** stock, freezes the cost snapshot and sets the status to Packed. The same rules apply to single-item orders.
 
-### 14. Order status as tabs, not a dropdown — [OPEN]
+### 14. Order status as tabs, not a dropdown — [DONE] C2 `bb1ac8e`: tabs with counts + sub-tabs, open work ignores dates, finished tabs default This Month; Waiting for stock / Needs transfer empty until C3/C5.
 - The Orders page shows statuses as **tabs with counts**, with sub-tabs where useful: Needs confirmation · Waiting for stock · Needs transfer · Ready to pack · Packed · With courier (Handed over / In transit / Approval pending) · Delivered · Completed · Returns & exchanges · Cancelled · All.
 - A **date filter** (item 16) sits at the top. Tabs for open work (Needs confirmation through With courier) always show every open order regardless of date, so nothing pending is hidden. Finished tabs (Delivered, Completed, Returns, Cancelled, All) follow the date filter, default **This Month**.
 
-### 15. Pagination everywhere — [OPEN]
+### 15. Pagination everywhere — [DONE] C2 `bb1ac8e`: one 25/50/100 bar on every list, report table, audit log and trash; size remembered per user per list (`user_list_preferences`).
 - Every list (orders, customers, products, leads, payments, expenses, transfers, members, call lists, reports…): **25 / 50 / 100 per page**, "showing X–Y of Z", server-side, and the choice remembered per user per list.
 
-### 16. One date filter, everywhere — [OPEN]
+### 16. One date filter, everywhere — [DONE] C2 `bb1ac8e`: shared Dhaka-day filter on the dashboard (new), every report and every dated list.
 - Options: **Today · Yesterday · Last 7 days · This Month · Last Month · All Time · Custom range**. Asia/Dhaka days.
 - The same component on the dashboard (which gets a filter it doesn't have today), every report and every list with dates.
 
