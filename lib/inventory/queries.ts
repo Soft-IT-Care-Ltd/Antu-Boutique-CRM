@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
-import type { StockMovementTypeValue } from "@/lib/inventory/constants";
+import { IN_TRANSIT_FILTER, type StockMovementTypeValue } from "@/lib/inventory/constants";
 import type { PurchaseDetail, PurchaseListItem, StockMovementRow, SupplierItem } from "@/lib/inventory/types";
 
 // Who may read what in the inventory module. Kept here, next to the queries
@@ -24,7 +24,7 @@ export const PURCHASE_VIEW_PERMISSIONS: PermissionKey[] = ["inventory.purchase.c
 export type MovementQuery = {
   q?: string;
   variantId?: string;
-  /** C3 — one location's rows only. */
+  /** C3 — one location's rows only; C4: IN_TRANSIT_FILTER = the in-transit rows. */
   locationId?: string;
   type?: StockMovementTypeValue;
   from?: Date;
@@ -36,7 +36,7 @@ export type MovementQuery = {
 export async function listStockMovements(query: MovementQuery): Promise<{ items: StockMovementRow[]; total: number }> {
   const and: Prisma.StockMovementWhereInput[] = [];
   if (query.variantId) and.push({ variantId: query.variantId });
-  if (query.locationId) and.push({ locationId: query.locationId });
+  if (query.locationId) and.push({ locationId: query.locationId === IN_TRANSIT_FILTER ? null : query.locationId });
   if (query.type) and.push({ type: query.type });
   if (query.from) and.push({ createdAt: { gte: query.from } });
   if (query.to) and.push({ createdAt: { lt: query.to } });
@@ -68,13 +68,19 @@ export async function listStockMovements(query: MovementQuery): Promise<{ items:
 
   const orderIds = movements.filter((m) => m.referenceType === "ORDER" && m.referenceId).map((m) => m.referenceId!);
   const purchaseIds = movements.filter((m) => m.referenceType === "PURCHASE" && m.referenceId).map((m) => m.referenceId!);
-  const [orders, purchases] = await Promise.all([
+  const transferIds = movements.filter((m) => m.referenceType === "TRANSFER" && m.referenceId).map((m) => m.referenceId!);
+  const countIds = movements.filter((m) => m.referenceType === "STOCK_COUNT" && m.referenceId).map((m) => m.referenceId!);
+  const [orders, purchases, transfers, counts] = await Promise.all([
     orderIds.length ? prisma.order.findMany({ where: { id: { in: orderIds } }, select: { id: true, orderNo: true } }) : [],
     purchaseIds.length
       ? prisma.purchase.findMany({ where: { id: { in: purchaseIds } }, select: { id: true, invoiceNo: true, supplier: { select: { name: true } } } })
       : [],
+    transferIds.length ? prisma.stockTransfer.findMany({ where: { id: { in: transferIds } }, select: { id: true, transferNo: true } }) : [],
+    countIds.length ? prisma.stockCount.findMany({ where: { id: { in: countIds } }, select: { id: true, countNo: true } }) : [],
   ]);
   const orderNoById = new Map(orders.map((o) => [o.id, o.orderNo]));
+  const transferNoById = new Map(transfers.map((t) => [t.id, t.transferNo]));
+  const countNoById = new Map(counts.map((c) => [c.id, c.countNo]));
   const purchaseById = new Map(purchases.map((p) => [p.id, p]));
 
   const items: StockMovementRow[] = movements.map((m) => {
@@ -87,6 +93,12 @@ export async function listStockMovements(query: MovementQuery): Promise<{ items:
       const p = purchaseById.get(m.referenceId);
       referenceLabel = p ? [p.supplier.name, p.invoiceNo].filter(Boolean).join(" · ") : null;
       referenceHref = `/inventory/purchases/${m.referenceId}`;
+    } else if (m.referenceType === "TRANSFER" && m.referenceId) {
+      referenceLabel = transferNoById.get(m.referenceId) ?? null;
+      referenceHref = `/inventory/transfers/${m.referenceId}`;
+    } else if (m.referenceType === "STOCK_COUNT" && m.referenceId) {
+      referenceLabel = countNoById.get(m.referenceId) ?? null;
+      referenceHref = `/inventory/counts/${m.referenceId}`;
     }
     return {
       id: m.id,

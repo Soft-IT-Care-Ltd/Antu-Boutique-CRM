@@ -161,7 +161,7 @@ export async function purgeTrash(db: Db, now = new Date()): Promise<PurgeSummary
         const product = await tx.product.findFirst({ where: { id, ...due, archivedAt: null }, include: { _count: { select: { variants: true, images: true } } } });
         if (!product) return false;
         const variant = { variant: { productId: id } };
-        const [liveSales, trashedSales, movements, purchases, packagingUses, exchangeLines, setComponents] = await Promise.all([
+        const [liveSales, trashedSales, movements, purchases, packagingUses, exchangeLines, setComponents, stockDocLines] = await Promise.all([
           tx.orderItem.count({ where: { ...variant, order: { deletedAt: null } } }),
           tx.orderItem.count({ where: { ...variant, order: { deletedAt: { not: null } } } }),
           tx.stockMovement.count({ where: variant }),
@@ -169,8 +169,10 @@ export async function purgeTrash(db: Db, now = new Date()): Promise<PurgeSummary
           tx.packagingComponent.count({ where: { materialVariant: { productId: id } } }),
           tx.returnCaseLine.count({ where: { replacementVariant: { productId: id } } }),
           tx.outfitSetComponent.count({ where: { productId: id } }),
+          // C4 — a transfer or stock count that names it (even a draft never sent) keeps its record.
+          Promise.all([tx.stockTransferLine.count({ where: variant }), tx.stockCountLine.count({ where: variant })]).then(([a, b]) => a + b),
         ]);
-        const decision = purgeDecision(liveSales + movements + purchases + packagingUses + exchangeLines + setComponents, trashedSales);
+        const decision = purgeDecision(liveSales + movements + purchases + packagingUses + exchangeLines + setComponents + stockDocLines, trashedSales);
         const before = { code: product.code, name: product.name, deletedAt: product.deletedAt, variants: product._count.variants, images: product._count.images, sales: liveSales + trashedSales, stockMovements: movements, purchases, setComponents };
         if (decision === "defer") {
           summary.products.waiting++;

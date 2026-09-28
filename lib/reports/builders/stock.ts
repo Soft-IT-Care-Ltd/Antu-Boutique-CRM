@@ -13,13 +13,16 @@ import { figure, orderScope, type BuildContext, type BuiltReport } from "@/lib/r
 
 const STATUS_LABEL = { OK: "In stock", LOW: "Low", OUT: "Out" } as const;
 const SOLD_TYPES = ["SALE_OUT", "POS_SALE_OUT"] as const;
+// C4 — a transfer only moves stock between places (its rows net to zero),
+// so it is neither stock in nor stock out for the shop.
+const INTERNAL_MOVES = ["TRANSFER_SEND", "TRANSFER_RECEIVE"] as const;
 
 export async function buildStockReport(ctx: BuildContext): Promise<BuiltReport> {
   const f = ctx.filters;
   const [stock, moves, sold] = await Promise.all([
     getStockReport({ categoryId: f.categoryId, status: f.stock ?? "all", page: 1, pageSize: 100_000 }),
-    ctx.db.stockMovement.groupBy({ by: ["variantId"], where: { createdAt: { gte: f.from, lt: f.to }, qty: { gt: 0 } }, _sum: { qty: true } }),
-    ctx.db.stockMovement.groupBy({ by: ["variantId", "type"], where: { createdAt: { gte: f.from, lt: f.to }, qty: { lt: 0 } }, _sum: { qty: true } }),
+    ctx.db.stockMovement.groupBy({ by: ["variantId"], where: { createdAt: { gte: f.from, lt: f.to }, qty: { gt: 0 }, type: { notIn: [...INTERNAL_MOVES] } }, _sum: { qty: true } }),
+    ctx.db.stockMovement.groupBy({ by: ["variantId", "type"], where: { createdAt: { gte: f.from, lt: f.to }, qty: { lt: 0 }, type: { notIn: [...INTERNAL_MOVES] } }, _sum: { qty: true } }),
   ]);
   const inQty = new Map(moves.map((m) => [m.variantId, m._sum.qty ?? 0]));
   const outQty = new Map<string, number>();
@@ -36,7 +39,7 @@ export async function buildStockReport(ctx: BuildContext): Promise<BuiltReport> 
     variant: `${v.sizeName} · ${v.colorName}`,
     category: v.categoryName ?? "—",
     // C3 — where it is (only locations with a non-zero figure).
-    where: v.byLocation.map((b) => `${b.name} ${b.qty}`).join(" · ") || "—",
+    where: [...v.byLocation.map((b) => `${b.name} ${b.qty}`), ...(v.inTransit > 0 ? [`In transit ${v.inTransit}`] : [])].join(" · ") || "—",
     // Raw SQL can hand back a BigInt (COALESCE with a bound parameter); JSON can't carry one.
     onHand: Number(v.stockQty),
     reserved: Number(v.reservedQty),

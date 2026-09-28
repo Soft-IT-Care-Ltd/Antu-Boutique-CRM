@@ -10,6 +10,9 @@ export const STOCK_MOVEMENT_TYPES = [
   "ADJUSTMENT",
   "POS_SALE_OUT",
   "PACKAGING_OUT",
+  "TRANSFER_SEND",
+  "TRANSFER_RECEIVE",
+  "TRANSIT_WRITE_OFF",
 ] as const;
 export type StockMovementTypeValue = (typeof STOCK_MOVEMENT_TYPES)[number];
 
@@ -23,6 +26,9 @@ export const STOCK_MOVEMENT_LABELS: Record<StockMovementTypeValue, string> = {
   ADJUSTMENT: "Adjustment",
   POS_SALE_OUT: "POS sale out",
   PACKAGING_OUT: "Packaging used",
+  TRANSFER_SEND: "Transfer sent",
+  TRANSFER_RECEIVE: "Transfer received",
+  TRANSIT_WRITE_OFF: "Missing in transit — written off",
 };
 
 export const STOCK_REFERENCE_LABELS: Record<string, string> = {
@@ -33,7 +39,14 @@ export const STOCK_REFERENCE_LABELS: Record<string, string> = {
   DAMAGE: "Write-off",
   RETURN: "Return",
   EXCHANGE: "Exchange",
+  TRANSFER: "Transfer",
+  STOCK_COUNT: "Stock count",
 };
+
+/** C4 — what the ledger shows where a row's location would be: a transfer on the road. */
+export const IN_TRANSIT_LABEL = "In transit";
+/** The ledger's location filter value for in-transit rows (no location id). */
+export const IN_TRANSIT_FILTER = "in-transit";
 
 export const ALLOCATION_METHOD_LABELS = {
   BY_VALUE: "By line value",

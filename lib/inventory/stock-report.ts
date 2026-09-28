@@ -44,6 +44,7 @@ type RawRow = {
   threshold: number;
   weightedAvgCost: Prisma.Decimal;
   byLocation: { locationId: string; name: string; qty: number }[];
+  inTransitQty: number;
   atLocation: number | null;
 };
 
@@ -114,6 +115,7 @@ function toRow(r: RawRow): StockReportRow {
     reservedQty: r.reservedQty,
     available,
     byLocation: r.byLocation.map((b) => ({ ...b, qty: Number(b.qty) })),
+    inTransit: Number(r.inTransitQty),
     atLocation: r.atLocation === null ? null : Number(r.atLocation),
     threshold: r.threshold,
     status: variantStockStatus(available, r.threshold),
@@ -131,7 +133,7 @@ export async function getStockReport(query: StockReportQuery): Promise<{ items: 
       SELECT v."id" AS "variantId", p."id" AS "productId", p."name" AS "productName", p."code" AS "productCode",
              cat."name" AS "categoryName", v."sku", s."name" AS "sizeName", c."name" AS "colorName", c."hexCode" AS "colorHex",
              v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost",
-             ${BY_LOCATION} AS "byLocation", ${atLocation} AS "atLocation"
+             ${BY_LOCATION} AS "byLocation", v."inTransitQty", ${atLocation} AS "atLocation"
       ${FROM}
       WHERE ${where}
       ORDER BY p."name" ASC, s."sortOrder" ASC, c."sortOrder" ASC
@@ -177,7 +179,7 @@ export async function getLowStockAlerts(): Promise<LowStockProductAlert[]> {
     SELECT v."id" AS "variantId", p."id" AS "productId", p."name" AS "productName", p."code" AS "productCode",
            cat."name" AS "categoryName", v."sku", s."name" AS "sizeName", c."name" AS "colorName", c."hexCode" AS "colorHex",
            v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost",
-           '[]'::json AS "byLocation", NULL::int AS "atLocation"
+           '[]'::json AS "byLocation", v."inTransitQty", NULL::int AS "atLocation"
     ${FROM}
     WHERE p."deletedAt" IS NULL AND p."isActive" = true AND v."isActive" = true
       AND p."id" IN (

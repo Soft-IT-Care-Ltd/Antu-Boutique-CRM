@@ -18,6 +18,7 @@ const select = {
   sku: true,
   isActive: true,
   stockQty: true,
+  inTransitQty: true,
   reservedQty: true,
   priceOverride: true,
   size: { select: { name: true, sortOrder: true } },
@@ -51,8 +52,8 @@ export async function lookupStock(db: Db, raw: string, limit = 30): Promise<{ ex
       price: v.product.kind === "COMPONENT_ONLY" ? null : (v.priceOverride ?? v.product.basePrice).toFixed(2),
       thumbPath: v.product.images[0]?.thumbPath ?? null,
       locations: shown(qtyAt).map((l) => ({ locationId: l.id, name: l.name, type: l.type, isPackingHub: l.isPackingHub, hasPos: l.hasPos, qty: qtyAt.get(l.id) ?? 0 })),
-      // Transfers between locations arrive in C4; until then nothing is on the road.
-      inTransit: 0,
+      // C4 — on the road between locations (part of the total, at no location).
+      inTransit: v.inTransitQty,
       total: v.stockQty,
       reserved: v.reservedQty,
       available: v.stockQty - v.reservedQty,

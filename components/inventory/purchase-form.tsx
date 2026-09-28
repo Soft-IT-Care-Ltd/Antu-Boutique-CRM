@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, PackagePlus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { OrderItemPicker, type PickedVariant } from "@/components/orders/order-item-picker";
+import { ScanBox, type ScanResult } from "@/components/scan/scan-box";
+import { normalizeScannedCode } from "@/lib/barcode/scan";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import { ALLOCATION_METHOD_LABELS, todayInDhaka } from "@/lib/inventory/constants";
 import { costPurchase, fromPaisa, toPaisa, type AllocationMethod } from "@/lib/inventory/costing";
 import { newLocalId } from "@/lib/browser/local-id";
 import type { LocationOption } from "@/lib/locations/constants";
 import { formatBDT } from "@/lib/money";
+import type { ProductSearchResult } from "@/lib/orders/types";
 
 // C3 (CORRECTIONS.md item 4): each line is received at a location (default:
 // the packing hub). The same size/colour may come in at two locations —
@@ -43,6 +46,13 @@ export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string
   const [amountPaid, setAmountPaid] = useState("");
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+  // C4 (CORRECTIONS.md item 2): receive by scanning the tags — each scan is
+  // one unit at the chosen location.
+  const [scanLocationId, setScanLocationId] = useState(defaultLocationId);
+  const linesRef = useRef(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +88,43 @@ export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string
     ]);
   }
 
+  async function receiveScan(raw: string): Promise<ScanResult> {
+    const code = normalizeScannedCode(raw);
+    if (!code) return { ok: false, message: `“${raw.slice(0, 30)}” isn't a tag code.` };
+    const { products } = await fetchJson<{ products: ProductSearchResult[] }>(`/api/catalog/products/search?q=${encodeURIComponent(code)}`);
+    const product = products.find((p) => p.variants.some((v) => v.sku === code));
+    const variant = product?.variants.find((v) => v.sku === code);
+    if (!product || !variant) return { ok: false, message: `No item has the tag ${code}.` };
+    const where = locations.find((l) => l.id === scanLocationId)?.name ?? "";
+    const existing = linesRef.current.find((l) => l.variantId === variant.id && l.locationId === scanLocationId);
+    const qty = existing ? Math.max(0, Math.floor(num(existing.qty))) + 1 : 1;
+    if (existing) {
+      updateLine(existing.key, { qty: String(qty) });
+    } else {
+      const earlier = linesRef.current.find((l) => l.variantId === variant.id);
+      const line: Line = {
+        variantId: variant.id,
+        productName: product.name,
+        sku: variant.sku,
+        sizeName: variant.sizeName,
+        colorName: variant.colorName,
+        colorHex: variant.colorHex,
+        available: variant.available,
+        effectivePrice: variant.effectivePrice,
+        weightedAvgCost: variant.weightedAvgCost,
+        key: newLocalId(),
+        locationId: scanLocationId,
+        qty: "1",
+        unitCost: earlier?.unitCost ?? (variant.weightedAvgCost && Number(variant.weightedAvgCost) > 0 ? variant.weightedAvgCost : ""),
+      };
+      linesRef.current = [...linesRef.current, line];
+      setLines((prev) => [...prev, line]);
+    }
+    return { ok: true, message: `${code} · ${product.name} ${variant.sizeName}/${variant.colorName} — ${qty} at ${where}` };
+  }
+
   function updateLine(key: string, patch: Partial<Line>) {
+    linesRef.current = linesRef.current.map((l) => (l.key === key ? { ...l, ...patch } : l));
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
@@ -156,6 +202,24 @@ export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string
           <CardTitle>Items</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium">Receive by scan into</span>
+              <Select value={scanLocationId} onValueChange={(v) => setScanLocationId(v as string)}>
+                <SelectTrigger className="h-8 w-auto min-w-44" aria-label="Location scanned items are received at">
+                  <SelectValue>{(value: string) => locations.find((l) => l.id === value)?.name ?? "Location"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {locations.map((l) => (
+                    <SelectItem key={l.id} value={l.id}>
+                      {l.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <ScanBox onScan={receiveScan} disabled={!scanLocationId} autoFocus={false} hint="Each scan adds one unit. Or search by name below." />
+          </div>
           <OrderItemPicker onPick={addLine} />
 
           {lines.length === 0 ? (

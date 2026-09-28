@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { InventoryHeader } from "@/components/inventory/inventory-header";
 import { MovementList } from "@/components/inventory/movement-list";
+import { IN_TRANSIT_FILTER } from "@/lib/inventory/constants";
 import { getInventoryAccess } from "@/lib/inventory/page-context";
 import { listLocations } from "@/lib/locations/service";
 import { prisma } from "@/lib/prisma";
@@ -27,7 +28,7 @@ export default async function StockMovementsPage({ searchParams }: { searchParam
         hasCostAccess={access.hasCostAccess}
         initialVariant={variant}
         locations={locations}
-        initialLocationId={locations.some((l) => l.id === locationId) ? locationId! : "all"}
+        initialLocationId={locationId === IN_TRANSIT_FILTER || locations.some((l) => l.id === locationId) ? locationId! : "all"}
         initialQ={q ?? ""}
       />
     </div>

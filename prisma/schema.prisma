@@ -237,6 +237,12 @@ model User {
   listPreferences           UserListPreference[]
   // CORRECTIONS.md item 2 — the stock locations this person manages.
   locations                 UserLocation[]
+  // C4 — transfers and stock counts.
+  transfersCreated          StockTransfer[]          @relation("TransferCreatedBy")
+  transfersSent             StockTransfer[]          @relation("TransferSentBy")
+  transfersReceived         StockTransfer[]          @relation("TransferReceivedBy")
+  stockCountsCreated        StockCount[]             @relation("StockCountCreatedBy")
+  stockCountsPosted         StockCount[]             @relation("StockCountPostedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -389,6 +395,9 @@ model ProductVariant {
   tagPrintedAt DateTime?
 
   stockQty          Int      @default(0)
+  // C4 — units on the road between locations: part of stockQty, at no
+  // location. stockQty = sum(variant_stocks.qty) + inTransitQty.
+  inTransitQty      Int      @default(0)
   reservedQty       Int      @default(0)
   weightedAvgCost   Decimal  @default(0) @db.Decimal(12, 2)
   priceOverride     Decimal? @db.Decimal(12, 2)
@@ -402,6 +411,9 @@ model ProductVariant {
   stockMovements StockMovement[]
   // C3 — stock per location; stockQty is their sum (kept so by the ledger).
   locationStocks VariantStock[]
+  // C4 — transfers and stock counts this variant is on.
+  transferLines  StockTransferLine[]
+  countLines     StockCountLine[]
   // P3.3 — where this variant (of a COMPONENT_ONLY product) is used as packaging.
   packagingUses  PackagingComponent[] @relation("PackagingMaterial")
   purchaseItems  PurchaseItem[]
@@ -603,6 +615,9 @@ model Order {
   // P3.3 — the one "Packaging used" expense this order posted.
   packagingExpense   Expense?               @relation("PackagingExpense")
   replacementFor     ReturnCase?            @relation("ReturnCaseReplacement")
+
+  // C4 — transfers raised from "Needed at the packing hub" for this order.
+  stockTransfers StockTransferOrder[]
 
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
@@ -854,6 +869,15 @@ enum StockMovementType {
   POS_SALE_OUT
   // P3.3 — packaging material used when an order was packed or sold at the counter.
   PACKAGING_OUT
+  // C4 (CORRECTIONS.md item 3) — a transfer between locations. Each one is
+  // a PAIR of rows: TRANSFER_SEND takes the units off the source (−) and
+  // puts them in transit (+, no location); TRANSFER_RECEIVE takes them out
+  // of transit (−) onto the destination (+) — also used when a missing unit
+  // is found later. The pair nets to zero, so total stock never moves.
+  TRANSFER_SEND
+  TRANSFER_RECEIVE
+  // Missing in transit and written off (expense at cost, "Stock shortage").
+  TRANSIT_WRITE_OFF
 }
 
 // What a ledger row points back to (`referenceId` is that entity's id, or
@@ -867,6 +891,9 @@ enum StockReferenceType {
   DAMAGE
   RETURN
   EXCHANGE
+  // C4 — referenceId is the stock_transfers / stock_counts row.
+  TRANSFER
+  STOCK_COUNT
 }
 
 // How a purchase's transport/other cost is spread across its lines before
@@ -971,14 +998,18 @@ model StockMovement {
   id                 String             @id @default(cuid())
   variantId          String
   variant            ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  // C3 — where the units went in or out. Every row has one (CORRECTIONS.md
-  // "Changes to existing rules" 1): for each variant at each location,
+  // C3 — where the units went in or out (CORRECTIONS.md "Changes to
+  // existing rules" 1): for each variant at each location,
   // variant_stocks.qty = sum of that location's rows (DB trigger).
-  locationId         String
-  location           Location           @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  // C4 — NULL means IN TRANSIT (a transfer on the road, item 3): those
+  // units count in the total but belong to no location, and
+  // product_variants.inTransitQty = sum of the NULL rows (DB trigger).
+  locationId         String?
+  location           Location?          @relation(fields: [locationId], references: [id], onDelete: Restrict)
   type               StockMovementType
   qty                Int
-  // The variant's total stock right after this row, and the location's.
+  // The variant's total stock right after this row, and the location's
+  // (for an in-transit row: the variant's in-transit figure).
   stockAfter         Int
   locationStockAfter Int
   unitCostSnapshot   Decimal            @db.Decimal(12, 2)
@@ -1031,6 +1062,9 @@ model Location {
   movements     StockMovement[]
   purchaseItems PurchaseItem[]
   users         UserLocation[]
+  transfersOut  StockTransfer[] @relation("TransferFrom")
+  transfersIn   StockTransfer[] @relation("TransferTo")
+  stockCounts   StockCount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1068,6 +1102,168 @@ model VariantStock {
   @@id([variantId, locationId])
   @@index([locationId])
   @@map("variant_stocks")
+}
+
+// C4 (CORRECTIONS.md item 3) — the running number of a document kind per
+// month (TR-YYMM-NNNN transfers, SC-YYMM-NNNN stock counts). Same locking
+// idea as order_sequences: the upsert row-locks the month until commit.
+model DocumentSequence {
+  kind       String
+  yearMonth  String
+  lastNumber Int    @default(0)
+
+  @@id([kind, yearMonth])
+  @@map("document_sequences")
+}
+
+// C4 — CORRECTIONS.md item 3. Draft → In transit → Received (or Received
+// with difference, or Cancelled — only a Draft can be cancelled; nothing
+// has moved yet).
+enum StockTransferStatus {
+  DRAFT
+  IN_TRANSIT
+  RECEIVED
+  RECEIVED_WITH_DIFFERENCE
+  CANCELLED
+}
+
+// A transfer of stock from one location to another. Sending posts
+// TRANSFER_SEND pairs (source −, in transit +); receiving posts
+// TRANSFER_RECEIVE pairs (in transit −, destination +). Only the source's
+// people send and only the destination's receive (Admin: both).
+model StockTransfer {
+  id         String              @id @default(cuid())
+  transferNo String              @unique
+  status     StockTransferStatus @default(DRAFT)
+
+  fromLocationId String
+  fromLocation   Location @relation("TransferFrom", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocationId   String
+  toLocation     Location @relation("TransferTo", fields: [toLocationId], references: [id], onDelete: Restrict)
+
+  note String?
+
+  createdById  String?
+  createdBy    User?     @relation("TransferCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sentById     String?
+  sentBy       User?     @relation("TransferSentBy", fields: [sentById], references: [id], onDelete: Restrict)
+  sentAt       DateTime?
+  receivedById String?
+  receivedBy   User?     @relation("TransferReceivedBy", fields: [receivedById], references: [id], onDelete: Restrict)
+  receivedAt   DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  lines  StockTransferLine[]
+  orders StockTransferOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([fromLocationId, status])
+  @@index([toLocationId, status])
+  @@index([createdAt])
+  @@map("stock_transfers")
+}
+
+// One variant on a transfer. While DRAFT, qtySent counts the sender's
+// scans; while IN_TRANSIT, qtyScannedIn counts the receiver's (nothing is
+// in stock until Receive). After receipt:
+//   missing = qtySent − qtyReceived − qtyFound − qtyWrittenOff  (≥ 0, DB CHECK)
+// stays "missing in transit" until a manager marks it found or writes it off.
+model StockTransferLine {
+  id         String         @id @default(cuid())
+  transferId String
+  transfer   StockTransfer  @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  // Pre-filled from "Needed at the packing hub" (0 on a hand-made transfer).
+  qtyRequested  Int      @default(0)
+  qtySent       Int      @default(0)
+  qtyScannedIn  Int      @default(0)
+  qtyReceived   Int      @default(0)
+  qtyFound      Int      @default(0)
+  qtyWrittenOff Int      @default(0)
+  // The variant's weighted average cost when sent — what a write-off of a
+  // missing unit costs. Cost: never leaves the API for a role without
+  // product.cost.view.
+  unitCost      Decimal? @db.Decimal(12, 2)
+
+  @@unique([transferId, variantId])
+  @@index([variantId])
+  @@map("stock_transfer_lines")
+}
+
+// The orders a hub transfer was raised for (item 3 → item 13).
+model StockTransferOrder {
+  transferId String
+  transfer   StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  orderId    String
+  order      Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@id([transferId, orderId])
+  @@index([orderId])
+  @@map("stock_transfer_orders")
+}
+
+// C4 — CORRECTIONS.md item 2, stock count by scan.
+enum StockCountStatus {
+  OPEN
+  POSTED
+  CANCELLED
+}
+
+// FULL: everything at the location is counted — a variant with stock that
+// was never scanned counts as 0. SPOT: only what was scanned is compared.
+enum StockCountScope {
+  FULL
+  SPOT
+}
+
+// A count of one location. Scans add to countedQty; Post compares each
+// line with the location's stock at that moment and books every
+// difference as a stock adjustment ("Stock shortage" rules, PRD §4.3).
+model StockCount {
+  id         String           @id @default(cuid())
+  countNo    String           @unique
+  locationId String
+  location   Location         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  scope      StockCountScope  @default(SPOT)
+  status     StockCountStatus @default(OPEN)
+  note       String?
+
+  createdById String?
+  createdBy   User?     @relation("StockCountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  postedById  String?
+  postedBy    User?     @relation("StockCountPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
+  postedAt    DateTime?
+  cancelledAt DateTime?
+
+  lines StockCountLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([locationId, status])
+  @@index([createdAt])
+  @@map("stock_counts")
+}
+
+model StockCountLine {
+  id          String         @id @default(cuid())
+  countId     String
+  count       StockCount     @relation(fields: [countId], references: [id], onDelete: Cascade)
+  variantId   String
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  countedQty  Int            @default(0)
+  // The location's stock when the count was posted (null while open).
+  expectedQty Int?
+
+  @@unique([countId, variantId])
+  @@index([variantId])
+  @@map("stock_count_lines")
 }
 
 // PRD §4.12 — only the columns P2.1 needs to post a damage write-off at

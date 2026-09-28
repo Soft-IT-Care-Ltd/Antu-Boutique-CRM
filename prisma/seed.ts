@@ -23,6 +23,8 @@ import { adjustStoreCredit } from "../lib/store-credit/ledger";
 import { setPackaging } from "../lib/packaging/service";
 import { createPosSale } from "../lib/pos/sale";
 import { reserveVariantStock } from "../lib/orders/stock";
+import { createStockCount, postStockCount, scanCountUnit } from "../lib/stock-counts/service";
+import { createTransfer, receiveTransfer, resolveMissing, scanTransferUnit, sendTransfer } from "../lib/transfers/service";
 import { computeOrderTotals } from "../lib/orders/totals";
 import { generateOrderNumber } from "../lib/orders/order-number";
 import { resolveSetLines, writeSetLines } from "../lib/sets/order-lines";
@@ -1794,6 +1796,120 @@ async function seedNegativeStockDemo() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// C4 — CORRECTIONS.md items 2 and 3: a transfer in every state, stock
+// counts, and one waiting online order the hub can't pack until the
+// showroom sends a dress over — all through the real services (scan by
+// scan), so stock, the in-transit figure, the ledger and the audit log are
+// genuine. Each part moves stock, so each is guarded on its own "already
+// there" check.
+// ---------------------------------------------------------------------------
+
+async function seedTransfersAndCountsDemo() {
+  const [admin, manager, packer, pos, se] = await Promise.all(["01711000001", "01711000002", "01711000005", "01711000007", "01711000004"].map(sessionFor));
+  const HUB = SEEDED_LOCATION_IDS.mohammadpur;
+  const SHOWROOM = SEEDED_LOCATION_IDS.shyamoli;
+  const run = <T,>(fn: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<T>) => prisma.$transaction(fn, { timeout: 60_000 });
+  const scanN = async (id: string, user: SessionLike, side: "send" | "receive", sku: string, n: number) => {
+    for (let i = 0; i < n; i++) await run((tx) => scanTransferUnit(tx, user, id, side, sku));
+  };
+  const sellable = () =>
+    prisma.productVariant.findMany({
+      where: { isActive: true, product: { isActive: true, deletedAt: null, kind: "SELLABLE" } },
+      orderBy: { sku: "asc" },
+      select: { id: true, sku: true, reservedQty: true, priceOverride: true, product: { select: { basePrice: true } }, locationStocks: { select: { locationId: true, qty: true } } },
+    });
+  const qtyAt = (v: Awaited<ReturnType<typeof sellable>>[number], locationId: string) => v.locationStocks.find((s) => s.locationId === locationId)?.qty ?? 0;
+
+  // 1. A transfer in every state, from well-stocked hub variants.
+  if ((await prisma.stockTransfer.count()) === 0) {
+    const roomy = (await sellable()).filter((v) => qtyAt(v, HUB) - v.reservedQty >= 6);
+    if (roomy.length >= 3) {
+      const [v1, v2, v3] = roomy;
+      // Received in full: 2 × v1, hub → Shyamoli showroom.
+      const t1 = await run((tx) => createTransfer(tx, packer, { fromLocationId: HUB, toLocationId: SHOWROOM, note: "Restocking the display rail" }));
+      await scanN(t1.id, packer, "send", v1.sku, 2);
+      await run((tx) => sendTransfer(tx, packer, t1.id));
+      await scanN(t1.id, pos, "receive", v1.sku, 2);
+      await run((tx) => receiveTransfer(tx, pos, t1.id));
+      // Received with a difference: 3 × v2 to the Parlour corner, 2 arrived — 1 still missing in transit.
+      const t2 = await run((tx) => createTransfer(tx, admin, { fromLocationId: HUB, toLocationId: SEEDED_LOCATION_IDS.parlour, note: "Sent with the rickshaw van" }));
+      await scanN(t2.id, admin, "send", v2.sku, 3);
+      await run((tx) => sendTransfer(tx, admin, t2.id));
+      await scanN(t2.id, admin, "receive", v2.sku, 2);
+      await run((tx) => receiveTransfer(tx, admin, t2.id));
+      // Short, and already resolved: 2 × v3 to the Studio, 1 arrived, the other written off ("Stock shortage").
+      const t3 = await run((tx) => createTransfer(tx, admin, { fromLocationId: HUB, toLocationId: SEEDED_LOCATION_IDS.studio, note: "For the photo shoot" }));
+      await scanN(t3.id, admin, "send", v3.sku, 2);
+      await run((tx) => sendTransfer(tx, admin, t3.id));
+      await scanN(t3.id, admin, "receive", v3.sku, 1);
+      await run((tx) => receiveTransfer(tx, admin, t3.id));
+      await run((tx) => resolveMissing(tx, manager, t3.id, { variantId: v3.id, action: "WRITE_OFF", qty: 1, reason: "Not in the van — the rider says only one was handed over" }));
+      // In transit: 1 × v3 hub → Studio, waiting to be scanned in.
+      const t4 = await run((tx) => createTransfer(tx, packer, { fromLocationId: HUB, toLocationId: SEEDED_LOCATION_IDS.studio }));
+      await scanN(t4.id, packer, "send", v3.sku, 1);
+      await run((tx) => sendTransfer(tx, packer, t4.id));
+    }
+  }
+
+  // 2. "Needed at the packing hub": the hub's last pieces of a dress went to
+  //    the showroom rail, then an online order came in for one.
+  const NEED_NOTE = "Wants the one on the Shyamoli display rail — confirmed on Messenger.";
+  if ((await prisma.order.count({ where: { internalNote: NEED_NOTE } })) === 0) {
+    const w = (await sellable()).find((v) => v.reservedQty === 0 && qtyAt(v, HUB) >= 2 && qtyAt(v, HUB) <= 5);
+    if (w) {
+      const moved = qtyAt(w, HUB);
+      const t = await run((tx) => createTransfer(tx, packer, { fromLocationId: HUB, toLocationId: SHOWROOM, note: "Last pieces to the display rail" }));
+      await scanN(t.id, packer, "send", w.sku, moved);
+      await run((tx) => sendTransfer(tx, packer, t.id));
+      await scanN(t.id, pos, "receive", w.sku, moved);
+      await run((tx) => receiveTransfer(tx, pos, t.id));
+      const customer = await prisma.customer.findUniqueOrThrow({ where: { phone: "01911223344" } });
+      const price = Number(w.priceOverride ?? w.product.basePrice);
+      await run(async (tx) => {
+        const order = await tx.order.create({
+          data: {
+            orderNo: await nextOrderNo(tx, new Date()),
+            channel: "ONLINE",
+            status: "CONFIRMED",
+            customerId: customer.id,
+            subtotal: price,
+            total: price,
+            dueAmount: price,
+            internalNote: NEED_NOTE,
+            createdById: se.id,
+            teamId: se.teamId,
+          },
+        });
+        await tx.orderItem.create({ data: { orderId: order.id, variantId: w.id, qty: 1, unitPrice: price } });
+        await reserveVariantStock(tx, w.id, 1);
+        await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "CONFIRMED", changedById: se.id, note: "Order created" } });
+      });
+    }
+  }
+
+  // 3. A posted spot count at the showroom (one dress short) …
+  if ((await prisma.stockCount.count({ where: { status: "POSTED" } })) === 0) {
+    const shelf = (await sellable()).filter((v) => qtyAt(v, SHOWROOM) >= 2).slice(0, 2);
+    if (shelf.length > 0) {
+      const sc = await run((tx) => createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT", note: "Front rail" }));
+      const last = shelf.length - 1;
+      for (const [i, v] of shelf.entries()) {
+        const n = qtyAt(v, SHOWROOM) - (i === last ? 1 : 0);
+        for (let k = 0; k < n; k++) await run((tx) => scanCountUnit(tx, pos, sc.id, v.sku));
+      }
+      await run((tx) => postStockCount(tx, manager, sc.id));
+    }
+  }
+
+  // 4. … and one still being counted at the hub.
+  if ((await prisma.stockCount.count({ where: { status: "OPEN" } })) === 0) {
+    const rack = (await sellable()).filter((v) => qtyAt(v, HUB) > 0).slice(0, 2);
+    const open = await run((tx) => createStockCount(tx, packer, { locationId: HUB, scope: "SPOT", note: "Rack A" }));
+    for (const v of rack) await run((tx) => scanCountUnit(tx, packer, open.id, v.sku));
+  }
+}
+
 async function seedSettings() {
   await prisma.setting.upsert({
     where: { key: ORDER_EDIT_WINDOW_SETTING_KEY },
@@ -2178,6 +2294,7 @@ async function main() {
   await seedNegativeStockDemo();
   await seedLeadsDemo();
   await seedTargetsAndAttendanceDemo();
+  await seedTransfersAndCountsDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

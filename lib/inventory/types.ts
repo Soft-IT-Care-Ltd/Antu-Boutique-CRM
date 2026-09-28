@@ -25,6 +25,8 @@ export type StockReportRow = {
   byLocation: { locationId: string; name: string; qty: number }[];
   /** C3 — on hand at the location the report is filtered to (null = not filtered). */
   atLocation: number | null;
+  /** C4 — on the road between locations: in stockQty, at no location. */
+  inTransit: number;
   weightedAvgCost?: string;
   valueAtCost?: string;
 };
@@ -54,8 +56,8 @@ export type StockMovementRow = {
   qty: number;
   /** The variant's total stock after this row. */
   stockAfter: number;
-  /** C3 — where it moved, and that location's stock after it. */
-  location: { id: string; name: string };
+  /** C3 — where it moved, and that location's stock after it. C4: null = in transit (locationStockAfter is then the variant's in-transit figure). */
+  location: { id: string; name: string } | null;
   locationStockAfter: number;
   unitCostSnapshot?: string;
   referenceType: string;

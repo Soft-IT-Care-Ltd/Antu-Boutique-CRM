@@ -28,7 +28,7 @@ const STOCK_EXPENSE_CATEGORIES = {
  * a credit for stock found. Nothing is posted when that is zero (a variant
  * with no cost yet); the DB refuses a zero expense.
  */
-async function postStockExpense(tx: Prisma.TransactionClient, movement: StockMovement, kind: keyof typeof STOCK_EXPENSE_CATEGORIES, note: string, actorId: string | null): Promise<Expense | null> {
+export async function postStockExpense(tx: Prisma.TransactionClient, movement: StockMovement, kind: keyof typeof STOCK_EXPENSE_CATEGORIES, note: string, actorId: string | null): Promise<Expense | null> {
   const paisa = -movement.qty * toPaisa(movement.unitCostSnapshot);
   if (paisa === 0) return null;
   const c = STOCK_EXPENSE_CATEGORIES[kind];
@@ -55,7 +55,13 @@ async function postStockExpense(tx: Prisma.TransactionClient, movement: StockMov
  * "Stock shortage" expense. Can never take that location below zero — but
  * a location already negative (a POS sale, item 11) can be brought back up.
  */
-export async function adjustStock(tx: Prisma.TransactionClient, input: StockChangeRequest, actorId: string) {
+export async function adjustStock(
+  tx: Prisma.TransactionClient,
+  input: StockChangeRequest,
+  actorId: string,
+  /** C4 — a stock count posts its differences as adjustments pointing back at the count. */
+  options: { referenceType?: StockReferenceType; referenceId?: string | null } = {},
+) {
   const reason = input.reason.trim();
   if (!reason) throw new StockMovementError("A reason is required for a stock adjustment");
 
@@ -71,7 +77,8 @@ export async function adjustStock(tx: Prisma.TransactionClient, input: StockChan
     type: "ADJUSTMENT",
     qty: input.qty,
     unitCost: locked.weightedAvgCost,
-    referenceType: "ADJUSTMENT",
+    referenceType: options.referenceType ?? "ADJUSTMENT",
+    referenceId: options.referenceId ?? null,
     actorId,
     note: reason,
   });

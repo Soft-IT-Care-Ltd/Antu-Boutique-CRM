@@ -20,6 +20,8 @@ export const LIST_KEYS = [
   "purchases",
   "stock",
   "movements",
+  "transfers",
+  "stock_counts",
   "shipments",
   "courier_returns",
   "cod",

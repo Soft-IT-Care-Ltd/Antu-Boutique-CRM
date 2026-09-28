@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StockChangeDialog, type StockChangeMode } from "@/components/inventory/stock-change-dialog";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
-import type { StockStatusFilter, VariantStockStatus } from "@/lib/inventory/constants";
+import { IN_TRANSIT_LABEL, type StockStatusFilter, type VariantStockStatus } from "@/lib/inventory/constants";
 import type { StockReportRow, StockReportTotals } from "@/lib/inventory/types";
 import type { LocationOption } from "@/lib/locations/constants";
 import { formatBDT, formatLakh } from "@/lib/money";
@@ -219,7 +219,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
                   <TableCell className={`text-right font-semibold tabular-nums ${(row.atLocation ?? 0) < 0 ? "text-destructive" : ""}`}>{row.atLocation}</TableCell>
                 ) : null}
                 <TableCell className="max-w-56">
-                  {row.byLocation.length === 0 ? (
+                  {row.byLocation.length === 0 && row.inTransit === 0 ? (
                     <span className="text-xs text-muted-foreground">—</span>
                   ) : (
                     <div className="flex flex-wrap gap-1">
@@ -228,6 +228,11 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
                           {b.name} <span className="font-semibold tabular-nums">{b.qty}</span>
                         </Badge>
                       ))}
+                      {row.inTransit > 0 ? (
+                        <Badge variant="secondary" className="font-normal italic">
+                          {IN_TRANSIT_LABEL} <span className="font-semibold tabular-nums not-italic">{row.inTransit}</span>
+                        </Badge>
+                      ) : null}
                     </div>
                   )}
                 </TableCell>

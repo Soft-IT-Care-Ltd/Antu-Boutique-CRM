@@ -16,6 +16,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import {
+  IN_TRANSIT_FILTER,
+  IN_TRANSIT_LABEL,
   formatDhakaDateTime,
   STOCK_MOVEMENT_LABELS,
   STOCK_MOVEMENT_TYPES,
@@ -99,10 +101,11 @@ export function MovementList({ hasCostAccess, initialVariant, locations, initial
         </Select>
         <Select value={locationId} onValueChange={(v) => updateFilter(setLocationId, v as string)}>
           <SelectTrigger className="w-full lg:w-52">
-            <SelectValue placeholder="Location">{(value: string) => (value === "all" ? "All locations" : (locations.find((l) => l.id === value)?.name ?? "Location"))}</SelectValue>
+            <SelectValue placeholder="Location">{(value: string) => (value === "all" ? "All locations" : value === IN_TRANSIT_FILTER ? IN_TRANSIT_LABEL : (locations.find((l) => l.id === value)?.name ?? "Location"))}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All locations</SelectItem>
+            <SelectItem value={IN_TRANSIT_FILTER}>{IN_TRANSIT_LABEL}</SelectItem>
             {locations.map((l) => (
               <SelectItem key={l.id} value={l.id}>
                 {l.name}
@@ -173,7 +176,7 @@ export function MovementList({ hasCostAccess, initialVariant, locations, initial
                 <TableCell>
                   <Badge variant={m.qty > 0 ? "secondary" : m.type === "DAMAGE_OUT" ? "destructive" : "outline"}>{STOCK_MOVEMENT_LABELS[m.type]}</Badge>
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-sm">{m.location.name}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{m.location ? m.location.name : <span className="text-muted-foreground italic">{IN_TRANSIT_LABEL}</span>}</TableCell>
                 <TableCell className={`text-right font-semibold tabular-nums ${m.qty > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}>
                   {m.qty > 0 ? `+${m.qty}` : m.qty}
                 </TableCell>

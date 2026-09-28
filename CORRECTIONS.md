@@ -210,7 +210,8 @@ Report findings, fix them, merge and push.
 - Fast on a mid-range Android phone on 4G: product pages cached and revalidated when the product changes, images resized and lazy-loaded.
 - SEO basics: sitemap, page titles/descriptions, Open Graph images so links shared on Facebook/Messenger show a proper preview.
 
-### 2. Multiple stock locations — [DONE in C3, except scan receiving and scan counting → C4]
+### 2. Multiple stock locations — [DONE] (C3; scan receiving and scan counting in C4)
+> C4: purchase receiving by scan (a *Receive by scan into [location]* box on the purchase form) and stock count by scan (`/inventory/counts`: spot or full count per location, counted vs expected, posted as Stock-shortage adjustments by a Manager/Admin). Every scan screen takes a handheld scanner or the phone camera. Commit: "feat(stock): transfers, stock in transit, scan receiving and counting (C4)".
 > C3: `locations` (Settings → Locations: type, packing hub, has POS, active, managers), per-(variant, location) stock in `variant_stocks`, a location on every ledger row with a DB trigger holding stock = ledger per location, location-scoped users (`user_locations` + `location.all`), existing stock moved to Mohammadpur Warehouse by the migration, and the stock lookup (`/inventory/lookup`). Commit: "feat(stock): locations and per-location stock (C3)". Purchase receiving by scan and stock count by scan are C4.
 - **Locations** (Settings, Admin): name, type (Warehouse / Shop / Sales corner / Studio), address, **Packing hub** (exactly one), **Has POS**, active. More can be added any time.
 - Start with: **Shyamoli Showroom** (shop, **the only POS**), **Mohammadpur Warehouse** (warehouse, **packing hub**), **Parlour Sales Corner** (stock only), **Studio** (stock only).
@@ -222,7 +223,8 @@ Report findings, fix them, merge and push.
 - **Location managers / incharges:** users can be assigned to one or more locations; they see and act for their locations (receive transfers, send transfers, count stock). Admin and Manager see all.
 - Reservations for online orders are against **total** available stock, not a location.
 
-### 3. Stock transfers between locations — [OPEN]
+### 3. Stock transfers between locations — [DONE]
+> C4: `stock_transfers` (TR-YYMM-NNNN) Draft → In transit → Received / Received with difference / Cancelled; scan-to-send and scan-to-receive (a tag not on the transfer, or one too many, refused); in transit = ledger rows with no location, counted in the total (`inTransitQty`, DB-checked); missing units resolved as found or written off (Stock shortage); per-location "Needed at the packing hub" (`/inventory/hub-needs`) → a pre-filled Draft linked to the orders. New permissions `transfer.send` / `transfer.receive` / `transfer.resolve` / `stock.count`. Automatic *Needs transfer* order status is C5 (item 13). Commit: "feat(stock): transfers, stock in transit, scan receiving and counting (C4)".
 - **Transfer** document: number `TR-YYMM-NNNN`, from location, to location, created by, lines (variant, qty sent, qty received), status **Draft → In transit → Received** (or **Received with difference**, **Cancelled**).
 - **Sending:** the sender picks the destination and scans each tag (or types the SKU) — every scan adds one unit; the screen shows the running list; **Send** moves the stock out of the source into *In transit*. Items in transit count in total stock but belong to no location.
 - **Receiving:** the destination's manager opens the incoming transfer and scans each unit as it's unpacked. **Receive** adds the scanned units to that location's stock.

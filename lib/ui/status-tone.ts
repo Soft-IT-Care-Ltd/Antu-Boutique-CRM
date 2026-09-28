@@ -20,3 +20,18 @@ export const ORDER_STATUS_TONE: Record<OrderStatusValue, BadgeTone> = {
   EXCHANGE_REQUESTED: "warning",
   PARTIAL_DELIVERED: "warning",
 };
+
+// C4 — stock transfers (CORRECTIONS.md item 3) and stock counts.
+export const TRANSFER_STATUS_TONE: Record<"DRAFT" | "IN_TRANSIT" | "RECEIVED" | "RECEIVED_WITH_DIFFERENCE" | "CANCELLED", BadgeTone> = {
+  DRAFT: "neutral",
+  IN_TRANSIT: "warning",
+  RECEIVED: "success",
+  RECEIVED_WITH_DIFFERENCE: "destructive",
+  CANCELLED: "outline",
+};
+
+export const STOCK_COUNT_STATUS_TONE: Record<"OPEN" | "POSTED" | "CANCELLED", BadgeTone> = {
+  OPEN: "warning",
+  POSTED: "success",
+  CANCELLED: "outline",
+};

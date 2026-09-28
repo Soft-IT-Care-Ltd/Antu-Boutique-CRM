@@ -38,7 +38,10 @@ type ExpenseWithSource = Prisma.ExpenseGetPayload<{ include: typeof SOURCE_INCLU
 /** Where a system-posted expense came from, or null for a hand-entered one. */
 export function expenseSource(e: ExpenseWithSource): string | null {
   if (e.adSpendId) return "Ad spend";
-  if (e.stockMovement) return e.stockMovement.type === "ADJUSTMENT" ? "Stock count adjustment" : "Stock write-off";
+  if (e.stockMovement) {
+    if (e.stockMovement.type === "TRANSIT_WRITE_OFF") return "Stock missing in transit";
+    return e.stockMovement.type === "ADJUSTMENT" ? "Stock count adjustment" : "Stock write-off";
+  }
   if (e.returnChargeInspectionId) return "Courier return check";
   if (e.statementDeliveryCharge) return `Courier statement ${e.statementDeliveryCharge.reference}`;
   if (e.statementCodCharge) return `Courier statement ${e.statementCodCharge.reference}`;

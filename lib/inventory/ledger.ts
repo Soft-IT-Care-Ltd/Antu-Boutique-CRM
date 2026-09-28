@@ -15,6 +15,11 @@ import { Prisma, type StockMovement, type StockMovementType, type StockReference
 // location may go below zero (a POS sale of an item in hand — item 11); the
 // callers that must not allow it check first under lockVariantAt.
 //
+// C4 (CORRECTIONS.md item 3): a transfer's units are IN TRANSIT between
+// sending and receiving — counted in the total, at no location. Those rows
+// have locationId null and move product_variants.inTransitQty instead of a
+// variant_stocks row. Only the three transfer types may do that.
+//
 // Deliberately free of "server-only" and of the prisma singleton: it only
 // ever acts through the `tx` it is handed, which lets prisma/seed.ts post
 // its demo stock through the exact same path as the app.
@@ -31,14 +36,31 @@ export const MOVEMENT_DIRECTION: Record<StockMovementType, 1 | -1 | 0> = {
   // P3.3 — bags, boxes, tissue and tags used packing an order or at the counter.
   PACKAGING_OUT: -1,
   ADJUSTMENT: 0,
+  // C4 — each is half of a pair; the sign depends on the side (below).
+  TRANSFER_SEND: 0,
+  TRANSFER_RECEIVE: 0,
+  TRANSIT_WRITE_OFF: -1,
 };
+
+/**
+ * Which way a transfer row moves stock at its side: a send takes units off
+ * the source and puts them in transit; a receive takes them out of transit
+ * onto the destination. Null for every other type (MOVEMENT_DIRECTION rules).
+ */
+function transferDirection(type: StockMovementType, inTransit: boolean): 1 | -1 | null {
+  if (type === "TRANSFER_SEND") return inTransit ? 1 : -1;
+  if (type === "TRANSFER_RECEIVE") return inTransit ? -1 : 1;
+  return null;
+}
+
+const TRANSIT_TYPES: ReadonlySet<StockMovementType> = new Set(["TRANSFER_SEND", "TRANSFER_RECEIVE", "TRANSIT_WRITE_OFF"]);
 
 export class StockMovementError extends Error {}
 
 export type RecordStockMovementInput = {
   variantId: string;
-  /** Where the units go in or out (lib/inventory/locations.ts). */
-  locationId: string;
+  /** Where the units go in or out (lib/locations/service.ts); null = in transit (transfer rows only). */
+  locationId: string | null;
   type: StockMovementType;
   /** Signed: positive puts stock on the shelf, negative takes it off. Never zero. */
   qty: number;
@@ -60,9 +82,12 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
   if (!Number.isInteger(qty) || qty === 0) {
     throw new StockMovementError(`A stock movement needs a non-zero whole quantity (got ${qty})`);
   }
-  const direction = MOVEMENT_DIRECTION[type];
+  const inTransit = input.locationId === null;
+  if (inTransit && !TRANSIT_TYPES.has(type)) throw new StockMovementError(`${type} needs a location — only a transfer is ever in transit`);
+  if (!inTransit && type === "TRANSIT_WRITE_OFF") throw new StockMovementError("A transit write-off takes stock out of transit, not from a location");
+  const direction = transferDirection(type, inTransit) ?? MOVEMENT_DIRECTION[type];
   if (direction !== 0 && Math.sign(qty) !== direction) {
-    throw new StockMovementError(`${type} must move stock ${direction > 0 ? "in (positive qty)" : "out (negative qty)"}`);
+    throw new StockMovementError(`${type} must move stock ${direction > 0 ? "in (positive qty)" : "out (negative qty)"}${TRANSIT_TYPES.has(type) ? (inTransit ? " in transit" : " at the location") : ""}`);
   }
 
   // The variant row first: it is the per-variant lock every stock writer
@@ -71,16 +96,21 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
     where: { id: variantId },
     data: {
       stockQty: { increment: qty },
+      ...(inTransit ? { inTransitQty: { increment: qty } } : {}),
       ...(input.releaseReserved ? { reservedQty: { decrement: input.releaseReserved } } : {}),
     },
-    select: { stockQty: true },
+    select: { stockQty: true, inTransitQty: true },
   });
-  const atLocation = await tx.variantStock.upsert({
-    where: { variantId_locationId: { variantId, locationId: input.locationId } },
-    create: { variantId, locationId: input.locationId, qty },
-    update: { qty: { increment: qty } },
-    select: { qty: true },
-  });
+  const sideAfter = inTransit
+    ? variant.inTransitQty
+    : (
+        await tx.variantStock.upsert({
+          where: { variantId_locationId: { variantId, locationId: input.locationId! } },
+          create: { variantId, locationId: input.locationId!, qty },
+          update: { qty: { increment: qty } },
+          select: { qty: true },
+        })
+      ).qty;
 
   return tx.stockMovement.create({
     data: {
@@ -89,7 +119,7 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
       type,
       qty,
       stockAfter: variant.stockQty,
-      locationStockAfter: atLocation.qty,
+      locationStockAfter: sideAfter,
       unitCostSnapshot: new Prisma.Decimal(input.unitCost.toString()),
       referenceType: input.referenceType,
       referenceId: input.referenceId ?? null,
@@ -99,7 +129,7 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
   });
 }
 
-export type LockedVariant = { id: string; stockQty: number; reservedQty: number; weightedAvgCost: Prisma.Decimal };
+export type LockedVariant = { id: string; stockQty: number; inTransitQty: number; reservedQty: number; weightedAvgCost: Prisma.Decimal };
 
 /**
  * SELECT … FOR UPDATE on one variant. Anything that reads stock/WAC to
@@ -109,7 +139,7 @@ export type LockedVariant = { id: string; stockQty: number; reservedQty: number;
  */
 export async function lockVariant(tx: Prisma.TransactionClient, variantId: string): Promise<LockedVariant | null> {
   const rows = await tx.$queryRaw<LockedVariant[]>`
-    SELECT "id", "stockQty", "reservedQty", "weightedAvgCost"
+    SELECT "id", "stockQty", "inTransitQty", "reservedQty", "weightedAvgCost"
     FROM "product_variants"
     WHERE "id" = ${variantId}
     FOR UPDATE
@@ -134,16 +164,16 @@ export async function lockVariantAt(tx: Prisma.TransactionClient, variantId: str
 export type StockLedgerDivergence = {
   variantId: string;
   sku: string;
-  /** Null for the variant's total, else the location that disagrees. */
+  /** Null for the variant's total, "In transit" for its in-transit figure, else the location that disagrees. */
   locationName: string | null;
   stockQty: number;
   ledgerQty: number;
 };
 
 /**
- * Every place stock ≠ sum(stock_movements.qty): a variant's total, or a
- * (variant, location) pair — including a location with ledger rows but no
- * stock row, or the reverse. Should always be empty — the DB triggers make
+ * Every place stock ≠ sum(stock_movements.qty): a variant's total, its
+ * in-transit figure (C4), or a (variant, location) pair — including a
+ * location with ledger rows but no stock row, or the reverse. Should always be empty — the DB triggers make
  * it so.
  */
 export async function findStockLedgerDivergences(client: Prisma.TransactionClient): Promise<StockLedgerDivergence[]> {
@@ -156,7 +186,7 @@ export async function findStockLedgerDivergences(client: Prisma.TransactionClien
   `;
   const perLocation = await client.$queryRaw<{ variantId: string; sku: string; locationName: string; stockQty: number; ledgerQty: bigint }[]>`
     WITH ledger AS (
-      SELECT "variantId", "locationId", SUM("qty") AS "qty" FROM "stock_movements" GROUP BY "variantId", "locationId"
+      SELECT "variantId", "locationId", SUM("qty") AS "qty" FROM "stock_movements" WHERE "locationId" IS NOT NULL GROUP BY "variantId", "locationId"
     )
     SELECT COALESCE(s."variantId", l."variantId") AS "variantId", v."sku", loc."name" AS "locationName",
            COALESCE(s."qty", 0) AS "stockQty", COALESCE(l."qty", 0) AS "ledgerQty"
@@ -166,7 +196,15 @@ export async function findStockLedgerDivergences(client: Prisma.TransactionClien
     JOIN "locations" loc ON loc."id" = COALESCE(s."locationId", l."locationId")
     WHERE COALESCE(s."qty", 0) <> COALESCE(l."qty", 0)
   `;
+  const transit = await client.$queryRaw<{ variantId: string; sku: string; stockQty: number; ledgerQty: bigint }[]>`
+    SELECT v."id" AS "variantId", v."sku", v."inTransitQty" AS "stockQty", COALESCE(SUM(m."qty"), 0) AS "ledgerQty"
+    FROM "product_variants" v
+    LEFT JOIN "stock_movements" m ON m."variantId" = v."id" AND m."locationId" IS NULL
+    GROUP BY v."id"
+    HAVING v."inTransitQty" <> COALESCE(SUM(m."qty"), 0)
+  `;
   return [
+    ...transit.map((r) => ({ ...r, locationName: "In transit", ledgerQty: Number(r.ledgerQty) })),
     ...totals.map((r) => ({ ...r, locationName: null, ledgerQty: Number(r.ledgerQty) })),
     ...perLocation.map((r) => ({ ...r, stockQty: Number(r.stockQty), ledgerQty: Number(r.ledgerQty) })),
   ];

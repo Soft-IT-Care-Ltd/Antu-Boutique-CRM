@@ -34,8 +34,8 @@ const HUB = SEEDED_LOCATION_IDS.mohammadpur;
 const SHOWROOM = SEEDED_LOCATION_IDS.shyamoli;
 const CORNER = SEEDED_LOCATION_IDS.parlour;
 
-async function ledgerSum(tx: Prisma.TransactionClient, variantId: string, locationId?: string): Promise<number> {
-  const agg = await tx.stockMovement.aggregate({ where: { variantId, ...(locationId ? { locationId } : {}) }, _sum: { qty: true } });
+async function ledgerSum(tx: Prisma.TransactionClient, variantId: string, locationId?: string | null): Promise<number> {
+  const agg = await tx.stockMovement.aggregate({ where: { variantId, ...(locationId !== undefined ? { locationId } : {}) }, _sum: { qty: true } });
   return agg._sum.qty ?? 0;
 }
 
@@ -58,9 +58,12 @@ async function expectStockMatchesLedger(tx: Prisma.TransactionClient, variantId:
   ]);
   const locationIds = new Set([...stocks.map((s) => s.locationId), ...ledgerLocations.map((l) => l.locationId)]);
   for (const locationId of locationIds) {
+    // C4 — in-transit rows (no location) are checked against inTransitQty instead.
+    if (locationId === null) continue;
     expect(await ledgerSum(tx, variantId, locationId), `variant ${variantId} at ${locationId}`).toBe(await qtyAt(tx, variantId, locationId));
   }
-  expect(stocks.reduce((sum, s) => sum + s.qty, 0)).toBe(variant.stockQty);
+  expect(await ledgerSum(tx, variantId, null)).toBe(variant.inTransitQty);
+  expect(stocks.reduce((sum, s) => sum + s.qty, 0) + variant.inTransitQty).toBe(variant.stockQty);
   await checkDeferredConstraintsNow(tx);
   return variant;
 }
@@ -222,7 +225,7 @@ describe("stock and ledger can never diverge (CLAUDE.md rule 2)", () => {
         // locationStockAfter as each location's own running balance.
         const ledger = await tx.stockMovement.findMany({ where: { variantId: variant.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
         let running = 0;
-        const runningAt = new Map<string, number>();
+        const runningAt = new Map<string | null, number>();
         for (const row of ledger) {
           running += row.qty;
           runningAt.set(row.locationId, (runningAt.get(row.locationId) ?? 0) + row.qty);
@@ -404,9 +407,10 @@ describe("per-location stock = per-location ledger, through a whole day (C3)", (
             HAVING s."qty" <> COALESCE(SUM(m."qty"), 0)
           ) bad`;
         expect(Number(everyPair[0].n)).toBe(0);
+        // C4 — total = the locations + what's in transit between them.
         const totals = await tx.$queryRaw<{ n: bigint }[]>`
           SELECT COUNT(*) AS n FROM "product_variants" v
-          WHERE v."stockQty" <> COALESCE((SELECT SUM(s."qty") FROM "variant_stocks" s WHERE s."variantId" = v."id"), 0)`;
+          WHERE v."stockQty" <> COALESCE((SELECT SUM(s."qty") FROM "variant_stocks" s WHERE s."variantId" = v."id"), 0) + v."inTransitQty"`;
         expect(Number(totals[0].n)).toBe(0);
         await checkDeferredConstraintsNow(tx);
       });

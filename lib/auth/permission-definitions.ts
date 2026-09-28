@@ -72,6 +72,13 @@ export const PERMISSIONS = [
   // C3 (CORRECTIONS.md item 2): without it, stock actions are limited to
   // the locations the person is assigned to (Settings → Users).
   { key: "location.all", group: "Inventory", label: "Act for every stock location (not only assigned ones)" },
+  // C4 (CORRECTIONS.md items 2, 3): scan screens for the location
+  // incharges. Each acts only at the person's own locations (location.all:
+  // every one) — send from the source, receive at the destination.
+  { key: "transfer.send", group: "Inventory", label: "Send stock transfers (scan out) from own locations" },
+  { key: "transfer.receive", group: "Inventory", label: "Receive stock transfers (scan in) at own locations" },
+  { key: "transfer.resolve", group: "Inventory", label: "Resolve units missing in transit (found / write off)" },
+  { key: "stock.count", group: "Inventory", label: "Count stock by scan at own locations (posting needs Manual stock adjustment)" },
 
   // Packing
   { key: "packing.view_queue", group: "Packing", label: "View packing queue" },
@@ -227,6 +234,11 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "packing.pack",
     "order.status_update",
     "inventory.view",
+    // C4: the hub's incharge sends to and receives from other locations,
+    // and counts the warehouse (a Manager posts the count's difference).
+    "transfer.send",
+    "transfer.receive",
+    "stock.count",
     "courier.create_shipment",
     "courier.return_check",
     "attendance.view_own",
@@ -272,6 +284,11 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "order.create",
     "product.view",
     "inventory.view",
+    // C4: the showroom incharge sends dresses to the packing hub, receives
+    // transfers and counts the showroom.
+    "transfer.send",
+    "transfer.receive",
+    "stock.count",
     "attendance.view_own",
     "attendance.mark",
   ],
