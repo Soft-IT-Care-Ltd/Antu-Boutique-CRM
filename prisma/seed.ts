@@ -8,6 +8,7 @@ import { buildVariantSku } from "../lib/catalog/codes";
 // the DB's stock/ledger consistency trigger would reject anything else.
 import { adjustStock, writeOffDamagedStock } from "../lib/inventory/adjustments";
 import { recordStockMovement } from "../lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "../lib/locations/constants";
 import { createPurchase } from "../lib/inventory/purchases";
 // P3.2 — the returns demo goes through the real services (lib/returns/*,
 // packing, status moves). They're marked "server-only", which is why every
@@ -332,8 +333,13 @@ async function seedCatalogProducts() {
           },
         });
         if (variant.stock !== 0) {
+          // C3 — the warehouse (packing hub) holds the opening stock; the
+          // Shyamoli showroom gets a few of each on top so the POS sells
+          // from its own shelf, and the Parlour sales corner one of the
+          // well-stocked ones.
           await recordStockMovement(tx, {
             variantId: created.id,
+            locationId: SEEDED_LOCATION_IDS.mohammadpur,
             type: "ADJUSTMENT",
             qty: variant.stock,
             unitCost: variant.cost,
@@ -341,6 +347,30 @@ async function seedCatalogProducts() {
             actorId: null,
             note: "Opening balance (seed)",
           });
+          if (variant.stock > 0) {
+            await recordStockMovement(tx, {
+              variantId: created.id,
+              locationId: SEEDED_LOCATION_IDS.shyamoli,
+              type: "ADJUSTMENT",
+              qty: Math.min(3, variant.stock),
+              unitCost: variant.cost,
+              referenceType: "OPENING_BALANCE",
+              actorId: null,
+              note: "Opening balance (seed) — showroom shelf",
+            });
+          }
+          if (variant.stock >= 8) {
+            await recordStockMovement(tx, {
+              variantId: created.id,
+              locationId: SEEDED_LOCATION_IDS.parlour,
+              type: "ADJUSTMENT",
+              qty: 1,
+              unitCost: variant.cost,
+              referenceType: "OPENING_BALANCE",
+              actorId: null,
+              note: "Opening balance (seed) — sales corner",
+            });
+          }
         }
       });
     }
@@ -384,6 +414,18 @@ async function seedUsers(roleIds: Record<RoleName, string>) {
   if (team.leaderId !== teamLeader.id) {
     await prisma.team.update({ where: { id: team.id }, data: { leaderId: teamLeader.id } });
   }
+
+  // C3 (CORRECTIONS.md item 2) — location incharges: the packer runs the
+  // Mohammadpur hub, the POS operator the Shyamoli showroom. Admin and
+  // Manager act for every location through location.all.
+  const byPhone = async (phone: string) => (await prisma.user.findUniqueOrThrow({ where: { phone }, select: { id: true } })).id;
+  await prisma.userLocation.createMany({
+    data: [
+      { userId: await byPhone("01711000005"), locationId: SEEDED_LOCATION_IDS.mohammadpur },
+      { userId: await byPhone("01711000007"), locationId: SEEDED_LOCATION_IDS.shyamoli },
+    ],
+    skipDuplicates: true,
+  });
 }
 
 // PRD §4.4 demo customers — one person per customer, no payer/recipient
@@ -698,8 +740,8 @@ async function seedInventory() {
           amountPaid: 14_200,
           note: "Eid restock — paid in full by bKash merchant.",
           items: [
-            { variantId: sareeMaroon.id, qty: 4, unitCost: 2300 },
-            { variantId: sareeBlack.id, qty: 2, unitCost: 2300 },
+            { variantId: sareeMaroon.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 4, unitCost: 2300 },
+            { variantId: sareeBlack.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 2, unitCost: 2300 },
           ],
         },
         manager.id,
@@ -717,17 +759,19 @@ async function seedInventory() {
           amountPaid: 5_000,
           note: "Balance due after quality check.",
           items: [
-            { variantId: kurtiMM.id, qty: 6, unitCost: 720 },
-            { variantId: kurtiLM.id, qty: 4, unitCost: 720 },
-            { variantId: kurtiLMustard.id, qty: 5, unitCost: 760 },
-            { variantId: threePcPink.id, qty: 3, unitCost: 1650 },
+            // C3 — one purchase received into two locations.
+            { variantId: kurtiMM.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 4, unitCost: 720 },
+            { variantId: kurtiMM.id, locationId: SEEDED_LOCATION_IDS.shyamoli, qty: 2, unitCost: 720 },
+            { variantId: kurtiLM.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 4, unitCost: 720 },
+            { variantId: kurtiLMustard.id, locationId: SEEDED_LOCATION_IDS.shyamoli, qty: 5, unitCost: 760 },
+            { variantId: threePcPink.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 3, unitCost: 1650 },
           ],
         },
         manager.id,
       );
 
-      await adjustStock(tx, { variantId: kurtiMM.id, qty: -1, reason: "Monthly stock count — one short against the ledger" }, admin.id);
-      await writeOffDamagedStock(tx, { variantId: sareeMaroon.id, qty: 1, reason: "Dye bleed along the border, not sellable" }, manager.id);
+      await adjustStock(tx, { variantId: kurtiMM.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: -1, reason: "Monthly stock count — one short against the ledger" }, admin.id);
+      await writeOffDamagedStock(tx, { variantId: sareeMaroon.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 1, reason: "Dye bleed along the border, not sellable" }, manager.id);
     },
     { timeout: 60_000 },
   );
@@ -927,6 +971,7 @@ async function seedCourierDemo() {
           await tx.orderItem.update({ where: { id: item.id }, data: { unitCostSnapshot: variants[i].weightedAvgCost } });
           await recordStockMovement(tx, {
             variantId: variants[i].id,
+            locationId: SEEDED_LOCATION_IDS.mohammadpur,
             type: "SALE_OUT",
             qty: -item.qty,
             unitCost: variants[i].weightedAvgCost,
@@ -1318,7 +1363,7 @@ async function seedPosSale(posUserId: string, teamId: string | null, sale: PosDe
     });
     for (const l of priced) {
       await tx.orderItem.create({ data: { orderId: order.id, variantId: l.v.id, qty: l.qty, unitPrice: l.price, lineDiscount: l.discount, unitCostSnapshot: l.v.weightedAvgCost } });
-      await recordStockMovement(tx, { variantId: l.v.id, type: "POS_SALE_OUT", qty: -l.qty, unitCost: l.v.weightedAvgCost, referenceType: "ORDER", referenceId: order.id, actorId: posUserId });
+      await recordStockMovement(tx, { variantId: l.v.id, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "POS_SALE_OUT", qty: -l.qty, unitCost: l.v.weightedAvgCost, referenceType: "ORDER", referenceId: order.id, actorId: posUserId });
     }
     let left = total;
     for (const [i, t] of sale.tenders.entries()) {
@@ -1616,7 +1661,13 @@ async function seedSetsAndPackagingDemo() {
       const v = await prisma.productVariant.create({
         data: { productId: p.id, sizeId: size(s).id, colorId: color(c).id, sku: buildVariantSku(input.code, size(s).code, color(c).code), weightedAvgCost: input.cost },
       });
-      await prisma.$transaction((tx: Tx) => recordStockMovement(tx, { variantId: v.id, type: "PURCHASE_IN", qty: input.stock, unitCost: input.cost, referenceType: "OPENING_BALANCE", actorId: admin.id, note: "Opening stock" }));
+      // C3 — packaging sits mostly at the packing hub, with a share at the
+      // showroom for counter sales (bags, tissue).
+      const atShowroom = input.kind === "COMPONENT_ONLY" ? Math.floor(input.stock / 3) : Math.min(2, input.stock);
+      await prisma.$transaction(async (tx: Tx) => {
+        await recordStockMovement(tx, { variantId: v.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: input.stock - atShowroom, unitCost: input.cost, referenceType: "OPENING_BALANCE", actorId: admin.id, note: "Opening stock" });
+        if (atShowroom > 0) await recordStockMovement(tx, { variantId: v.id, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "PURCHASE_IN", qty: atShowroom, unitCost: input.cost, referenceType: "OPENING_BALANCE", actorId: admin.id, note: "Opening stock — showroom" });
+      });
     }
     return prisma.product.findUniqueOrThrow({ where: { id: p.id }, include: { variants: true } });
   }
@@ -1713,13 +1764,34 @@ async function seedSetsAndPackagingDemo() {
   }
 
   // …and at the counter, paid by card: the bag and tissue leave stock with it.
-  await createPosSale(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma), hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true }, {
+  await createPosSale(prisma, { user: pos, cashWalletId: await getPosCashWalletId(prisma), hasCostAccess: false, canCreateCustomer: true }, {
     items: [],
     sets: [{ setId: eid.id, qty: 1, unitPrice: 2800, lineDiscount: 100, choices }],
     cartDiscount: 0,
     customer: null,
     tenders: [{ method: "CARD", amount: 2700 }],
   });
+}
+
+// C3 (CORRECTIONS.md item 11) — a dress the showroom's figures say it
+// doesn't have, sold at the counter because it was in hand: Shyamoli goes
+// to −1 and its incharge and the managers get the Negative stock alert.
+async function seedNegativeStockDemo() {
+  if ((await prisma.variantStock.count({ where: { qty: { lt: 0 } } })) > 0) return;
+  const pos = await sessionFor("01711000007");
+  const candidates = await prisma.productVariant.findMany({
+    where: { isActive: true, product: { isActive: true, deletedAt: null, kind: "SELLABLE" }, stockQty: { gt: 0 } },
+    orderBy: { sku: "asc" },
+    select: { id: true, sku: true, stockQty: true, reservedQty: true, priceOverride: true, product: { select: { basePrice: true } }, locationStocks: { where: { locationId: SEEDED_LOCATION_IDS.shyamoli }, select: { qty: true } } },
+  });
+  const v = candidates.find((c) => (c.locationStocks[0]?.qty ?? 0) === 0 && c.stockQty - c.reservedQty > 0);
+  if (!v) return;
+  const price = Number(v.priceOverride ?? v.product.basePrice);
+  await createPosSale(
+    prisma,
+    { user: pos, cashWalletId: await getPosCashWalletId(prisma), hasCostAccess: false, canCreateCustomer: true },
+    { items: [{ variantId: v.id, qty: 1, unitPrice: price, lineDiscount: 0 }], cartDiscount: 0, customer: null, tenders: [{ method: "CARD", amount: price }], acknowledgeNegativeStock: true, note: "Last piece was on the display rail" },
+  );
 }
 
 async function seedSettings() {
@@ -2103,6 +2175,7 @@ async function main() {
   await seedReturnsDemo();
   await seedStoreCreditDemo();
   await seedSetsAndPackagingDemo();
+  await seedNegativeStockDemo();
   await seedLeadsDemo();
   await seedTargetsAndAttendanceDemo();
 

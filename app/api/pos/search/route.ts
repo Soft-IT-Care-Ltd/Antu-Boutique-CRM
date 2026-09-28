@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { badRequest } from "@/lib/finance/http";
 import { searchSellableVariants } from "@/lib/pos/lookup";
+import { getPosLocation } from "@/lib/locations/service";
 import { prisma } from "@/lib/prisma";
 import { listSets } from "@/lib/sets/service";
 
@@ -18,6 +19,8 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success) return badRequest(parsed.error);
-  const [variants, sets] = await Promise.all([searchSellableVariants(prisma, parsed.data.q), listSets(prisma, { q: parsed.data.q, activeOnly: true, take: 5 })]);
+  const showroom = await getPosLocation(prisma, guard.user).catch(() => null);
+  if (!showroom) return NextResponse.json({ error: "No POS showroom for you — ask an Admin to assign you in Settings → Locations." }, { status: 403 });
+  const [variants, sets] = await Promise.all([searchSellableVariants(prisma, parsed.data.q, showroom.id), listSets(prisma, { q: parsed.data.q, activeOnly: true, take: 5 })]);
   return NextResponse.json(await stripCostFieldsForUser({ variants, sets }, guard.user));
 }

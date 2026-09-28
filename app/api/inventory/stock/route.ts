@@ -13,6 +13,7 @@ import { paginationQuery } from "@/lib/list/pagination";
 const querySchema = z.object({
   q: z.string().trim().max(100).optional(),
   categoryId: z.string().trim().max(50).optional(),
+  locationId: z.string().trim().max(50).optional(),
   status: z.enum(STOCK_STATUS_FILTERS).default("all"),
   ...paginationQuery,
 });
@@ -26,6 +27,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
 
-  const report = await getStockReport({ ...parsed.data, q: parsed.data.q || undefined, categoryId: parsed.data.categoryId || undefined });
+  const report = await getStockReport({ ...parsed.data, q: parsed.data.q || undefined, categoryId: parsed.data.categoryId || undefined, locationId: parsed.data.locationId || undefined });
   return NextResponse.json(await stripCostFieldsForUser({ ...report, page: parsed.data.page, pageSize: parsed.data.pageSize }, guard.user));
 }

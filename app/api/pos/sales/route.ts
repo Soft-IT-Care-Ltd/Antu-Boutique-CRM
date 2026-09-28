@@ -29,7 +29,6 @@ const saleSchema = z.object({
         qty: z.coerce.number().int().min(1).max(999),
         unitPrice: amount,
         lineDiscount: amount.default(0),
-        stockOverrideReason: z.string().trim().max(300).nullish(),
       }),
     )
     .max(100)
@@ -53,6 +52,9 @@ const saleSchema = z.object({
     )
     .max(6),
   note: z.string().trim().max(500).nullish(),
+  // C3 (CORRECTIONS.md item 11) — sell even though the showroom shows too
+  // few; its stock goes negative and its manager is alerted.
+  acknowledgeNegativeStock: z.boolean().default(false),
 });
 
 export async function POST(request: NextRequest) {
@@ -62,13 +64,12 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return badRequest(parsed.error);
 
   try {
-    const [cashWalletId, hasCostAccess, hasStockOverride, canCreateCustomer] = await Promise.all([
+    const [cashWalletId, hasCostAccess, canCreateCustomer] = await Promise.all([
       getPosCashWalletId(prisma),
       can(guard.user, "product.cost.view"),
-      can(guard.user, "order.stock_override"),
       can(guard.user, "customer.create"),
     ]);
-    const sale = await createPosSale(prisma, { user: guard.user, cashWalletId, hasCostAccess, hasStockOverride, canCreateCustomer }, {
+    const sale = await createPosSale(prisma, { user: guard.user, cashWalletId, hasCostAccess, canCreateCustomer }, {
       ...parsed.data,
       tenders: parsed.data.tenders.map((t) => ({ ...t, transactionId: t.transactionId || null })),
     });

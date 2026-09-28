@@ -19,7 +19,7 @@ export type PosSearchHandle = { focus: () => void };
  * Enter always tries the exact code first, so a scan never picks a
  * look-alike from the type-ahead list.
  */
-export const PosSearch = forwardRef<PosSearchHandle, { onAdd: (hit: PosVariantHit) => void; onAddSet?: (set: SetListItem) => void; canSellOutOfStock: boolean }>(function PosSearch({ onAdd, onAddSet, canSellOutOfStock }, ref) {
+export const PosSearch = forwardRef<PosSearchHandle, { onAdd: (hit: PosVariantHit) => void; onAddSet?: (set: SetListItem) => void; showroomName: string }>(function PosSearch({ onAdd, onAddSet, showroomName }, ref) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // The list, and the exact text it was fetched for.
@@ -60,11 +60,9 @@ export const PosSearch = forwardRef<PosSearchHandle, { onAdd: (hit: PosVariantHi
     return () => clearTimeout(timer);
   }, [query]);
 
+  // C3 (CORRECTIONS.md item 11): an item the showroom shows as 0 can still
+  // be sold — it's in hand — so it's added with a warning, never refused.
   function add(hit: PosVariantHit) {
-    if (hit.available <= 0 && !canSellOutOfStock) {
-      setMessage(`${hit.productName} (${hit.sizeName} / ${hit.colorName}) shows no stock available — ask a Manager to check it.`);
-      return;
-    }
     onAdd(hit);
     requestSeq.current += 1;
     setQuery("");
@@ -209,7 +207,7 @@ export const PosSearch = forwardRef<PosSearchHandle, { onAdd: (hit: PosVariantHi
                 </span>
                 <span className="shrink-0 text-right">
                   <span className="block text-sm font-semibold tabular-nums">{formatBDT(hit.price)}</span>
-                  <span className={`block text-xs ${out ? "text-destructive" : "text-muted-foreground"}`}>{out ? "none available" : `${hit.available} available`}</span>
+                  <span className={`block text-xs ${out ? "text-destructive" : "text-muted-foreground"}`}>{out ? `0 at ${showroomName}` : `${hit.available} at ${showroomName}`}</span>
                 </span>
               </button>
             );

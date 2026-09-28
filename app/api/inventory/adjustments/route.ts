@@ -4,6 +4,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
+import { assertCanActAt, LocationError } from "@/lib/locations/service";
 import { adjustStock, StockMovementError } from "@/lib/inventory/adjustments";
 
 // PRD §4.3: manual stock adjustment — reason required, Admin/Manager only
@@ -12,6 +13,8 @@ import { adjustStock, StockMovementError } from "@/lib/inventory/adjustments";
 
 const bodySchema = z.object({
   variantId: z.string().trim().min(1),
+  // C3 — the location whose stock is corrected; only one the user acts for.
+  locationId: z.string().trim().min(1, "Pick a location").max(50),
   qty: z
     .number()
     .int("Quantity must be a whole number")
@@ -30,6 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const location = await assertCanActAt(prisma, guard.user, parsed.data.locationId);
     const { movement, expense } = await prisma.$transaction((tx) => adjustStock(tx, parsed.data, guard.user.id));
 
     await writeAuditLog({
@@ -37,9 +41,11 @@ export async function POST(request: NextRequest) {
       action: "inventory.adjust",
       entityType: "product_variant",
       entityId: movement.variantId,
-      before: { stockQty: movement.stockAfter - movement.qty },
+      before: { stockQty: movement.stockAfter - movement.qty, location: location.name, locationQty: movement.locationStockAfter - movement.qty },
       after: {
         stockQty: movement.stockAfter,
+        location: location.name,
+        locationQty: movement.locationStockAfter,
         movementId: movement.id,
         qty: movement.qty,
         unitCost: movement.unitCostSnapshot.toString(),
@@ -53,6 +59,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ movement: { id: movement.id, qty: movement.qty, stockAfter: movement.stockAfter }, expenseId: expense?.id ?? null }, { status: 201 });
   } catch (err) {
     if (err instanceof StockMovementError) return NextResponse.json({ error: err.message }, { status: 400 });
+    if (err instanceof LocationError) return NextResponse.json({ error: err.message }, { status: err.status });
     throw err;
   }
 }

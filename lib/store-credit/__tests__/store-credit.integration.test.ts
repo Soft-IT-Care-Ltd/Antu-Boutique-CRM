@@ -2,6 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { ROLE_TEMPLATES } from "@/lib/auth/permission-definitions";
+import { recordStockMovement } from "@/lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { toNumber } from "@/lib/money";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { packOrder } from "@/lib/orders/pack";
@@ -39,9 +41,15 @@ async function cheaperCounterSwap(tx: Prisma.TransactionClient, orderId: string,
 }
 
 /** An anonymous showroom sale of one unit at ৳1,450, paid by card. */
+/** C3 — the counter sells from the Shyamoli showroom's shelf, so the item has to be there. */
+async function stockShowroom(tx: Prisma.TransactionClient, variantId: string, qty: number) {
+  await recordStockMovement(tx, { variantId, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "PURCHASE_IN", qty, unitCost: 400, referenceType: "OPENING_BALANCE", actorId: null });
+}
+
 async function anonymousSale(tx: Prisma.TransactionClient, variantId: string) {
+  await stockShowroom(tx, variantId, 1);
   const pos = await userFor(tx, PHONES.POS);
-  return createPosSale(tx, { user: pos, cashWalletId: await cashWallet(tx), hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true }, {
+  return createPosSale(tx, { user: pos, cashWalletId: await cashWallet(tx), hasCostAccess: false, canCreateCustomer: true }, {
     items: [{ variantId, qty: 1, unitPrice: 1450, lineDiscount: 0 }],
     cartDiscount: 0,
     customer: null,
@@ -120,8 +128,9 @@ describe("spending store credit", () => {
         await cheaperCounterSwap(tx, order.id, order.items[0].id, catalog.cheaper.id);
         const phone = (await tx.customer.findUniqueOrThrow({ where: { id: order.customerId! } })).phone;
         const pos = await userFor(tx, PHONES.POS);
-        const ctx = { user: pos, cashWalletId: await cashWallet(tx), hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true };
+        const ctx = { user: pos, cashWalletId: await cashWallet(tx), hasCostAccess: false, canCreateCustomer: true };
         const item = { variantId: catalog.cheaper.id, qty: 1, unitPrice: 900, lineDiscount: 0 };
+        await stockShowroom(tx, catalog.cheaper.id, 3);
 
         await expect(createPosSale(tx, ctx, { items: [item], cartDiscount: 0, customer: null, tenders: [{ method: "STORE_CREDIT", amount: 450 }, { method: "CARD", amount: 450 }] })).rejects.toThrow(
           /phone number to pay with their store credit/,

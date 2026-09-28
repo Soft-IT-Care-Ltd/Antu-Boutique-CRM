@@ -1,6 +1,14 @@
 "use client";
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  /** The JSON body of the failed response, for errors that carry more than a message. */
+  constructor(
+    message: string,
+    readonly body: Record<string, unknown> = {},
+  ) {
+    super(message);
+  }
+}
 
 export async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
@@ -9,7 +17,7 @@ export async function fetchJson<T>(input: string, init?: RequestInit): Promise<T
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`);
+    throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, body as Record<string, unknown>);
   }
   return body as T;
 }

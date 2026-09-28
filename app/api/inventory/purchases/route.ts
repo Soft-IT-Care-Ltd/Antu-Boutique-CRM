@@ -10,6 +10,7 @@ import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { createPurchase, PurchaseError } from "@/lib/inventory/purchases";
 import { PURCHASE_VIEW_PERMISSIONS, getPurchaseDetail, listPurchases } from "@/lib/inventory/queries";
 import { paginationQuery } from "@/lib/list/pagination";
+import { assertCanActAt, getPackingHub, LocationError } from "@/lib/locations/service";
 
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-MM-DD");
 // Money is rounded to the paisa by lib/inventory/costing.ts's toPaisa.
@@ -37,6 +38,9 @@ const createSchema = z.object({
     .array(
       z.object({
         variantId: z.string().trim().min(1),
+        // C3 (CORRECTIONS.md item 4): where the line is received. Blank =
+        // the packing hub.
+        locationId: z.string().trim().max(50).nullish(),
         qty: z.number().int("Quantity must be a whole number").min(1, "Quantity must be at least 1").max(100_000),
         unitCost: money,
       }),
@@ -79,12 +83,19 @@ export async function POST(request: NextRequest) {
   const input = parsed.data;
 
   try {
+    // Each line's location: the packing hub by default, and only one the
+    // buyer acts for (location managers receive into their own locations).
+    const hub = await getPackingHub(prisma);
+    const items = input.items.map((i) => ({ ...i, locationId: i.locationId || hub.id }));
+    for (const locationId of new Set(items.map((i) => i.locationId))) await assertCanActAt(prisma, guard.user, locationId);
+
     const purchase = await prisma.$transaction(
       (tx) =>
         createPurchase(
           tx,
           {
             ...input,
+            items,
             // Purchase date is a Dhaka calendar day; store its midnight in UTC.
             purchaseDate: dhakaDayStartUtc(input.purchaseDate),
           },
@@ -106,6 +117,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ purchase: detail }, { status: 201 });
   } catch (err) {
     if (err instanceof PurchaseError) return NextResponse.json({ error: err.message }, { status: 400 });
+    if (err instanceof LocationError) return NextResponse.json({ error: err.message }, { status: err.status });
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return NextResponse.json({ error: "This supplier invoice number has already been entered" }, { status: 409 });
     }

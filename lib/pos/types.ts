@@ -88,6 +88,7 @@ export type PosVariantHit = {
   colorName: string;
   colorHex: string;
   price: string;
+  /** C3 — on hand at the POS's own showroom (may be negative). */
   available: number;
   thumbPath: string | null;
 };

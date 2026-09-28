@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import type { SessionUser } from "@/lib/auth/types";
 import { recordStockMovement } from "@/lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { packOrder } from "@/lib/orders/pack";
 import { reserveVariantStock } from "@/lib/orders/stock";
@@ -39,17 +40,17 @@ export async function scratchCatalog(tx: Prisma.TransactionClient) {
   const variants = [];
   for (const [i, size] of sizes.entries()) {
     const v = await tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: testSku(code, `${size.code}${i}`), weightedAvgCost: 400 } });
-    await recordStockMovement(tx, { variantId: v.id, type: "PURCHASE_IN", qty: 10, unitCost: 400, referenceType: "OPENING_BALANCE", actorId: null });
+    await recordStockMovement(tx, { variantId: v.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: 10, unitCost: 400, referenceType: "OPENING_BALANCE", actorId: null });
     variants.push(v);
   }
   const code2 = testProductCode();
   const pricier = await tx.product.create({ data: { code: code2, name: `Exchange test pricier ${code2}`, basePrice: 2200 } });
   const other = await tx.productVariant.create({ data: { productId: pricier.id, sizeId: sizes[0].id, colorId: color.id, sku: testSku(code2), weightedAvgCost: 900 } });
-  await recordStockMovement(tx, { variantId: other.id, type: "PURCHASE_IN", qty: 10, unitCost: 900, referenceType: "OPENING_BALANCE", actorId: null });
+  await recordStockMovement(tx, { variantId: other.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: 10, unitCost: 900, referenceType: "OPENING_BALANCE", actorId: null });
   const cheapCode = testProductCode();
   const cheaper = await tx.product.create({ data: { code: cheapCode, name: `Exchange test cheaper ${cheapCode}`, basePrice: 900 } });
   const cheap = await tx.productVariant.create({ data: { productId: cheaper.id, sizeId: sizes[0].id, colorId: color.id, sku: testSku(cheapCode), weightedAvgCost: 300 } });
-  await recordStockMovement(tx, { variantId: cheap.id, type: "PURCHASE_IN", qty: 10, unitCost: 300, referenceType: "OPENING_BALANCE", actorId: null });
+  await recordStockMovement(tx, { variantId: cheap.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: 10, unitCost: 300, referenceType: "OPENING_BALANCE", actorId: null });
   return { product, m: variants[0], l: variants[1], xl: variants[2], pricier: other, cheaper: cheap };
 }
 

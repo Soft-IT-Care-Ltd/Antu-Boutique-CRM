@@ -5,6 +5,7 @@ import { COURIER_RETURN_CHARGE_EXPENSE_CATEGORY } from "@/lib/courier/constants"
 import { completeReturnCaseAfterCheck } from "@/lib/returns/case-completion";
 import { writeOffDamagedStock } from "@/lib/inventory/adjustments";
 import { recordStockMovement } from "@/lib/inventory/ledger";
+import { getPackingHub } from "@/lib/locations/service";
 import { toNumber } from "@/lib/money";
 
 // ============ Packing condition check for goods coming back (PRD §4.9 / §4.11) ============
@@ -106,10 +107,15 @@ export type ConditionCheckResult = {
   returnChargePosted: string | null;
 };
 
-/** Completes a PENDING inspection: every expected unit must be marked Good or Damaged. */
+/**
+ * Completes a PENDING inspection: every expected unit must be marked Good or Damaged.
+ * C3: the goods come back into `locationId` — a courier return into the
+ * packing hub (the default: parcels come back to where they left), a
+ * counter exchange into that showroom's location.
+ */
 export async function completeConditionCheck(
   tx: Prisma.TransactionClient,
-  input: { inspectionId: string; lines: ConditionCheckLineInput[]; note?: string | null },
+  input: { inspectionId: string; lines: ConditionCheckLineInput[]; note?: string | null; locationId?: string },
   actorId: string | null,
 ): Promise<ConditionCheckResult> {
   const inspection = await tx.returnInspection.findUnique({
@@ -150,6 +156,7 @@ export async function completeConditionCheck(
   });
   if (claimed.count !== 1) throw new ConditionCheckError("This return has already been checked");
 
+  const locationId = input.locationId ?? (await getPackingHub(tx)).id;
   const isExchange = inspection.source === "EXCHANGE";
   const restockType = isExchange ? "EXCHANGE_IN" : "RETURN_IN";
   const referenceType = isExchange ? "EXCHANGE" : "RETURN";
@@ -168,6 +175,7 @@ export async function completeConditionCheck(
     if (goodQty > 0) {
       await recordStockMovement(tx, {
         variantId: item.variantId,
+        locationId,
         type: restockType,
         qty: goodQty,
         unitCost,
@@ -181,6 +189,7 @@ export async function completeConditionCheck(
     if (damagedQty > 0) {
       await recordStockMovement(tx, {
         variantId: item.variantId,
+        locationId,
         type: restockType,
         qty: damagedQty,
         unitCost,
@@ -191,7 +200,7 @@ export async function completeConditionCheck(
       });
       await writeOffDamagedStock(
         tx,
-        { variantId: item.variantId, qty: damagedQty, reason: `${inspection.order.orderNo} — damaged on return` },
+        { variantId: item.variantId, locationId, qty: damagedQty, reason: `${inspection.order.orderNo} — damaged on return` },
         actorId,
         { unitCost, referenceType, referenceId: inspection.id },
       );

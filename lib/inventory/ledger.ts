@@ -1,12 +1,19 @@
 import { Prisma, type StockMovement, type StockMovementType, type StockReferenceType } from "@prisma/client";
 
 // PRD §4.3 + CLAUDE.md rule 2: the ONLY function in the codebase allowed to
-// change product_variants.stockQty. It writes the stock change and its
-// stock_movements row through the caller's transaction client, so both
-// commit or neither does. The database enforces the same thing from the
-// other side (see the deferred constraint trigger in migration
-// 20260923081635_stock_ledger_purchases): a transaction that moves stock
-// without a matching ledger row — or vice versa — cannot commit.
+// change product_variants.stockQty or variant_stocks.qty. It writes the
+// stock change and its stock_movements row through the caller's transaction
+// client, so both commit or neither does. The database enforces the same
+// thing from the other side (deferred constraint triggers in migrations
+// 20260923081635_stock_ledger_purchases and 20261003090000_stock_locations):
+// a transaction that moves stock without a matching ledger row — or vice
+// versa — cannot commit.
+//
+// C3 (CORRECTIONS.md item 2): stock is held per (variant, location). Every
+// movement names its location; it moves that location's variant_stocks row
+// AND the variant's total (stockQty, the sum over locations) together. A
+// location may go below zero (a POS sale of an item in hand — item 11); the
+// callers that must not allow it check first under lockVariantAt.
 //
 // Deliberately free of "server-only" and of the prisma singleton: it only
 // ever acts through the `tx` it is handed, which lets prisma/seed.ts post
@@ -30,6 +37,8 @@ export class StockMovementError extends Error {}
 
 export type RecordStockMovementInput = {
   variantId: string;
+  /** Where the units go in or out (lib/inventory/locations.ts). */
+  locationId: string;
   type: StockMovementType;
   /** Signed: positive puts stock on the shelf, negative takes it off. Never zero. */
   qty: number;
@@ -56,6 +65,8 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
     throw new StockMovementError(`${type} must move stock ${direction > 0 ? "in (positive qty)" : "out (negative qty)"}`);
   }
 
+  // The variant row first: it is the per-variant lock every stock writer
+  // takes, so the location row below is only ever moved under it.
   const variant = await tx.productVariant.update({
     where: { id: variantId },
     data: {
@@ -64,13 +75,21 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
     },
     select: { stockQty: true },
   });
+  const atLocation = await tx.variantStock.upsert({
+    where: { variantId_locationId: { variantId, locationId: input.locationId } },
+    create: { variantId, locationId: input.locationId, qty },
+    update: { qty: { increment: qty } },
+    select: { qty: true },
+  });
 
   return tx.stockMovement.create({
     data: {
       variantId,
+      locationId: input.locationId,
       type,
       qty,
       stockAfter: variant.stockQty,
+      locationStockAfter: atLocation.qty,
       unitCostSnapshot: new Prisma.Decimal(input.unitCost.toString()),
       referenceType: input.referenceType,
       referenceId: input.referenceId ?? null,
@@ -98,16 +117,57 @@ export async function lockVariant(tx: Prisma.TransactionClient, variantId: strin
   return rows[0] ?? null;
 }
 
-export type StockLedgerDivergence = { variantId: string; sku: string; stockQty: number; ledgerQty: number };
+export type LockedVariantAt = LockedVariant & { locationId: string; locationQty: number };
 
-/** Every variant whose stockQty ≠ sum(stock_movements.qty). Should always be empty — the DB trigger makes it so. */
+/**
+ * lockVariant plus that location's on-hand. Every stock writer updates the
+ * variant row first (recordStockMovement), so holding its lock also holds
+ * every location's figure for the variant still.
+ */
+export async function lockVariantAt(tx: Prisma.TransactionClient, variantId: string, locationId: string): Promise<LockedVariantAt | null> {
+  const locked = await lockVariant(tx, variantId);
+  if (!locked) return null;
+  const row = await tx.variantStock.findUnique({ where: { variantId_locationId: { variantId, locationId } }, select: { qty: true } });
+  return { ...locked, locationId, locationQty: row?.qty ?? 0 };
+}
+
+export type StockLedgerDivergence = {
+  variantId: string;
+  sku: string;
+  /** Null for the variant's total, else the location that disagrees. */
+  locationName: string | null;
+  stockQty: number;
+  ledgerQty: number;
+};
+
+/**
+ * Every place stock ≠ sum(stock_movements.qty): a variant's total, or a
+ * (variant, location) pair — including a location with ledger rows but no
+ * stock row, or the reverse. Should always be empty — the DB triggers make
+ * it so.
+ */
 export async function findStockLedgerDivergences(client: Prisma.TransactionClient): Promise<StockLedgerDivergence[]> {
-  const rows = await client.$queryRaw<{ variantId: string; sku: string; stockQty: number; ledgerQty: bigint }[]>`
+  const totals = await client.$queryRaw<{ variantId: string; sku: string; stockQty: number; ledgerQty: bigint }[]>`
     SELECT v."id" AS "variantId", v."sku", v."stockQty", COALESCE(SUM(m."qty"), 0) AS "ledgerQty"
     FROM "product_variants" v
     LEFT JOIN "stock_movements" m ON m."variantId" = v."id"
     GROUP BY v."id"
     HAVING v."stockQty" <> COALESCE(SUM(m."qty"), 0)
   `;
-  return rows.map((r) => ({ ...r, ledgerQty: Number(r.ledgerQty) }));
+  const perLocation = await client.$queryRaw<{ variantId: string; sku: string; locationName: string; stockQty: number; ledgerQty: bigint }[]>`
+    WITH ledger AS (
+      SELECT "variantId", "locationId", SUM("qty") AS "qty" FROM "stock_movements" GROUP BY "variantId", "locationId"
+    )
+    SELECT COALESCE(s."variantId", l."variantId") AS "variantId", v."sku", loc."name" AS "locationName",
+           COALESCE(s."qty", 0) AS "stockQty", COALESCE(l."qty", 0) AS "ledgerQty"
+    FROM "variant_stocks" s
+    FULL OUTER JOIN ledger l ON l."variantId" = s."variantId" AND l."locationId" = s."locationId"
+    JOIN "product_variants" v ON v."id" = COALESCE(s."variantId", l."variantId")
+    JOIN "locations" loc ON loc."id" = COALESCE(s."locationId", l."locationId")
+    WHERE COALESCE(s."qty", 0) <> COALESCE(l."qty", 0)
+  `;
+  return [
+    ...totals.map((r) => ({ ...r, locationName: null, ledgerQty: Number(r.ledgerQty) })),
+    ...perLocation.map((r) => ({ ...r, stockQty: Number(r.stockQty), ledgerQty: Number(r.ledgerQty) })),
+  ];
 }

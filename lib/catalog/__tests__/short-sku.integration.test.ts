@@ -6,6 +6,7 @@ import { code128Widths } from "@/lib/barcode/code128";
 import { buildVariantSku, PRODUCT_CODE_PATTERN, SKU_MAX_LENGTH } from "@/lib/catalog/codes";
 import { findLabelStock, fitBarcode } from "@/lib/catalog/price-tag-layout";
 import { generateVariants, lockSkusForPrintedTags, regenerateSkus, SkuError, skuForNewVariant } from "@/lib/catalog/sku";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { findVariantByCode } from "@/lib/pos/lookup";
 import { testProductCode } from "@/lib/test/catalog-codes";
 import { inRolledBackTransaction } from "@/lib/test/rollback";
@@ -47,7 +48,7 @@ describe("every SKU in the catalog", () => {
         const scanned = decodeCode128Widths(code128Widths(v.sku));
         expect(scanned).toBe(v.sku);
         // Packaging material (P3.3) is never sold, so the POS scan doesn't find it.
-        if (v.isActive && v.product.kind === "SELLABLE") expect((await findVariantByCode(tx, scanned))?.variantId).toBe(v.id);
+        if (v.isActive && v.product.kind === "SELLABLE") expect((await findVariantByCode(tx, scanned, SEEDED_LOCATION_IDS.shyamoli))?.variantId).toBe(v.id);
       }
     });
   }, 120_000);

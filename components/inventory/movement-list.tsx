@@ -23,20 +23,26 @@ import {
   type StockMovementTypeValue,
 } from "@/lib/inventory/constants";
 import type { StockMovementRow } from "@/lib/inventory/types";
+import type { LocationOption } from "@/lib/locations/constants";
 import { formatBDT } from "@/lib/money";
 
 type Props = {
   hasCostAccess: boolean;
   initialVariant: { id: string; sku: string } | null;
+  /** C3 — every location, to filter the ledger by one. */
+  locations: LocationOption[];
+  initialLocationId?: string;
+  initialQ?: string;
 };
 
-export function MovementList({ hasCostAccess, initialVariant }: Props) {
+export function MovementList({ hasCostAccess, initialVariant, locations, initialLocationId = "all", initialQ = "" }: Props) {
   const [items, setItems] = useState<StockMovementRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const pager = usePager("movements");
   const { page, pageSize, setPage } = pager;
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [q, setQ] = useState(initialQ);
+  const [debouncedQ, setDebouncedQ] = useState(initialQ);
+  const [locationId, setLocationId] = useState(initialLocationId);
   const [type, setType] = useState<"all" | StockMovementTypeValue>("all");
   const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [variant, setVariant] = useState(initialVariant);
@@ -53,6 +59,7 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
     if (type !== "all") params.set("type", type);
     for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     if (variant) params.set("variantId", variant.id);
+    if (locationId !== "all") params.set("locationId", locationId);
 
     fetchJson<{ items: StockMovementRow[]; total: number }>(`/api/inventory/movements?${params.toString()}`)
       .then((data) => {
@@ -61,7 +68,7 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the ledger."));
-  }, [debouncedQ, type, range, variant, page, pageSize]);
+  }, [debouncedQ, type, range, variant, locationId, page, pageSize]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
@@ -86,6 +93,19 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
             {STOCK_MOVEMENT_TYPES.map((t) => (
               <SelectItem key={t} value={t}>
                 {STOCK_MOVEMENT_LABELS[t]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={locationId} onValueChange={(v) => updateFilter(setLocationId, v as string)}>
+          <SelectTrigger className="w-full lg:w-52">
+            <SelectValue placeholder="Location">{(value: string) => (value === "all" ? "All locations" : (locations.find((l) => l.id === value)?.name ?? "Location"))}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All locations</SelectItem>
+            {locations.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                {l.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -126,8 +146,9 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
               <TableHead>When</TableHead>
               <TableHead>Variant</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead>Location</TableHead>
               <TableHead className="text-right">Qty</TableHead>
-              <TableHead className="text-right">Stock after</TableHead>
+              <TableHead className="text-right">After (here / total)</TableHead>
               {hasCostAccess ? <TableHead className="text-right">Unit cost</TableHead> : null}
               <TableHead>Reference</TableHead>
               <TableHead>By / note</TableHead>
@@ -152,10 +173,14 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
                 <TableCell>
                   <Badge variant={m.qty > 0 ? "secondary" : m.type === "DAMAGE_OUT" ? "destructive" : "outline"}>{STOCK_MOVEMENT_LABELS[m.type]}</Badge>
                 </TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{m.location.name}</TableCell>
                 <TableCell className={`text-right font-semibold tabular-nums ${m.qty > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}>
                   {m.qty > 0 ? `+${m.qty}` : m.qty}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{m.stockAfter}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">
+                  <span className={m.locationStockAfter < 0 ? "font-semibold text-destructive" : ""}>{m.locationStockAfter}</span>
+                  <span className="text-muted-foreground"> / {m.stockAfter}</span>
+                </TableCell>
                 {hasCostAccess ? (
                   <TableCell className="text-right text-muted-foreground tabular-nums">{m.unitCostSnapshot ? formatBDT(m.unitCostSnapshot) : "—"}</TableCell>
                 ) : null}

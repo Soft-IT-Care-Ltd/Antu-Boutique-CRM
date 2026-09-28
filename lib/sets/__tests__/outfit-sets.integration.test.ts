@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { recordStockMovement } from "@/lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { toNumber } from "@/lib/money";
 import { renderInvoiceHtml } from "@/lib/orders/invoice";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
@@ -37,7 +38,7 @@ async function product(tx: Prisma.TransactionClient, opts: { name: string; price
   const variants = [];
   for (const [i, size] of sizes.entries()) {
     const v = await tx.productVariant.create({ data: { productId: p.id, sizeId: size.id, colorId: color.id, sku: testSku(code, `${size.code}${i}`), weightedAvgCost: opts.cost } });
-    if (opts.stock[i] > 0) await recordStockMovement(tx, { variantId: v.id, type: "PURCHASE_IN", qty: opts.stock[i], unitCost: opts.cost, referenceType: "OPENING_BALANCE", actorId: null });
+    if (opts.stock[i] > 0) await recordStockMovement(tx, { variantId: v.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: opts.stock[i], unitCost: opts.cost, referenceType: "OPENING_BALANCE", actorId: null });
     variants.push(v);
   }
   return { ...p, variants };
@@ -218,9 +219,13 @@ describe("outfit sets (PRD §4.2, P3.3)", () => {
         const { admin, kurti, dupatta, plazo, tissue, box, set } = await eidSet(tx);
         const bag = await product(tx, { name: "Set bag", price: 0, cost: 15, stock: [20], kind: "COMPONENT_ONLY" });
         await setPackaging(tx, admin.id, { scope: "POS_SALE" }, [{ materialVariantId: bag.variants[0].id, qty: 1 }]);
+        // C3 — the counter sells from the Shyamoli showroom's shelf.
+        for (const p of [kurti, dupatta, plazo]) {
+          await recordStockMovement(tx, { variantId: p.variants[0].id, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "PURCHASE_IN", qty: 2, unitCost: 100, referenceType: "OPENING_BALANCE", actorId: null });
+        }
         const pos = await userFor(tx, PHONES.POS);
         const cash = await tx.wallet.findFirstOrThrow({ where: { type: "CASH" } });
-        const sale = await createPosSale(tx, { user: pos, cashWalletId: cash.id, hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true }, {
+        const sale = await createPosSale(tx, { user: pos, cashWalletId: cash.id, hasCostAccess: false, canCreateCustomer: true }, {
           items: [],
           sets: [{ setId: set.id, qty: 1, unitPrice: 3000, lineDiscount: 200, choices: [kurti, dupatta, plazo].map((p) => ({ productId: p.id, variantId: p.variants[0].id })) }],
           cartDiscount: 0,

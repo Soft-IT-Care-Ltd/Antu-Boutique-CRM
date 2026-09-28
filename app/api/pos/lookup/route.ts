@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { badRequest } from "@/lib/finance/http";
 import { findVariantByCode } from "@/lib/pos/lookup";
+import { getPosLocation } from "@/lib/locations/service";
 import { prisma } from "@/lib/prisma";
 
 // A scanned price tag → its variant. The tag's barcode is the SKU exactly
@@ -16,6 +17,8 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success) return badRequest(parsed.error);
-  const variant = await findVariantByCode(prisma, parsed.data.code);
+  const showroom = await getPosLocation(prisma, guard.user).catch(() => null);
+  if (!showroom) return NextResponse.json({ error: "No POS showroom for you — ask an Admin to assign you in Settings → Locations." }, { status: 403 });
+  const variant = await findVariantByCode(prisma, parsed.data.code, showroom.id);
   return NextResponse.json(await stripCostFieldsForUser({ variant }, guard.user));
 }

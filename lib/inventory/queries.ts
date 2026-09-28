@@ -24,6 +24,8 @@ export const PURCHASE_VIEW_PERMISSIONS: PermissionKey[] = ["inventory.purchase.c
 export type MovementQuery = {
   q?: string;
   variantId?: string;
+  /** C3 — one location's rows only. */
+  locationId?: string;
   type?: StockMovementTypeValue;
   from?: Date;
   to?: Date;
@@ -34,6 +36,7 @@ export type MovementQuery = {
 export async function listStockMovements(query: MovementQuery): Promise<{ items: StockMovementRow[]; total: number }> {
   const and: Prisma.StockMovementWhereInput[] = [];
   if (query.variantId) and.push({ variantId: query.variantId });
+  if (query.locationId) and.push({ locationId: query.locationId });
   if (query.type) and.push({ type: query.type });
   if (query.from) and.push({ createdAt: { gte: query.from } });
   if (query.to) and.push({ createdAt: { lt: query.to } });
@@ -57,6 +60,7 @@ export async function listStockMovements(query: MovementQuery): Promise<{ items:
       take: query.pageSize,
       include: {
         actor: { select: { name: true } },
+        location: { select: { id: true, name: true } },
         variant: { include: { product: { select: { name: true } }, size: true, color: true } },
       },
     }),
@@ -90,6 +94,8 @@ export async function listStockMovements(query: MovementQuery): Promise<{ items:
       type: m.type,
       qty: m.qty,
       stockAfter: m.stockAfter,
+      location: m.location,
+      locationStockAfter: m.locationStockAfter,
       unitCostSnapshot: m.unitCostSnapshot.toString(),
       referenceType: m.referenceType,
       referenceId: m.referenceId,
@@ -187,7 +193,7 @@ export async function getPurchaseDetail(id: string): Promise<PurchaseDetail | nu
       createdBy: { select: { name: true } },
       items: {
         orderBy: { createdAt: "asc" },
-        include: { variant: { include: { product: { select: { name: true } }, size: true, color: true } } },
+        include: { location: { select: { id: true, name: true } }, variant: { include: { product: { select: { name: true } }, size: true, color: true } } },
       },
     },
   });
@@ -216,6 +222,7 @@ export async function getPurchaseDetail(id: string): Promise<PurchaseDetail | nu
       sizeName: i.variant.size.name,
       colorName: i.variant.color.name,
       colorHex: i.variant.color.hexCode,
+      location: i.location,
       qty: i.qty,
       unitCost: i.unitCost.toString(),
       lineCost: i.lineCost.toString(),

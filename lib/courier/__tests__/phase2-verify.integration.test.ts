@@ -22,6 +22,7 @@ import { defaultCourierPayoutWalletId, ingestCourierStatement } from "@/lib/cour
 import * as steadfast from "@/lib/courier/steadfast/client";
 import { dhakaDayStartUtc, todayInDhaka, WRITE_OFF_EXPENSE_CATEGORY_ID } from "@/lib/inventory/constants";
 import { createPurchase } from "@/lib/inventory/purchases";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { toNumber } from "@/lib/money";
 import { applyValidatedOrderEdit, OrderEditConflictError, validateOrderEdit } from "@/lib/orders/apply-edit";
 import { StaleOrderStatusError, moveOrderStatus } from "@/lib/orders/lifecycle";
@@ -126,7 +127,7 @@ describe("1. sum(stock_movements) = stock_qty through every stock event", () => 
       // Purchase 20 → PURCHASE_IN.
       await createPurchase(
         tx,
-        { supplierId: supplier.id, purchaseDate: new Date(), allocationMethod: "BY_QTY", transportCost: 0, otherCost: 0, amountPaid: 0, items: [{ variantId: variant.id, qty: 20, unitCost: 400 }] },
+        { supplierId: supplier.id, purchaseDate: new Date(), allocationMethod: "BY_QTY", transportCost: 0, otherCost: 0, amountPaid: 0, items: [{ variantId: variant.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 20, unitCost: 400 }] },
         admin.id,
       );
       await expectStock(tx, variant.id, 20);
@@ -195,7 +196,7 @@ describe("2. no path changes stock without its ledger row — or twice", () => {
       const packer = await sessionUserFor(PACKER);
       const variant = await scratchVariant(tx);
       const supplier = await tx.supplier.create({ data: { name: `Verify supplier ${uniquePhone()}` } });
-      await createPurchase(tx, { supplierId: supplier.id, purchaseDate: new Date(), allocationMethod: "BY_QTY", transportCost: 0, otherCost: 0, amountPaid: 0, items: [{ variantId: variant.id, qty: 5, unitCost: 300 }] }, admin.id);
+      await createPurchase(tx, { supplierId: supplier.id, purchaseDate: new Date(), allocationMethod: "BY_QTY", transportCost: 0, otherCost: 0, amountPaid: 0, items: [{ variantId: variant.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 5, unitCost: 300 }] }, admin.id);
       const { order } = await makePackedOrder(tx, { variantIds: [variant.id], qty: 1 });
       await expectStock(tx, variant.id, 4);
       const items = await tx.orderItem.findMany({ where: { orderId: order.id } });

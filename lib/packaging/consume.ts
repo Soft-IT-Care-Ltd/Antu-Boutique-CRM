@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { lockVariant, recordStockMovement } from "@/lib/inventory/ledger";
+import { notifyNegativeStock } from "@/lib/inventory/negative-stock";
 import { materialLabel } from "@/lib/sets/service";
 
 // ============ Packaging used (PRD §4.2 / §4.8 — P3.3) ============
@@ -24,6 +25,9 @@ import { materialLabel } from "@/lib/sets/service";
 // Packaging heading (expenses.packagingOrderId is unique). Packaging is used
 // up: cancelling or returning the order never puts it back. Running short
 // never blocks packing — stock goes negative and shows as a shortage.
+// C3: it leaves the location that packed or sold the order (the packing hub
+// for a parcel, the showroom for a counter sale); a location driven below
+// zero appears on the Negative stock screen.
 
 export const PACKAGING_USED_CATEGORY_ID = "expcat_packaging_used";
 
@@ -63,7 +67,7 @@ export async function packagingForOrder(db: Db | Prisma.TransactionClient, order
  */
 export async function consumePackaging(
   tx: Prisma.TransactionClient,
-  input: { orderId: string; orderNo: string; scope: PackagingScopeValue; actorId: string | null },
+  input: { orderId: string; orderNo: string; scope: PackagingScopeValue; locationId: string; actorId: string | null },
 ): Promise<{ lines: PackagingNeed[]; costPaisa: number }> {
   const already = await tx.stockMovement.count({ where: { type: "PACKAGING_OUT", referenceType: "ORDER", referenceId: input.orderId } });
   if (already > 0) return { lines: [], costPaisa: 0 };
@@ -76,6 +80,7 @@ export async function consumePackaging(
     if (!locked) continue;
     await recordStockMovement(tx, {
       variantId: line.materialVariantId,
+      locationId: input.locationId,
       type: "PACKAGING_OUT",
       qty: -line.qty,
       unitCost: locked.weightedAvgCost,
@@ -86,6 +91,7 @@ export async function consumePackaging(
     });
     costPaisa += toPaisa(locked.weightedAvgCost) * line.qty;
   }
+  await notifyNegativeStock(tx, { locationId: input.locationId, variantIds: lines.map((l) => l.materialVariantId) });
   if (costPaisa > 0) {
     await tx.expense.create({
       data: {

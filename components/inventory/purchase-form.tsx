@@ -15,9 +15,14 @@ import { OrderItemPicker, type PickedVariant } from "@/components/orders/order-i
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import { ALLOCATION_METHOD_LABELS, todayInDhaka } from "@/lib/inventory/constants";
 import { costPurchase, fromPaisa, toPaisa, type AllocationMethod } from "@/lib/inventory/costing";
+import { newLocalId } from "@/lib/browser/local-id";
+import type { LocationOption } from "@/lib/locations/constants";
 import { formatBDT } from "@/lib/money";
 
-type Line = PickedVariant & { qty: string; unitCost: string };
+// C3 (CORRECTIONS.md item 4): each line is received at a location (default:
+// the packing hub). The same size/colour may come in at two locations —
+// two lines — but only once per location.
+type Line = PickedVariant & { key: string; locationId: string; qty: string; unitCost: string };
 
 const num = (value: string) => (value.trim() === "" ? 0 : Number(value));
 
@@ -26,8 +31,9 @@ const num = (value: string) => (value.trim() === "" ? 0 : Number(value));
  * the server runs, so the landed costs shown are exactly what gets saved —
  * but the server recomputes everything; nothing costed here is trusted.
  */
-export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: string }[] }) {
+export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string; name: string }[]; locations: LocationOption[] }) {
   const router = useRouter();
+  const defaultLocationId = (locations.find((l) => l.isPackingHub) ?? locations[0])?.id ?? "";
   const [supplierId, setSupplierId] = useState<string>("");
   const [purchaseDate, setPurchaseDate] = useState(todayInDhaka());
   const [invoiceNo, setInvoiceNo] = useState("");
@@ -40,7 +46,9 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const linesValid = lines.length > 0 && lines.every((l) => Number.isInteger(num(l.qty)) && num(l.qty) > 0 && num(l.unitCost) >= 0);
+  const lineKeys = lines.map((l) => `${l.variantId}@${l.locationId}`);
+  const duplicateLocation = new Set(lineKeys).size !== lineKeys.length;
+  const linesValid = lines.length > 0 && !duplicateLocation && lines.every((l) => l.locationId && Number.isInteger(num(l.qty)) && num(l.qty) > 0 && num(l.unitCost) >= 0);
   const costed = useMemo(
     () =>
       costPurchase(
@@ -55,16 +63,23 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
   const overpaid = paidPaisa > costed.totalCostPaisa;
 
   function addLine(variant: PickedVariant) {
-    if (lines.some((l) => l.variantId === variant.variantId)) {
-      setError(`${variant.sku} is already on this purchase — change its quantity instead.`);
+    // Added again: the next location it isn't on yet (a split delivery).
+    const used = new Set(lines.filter((l) => l.variantId === variant.variantId).map((l) => l.locationId));
+    const locationId = [defaultLocationId, ...locations.map((l) => l.id)].find((id) => id && !used.has(id));
+    if (!locationId) {
+      setError(`${variant.sku} is already on this purchase for every location — change its quantities instead.`);
       return;
     }
     setError(null);
-    setLines((prev) => [...prev, { ...variant, qty: "1", unitCost: variant.weightedAvgCost && Number(variant.weightedAvgCost) > 0 ? variant.weightedAvgCost : "" }]);
+    const earlier = lines.find((l) => l.variantId === variant.variantId);
+    setLines((prev) => [
+      ...prev,
+      { ...variant, key: newLocalId(), locationId, qty: "1", unitCost: earlier?.unitCost ?? (variant.weightedAvgCost && Number(variant.weightedAvgCost) > 0 ? variant.weightedAvgCost : "") },
+    ]);
   }
 
-  function updateLine(variantId: string, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l) => (l.variantId === variantId ? { ...l, ...patch } : l)));
+  function updateLine(key: string, patch: Partial<Line>) {
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
   async function submit() {
@@ -82,7 +97,7 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
           otherCost: num(otherCost),
           amountPaid: num(amountPaid),
           note: note || null,
-          items: lines.map((l) => ({ variantId: l.variantId, qty: num(l.qty), unitCost: num(l.unitCost) })),
+          items: lines.map((l) => ({ variantId: l.variantId, locationId: l.locationId, qty: num(l.qty), unitCost: num(l.unitCost) })),
         }),
       });
       router.push(`/inventory/purchases/${purchase.id}`);
@@ -153,7 +168,7 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
               {lines.map((line, i) => {
                 const c = costed.lines[i];
                 return (
-                  <li key={line.variantId} className="grid gap-2 p-3 sm:grid-cols-[1fr_6rem_8rem_9rem_auto] sm:items-end">
+                  <li key={line.key} className="grid gap-2 p-3 sm:grid-cols-[1fr_11rem_6rem_8rem_9rem_auto] sm:items-end">
                     <div className="min-w-0">
                       <div className="truncate font-medium">{line.productName}</div>
                       <div className="flex items-center gap-1.5 text-sm">
@@ -166,31 +181,46 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
                       {line.weightedAvgCost ? <div className="text-xs text-muted-foreground">Current avg cost {formatBDT(line.weightedAvgCost)}</div> : null}
                     </div>
                     <div className="flex flex-col gap-1">
-                      <Label className="text-xs" htmlFor={`qty-${line.variantId}`}>
+                      <Label className="text-xs">Received at</Label>
+                      <Select value={line.locationId} onValueChange={(v) => updateLine(line.key, { locationId: v as string })}>
+                        <SelectTrigger className="w-full" aria-label={`Location for ${line.sku}`}>
+                          <SelectValue placeholder="Location">{(value: string) => locations.find((l) => l.id === value)?.name ?? "Location"}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {locations.map((l) => (
+                            <SelectItem key={l.id} value={l.id}>
+                              {l.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs" htmlFor={`qty-${line.key}`}>
                         Qty
                       </Label>
                       <Input
-                        id={`qty-${line.variantId}`}
+                        id={`qty-${line.key}`}
                         type="number"
                         inputMode="numeric"
                         min={1}
                         step={1}
                         value={line.qty}
-                        onChange={(e) => updateLine(line.variantId, { qty: e.target.value })}
+                        onChange={(e) => updateLine(line.key, { qty: e.target.value })}
                       />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <Label className="text-xs" htmlFor={`cost-${line.variantId}`}>
+                      <Label className="text-xs" htmlFor={`cost-${line.key}`}>
                         Unit cost (৳)
                       </Label>
                       <Input
-                        id={`cost-${line.variantId}`}
+                        id={`cost-${line.key}`}
                         type="number"
                         inputMode="decimal"
                         min={0}
                         step="0.01"
                         value={line.unitCost}
-                        onChange={(e) => updateLine(line.variantId, { unitCost: e.target.value })}
+                        onChange={(e) => updateLine(line.key, { unitCost: e.target.value })}
                       />
                     </div>
                     <div className="text-sm sm:text-right">
@@ -203,7 +233,7 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
                       size="icon-sm"
                       className="justify-self-end"
                       aria-label={`Remove ${line.sku}`}
-                      onClick={() => setLines((prev) => prev.filter((l) => l.variantId !== line.variantId))}
+                      onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}
                     >
                       <Trash2 />
                     </Button>
@@ -212,6 +242,7 @@ export function PurchaseForm({ suppliers }: { suppliers: { id: string; name: str
               })}
             </ul>
           )}
+          {duplicateLocation ? <p className="text-sm text-destructive">A size/colour is on two lines for the same location — combine them, or pick another location.</p> : null}
         </CardContent>
       </Card>
 

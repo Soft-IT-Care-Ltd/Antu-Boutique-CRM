@@ -69,6 +69,9 @@ export const PERMISSIONS = [
   { key: "inventory.view", group: "Inventory", label: "View stock on hand" },
   { key: "inventory.purchase.create", group: "Inventory", label: "Record purchases" },
   { key: "inventory.adjust", group: "Inventory", label: "Manual stock adjustment" },
+  // C3 (CORRECTIONS.md item 2): without it, stock actions are limited to
+  // the locations the person is assigned to (Settings → Users).
+  { key: "location.all", group: "Inventory", label: "Act for every stock location (not only assigned ones)" },
 
   // Packing
   { key: "packing.view_queue", group: "Packing", label: "View packing queue" },

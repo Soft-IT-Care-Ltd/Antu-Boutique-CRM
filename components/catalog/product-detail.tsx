@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProductForm } from "@/components/catalog/product-form";
 import { ProductImages } from "@/components/catalog/product-images";
 import { ProductPackaging } from "@/components/catalog/product-packaging";
+import { OpeningStockGrid } from "@/components/catalog/opening-stock-grid";
 import { VariantMatrix } from "@/components/catalog/variant-matrix";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
@@ -55,6 +56,18 @@ export function ProductDetail({
   const [editing, setEditing] = useState(false);
   const [trashDialogOpen, setTrashDialogOpen] = useState(false);
   const [trashError, setTrashError] = useState<string | null>(null);
+  // Bumped after opening stock is saved, so the matrix re-reads its stock.
+  const [matrixKey, setMatrixKey] = useState(0);
+
+  async function reloadVariants() {
+    try {
+      const { variants } = await fetchJson<{ variants: ProductVariant[] }>(`/api/catalog/products/${product.id}/variants`);
+      handleVariantsChange(variants);
+      setMatrixKey((k) => k + 1);
+    } catch {
+      router.refresh();
+    }
+  }
 
   function handleVariantsChange(variants: ProductVariant[]) {
     setProduct((prev) => ({
@@ -191,6 +204,7 @@ export function ProductDetail({
         </CardHeader>
         <CardContent>
           <VariantMatrix
+            key={matrixKey}
             productId={product.id}
             basePrice={product.basePrice}
             initialVariants={product.variants}
@@ -205,6 +219,9 @@ export function ProductDetail({
           />
         </CardContent>
       </Card>
+      {canGenerateVariants && hasCostView && product.variants.length > 0 ? (
+        <OpeningStockGrid productId={product.id} variantCount={product.variants.length} onSaved={() => void reloadVariants()} />
+      ) : null}
       {product.kind === "SELLABLE" ? <ProductPackaging productId={product.id} canEdit={canEdit} /> : null}
     </div>
   );

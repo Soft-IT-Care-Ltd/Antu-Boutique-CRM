@@ -7,6 +7,8 @@ import type { SessionUser } from "@/lib/auth/types";
 import { withTx, type Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { lockVariant, recordStockMovement } from "@/lib/inventory/ledger";
+import { notifyNegativeStock } from "@/lib/inventory/negative-stock";
+import { getPosLocation } from "@/lib/locations/service";
 import { formatBDT, toNumber } from "@/lib/money";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import { isTransitionAllowed, moveOrderStatus, revertOrderStatus } from "@/lib/orders/lifecycle";
@@ -639,6 +641,9 @@ export async function createCounterExchange(
   }
 
   return withTx(db, async (tx) => {
+    // C3: the counter is a showroom — the item comes back into its stock
+    // and the replacement leaves it (CORRECTIONS.md item 11 / rule 1).
+    const showroom = await getPosLocation(tx, ctx.user);
     const order = await loadOrder(tx, input.orderId);
     assertReturnable(order);
     validateLines(order, input.lines, await returnableQtyByItem(tx, order));
@@ -711,7 +716,7 @@ export async function createCounterExchange(
     await tx.returnCase.update({ where: { id: rc.id }, data: { inspectionId: inspection!.id } });
     const check = await completeConditionCheck(
       tx,
-      { inspectionId: inspection!.id, lines: input.lines.map((l) => ({ orderItemId: l.orderItemId, goodQty: l.goodQty, damagedQty: l.damagedQty })), note: "Checked at the counter" },
+      { inspectionId: inspection!.id, lines: input.lines.map((l) => ({ orderItemId: l.orderItemId, goodQty: l.goodQty, damagedQty: l.damagedQty })), note: "Checked at the counter", locationId: showroom.id },
       ctx.user.id,
     );
 
@@ -741,6 +746,7 @@ export async function createCounterExchange(
       });
       await recordStockMovement(tx, {
         variantId: p.variant.id,
+        locationId: showroom.id,
         type: "EXCHANGE_OUT",
         qty: -p.line.qty,
         unitCost: p.variant.weightedAvgCost,
@@ -754,7 +760,10 @@ export async function createCounterExchange(
       data: { orderId: replacement.id, fromStatus: null, toStatus: "COMPLETED", changedById: ctx.user.id, note: `Counter exchange for ${order.orderNo} — settled at the counter` },
     });
     // P3.3 — the replacement goes out in a bag, like any counter sale.
-    await consumePackaging(tx, { orderId: replacement.id, orderNo: replacement.orderNo, scope: "POS_SALE", actorId: ctx.user.id });
+    await consumePackaging(tx, { orderId: replacement.id, orderNo: replacement.orderNo, scope: "POS_SALE", locationId: showroom.id, actorId: ctx.user.id });
+    // The replacement was in hand; if the showroom's figure said otherwise
+    // it is now below zero and its manager hears about it.
+    await notifyNegativeStock(tx, { locationId: showroom.id, variantIds: priced.map((p) => p.variant.id) });
     await tx.returnCase.update({ where: { id: rc.id }, data: { replacementOrderId: replacement.id } });
 
     await transferExchangeCredit(tx, { caseId: rc.id, original: order, replacement, valuePaisa, actorId: ctx.user.id });

@@ -26,6 +26,11 @@ import { formatBDT } from "@/lib/money";
 // The import only adds: an existing product keeps its details and gains
 // the sheet's new sizes/colours; an existing variant only takes an opening
 // balance (if it has no history yet).
+//
+// C3 (CORRECTIONS.md item 4): a `location` column says where the row's
+// opening stock sits (blank = the packing hub). The same size/colour may
+// appear again on another row for another location — that row adds its
+// opening_qty there (at the same unit_cost); its other cells are ignored.
 
 type PlannedVariant = {
   line: number;
@@ -37,7 +42,10 @@ type PlannedVariant = {
   priceOverride: string | null;
   lowStockThreshold: number | null;
   weightGrams: number | null;
+  /** Total opening stock over every location. */
   openingQty: number;
+  /** Where it sits: one entry per location, qty > 0. */
+  openings: { locationId: string; locationName: string; qty: number }[];
   unitCost: string | null;
 };
 
@@ -85,11 +93,23 @@ export async function planProductImport(db: Prisma.TransactionClient, table: Csv
   }
   if (errors.length > 0) return { products: [], errors, warnings };
 
-  const [sizes, colors, categories] = await Promise.all([
+  const [sizes, colors, categories, locations] = await Promise.all([
     db.size.findMany({ select: { id: true, name: true, code: true, isActive: true } }),
     db.color.findMany({ select: { id: true, name: true, code: true, isActive: true } }),
     db.category.findMany({ select: { id: true, name: true, isActive: true } }),
+    db.location.findMany({ select: { id: true, name: true, isActive: true, isPackingHub: true } }),
   ]);
+  const hub = locations.find((l) => l.isPackingHub && l.isActive) ?? null;
+  const matchLocation = (raw: string): { id: string; name: string } => {
+    if (!raw.trim()) {
+      if (!hub) throw new Error("No packing hub is set — fill the location column, or set a hub in Settings → Locations");
+      return hub;
+    }
+    const hit = locations.find((l) => nameKey(l.name) === nameKey(raw) || l.id === raw.trim());
+    if (!hit) throw new Error(`location "${raw}" isn't in Settings → Locations (${locations.filter((l) => l.isActive).map((l) => l.name).join(", ")})`);
+    if (!hit.isActive) throw new Error(`location "${hit.name}" is switched off in Settings → Locations`);
+    return hit;
+  };
 
   // 1. Group rows into products: by code when given, else by name.
   type Group = { key: string; code: string | null; rows: CsvTable["rows"] };
@@ -210,16 +230,43 @@ export async function planProductImport(db: Prisma.TransactionClient, table: Csv
     };
 
     const seenPairs = new Set<string>();
+    const firstLocationOf = new Map<string, string>();
     for (const row of group.rows) {
       try {
         const size = matchMaster(sizes, row.values.size ?? "", "size");
         const color = matchMaster(colors, row.values.colour ?? "", "colour");
         const pair = `${size.id}:${color.id}`;
-        if (seenPairs.has(pair)) throw new Error(`${size.name} / ${color.name} appears twice for this product`);
+        const rowQty = readWholeNumber(row.values.opening_qty, "opening_qty", { min: 0, max: 100_000 }) ?? 0;
+        const rowLocation = matchLocation(row.values.location ?? "");
+        if (seenPairs.has(pair)) {
+          // The same size/colour again: more opening stock at another location.
+          const earlier = planned.variants.find((v) => v.sizeId === size.id && v.colorId === color.id);
+          if (!earlier) {
+            // The first row had its own error: still say a repeat for the same place is a duplicate.
+            if (rowQty === 0 || firstLocationOf.get(pair) === rowLocation.id) throw new Error(`${size.name} / ${color.name} appears twice for this product`);
+            continue;
+          }
+          if (rowQty === 0) throw new Error(`${size.name} / ${color.name} appears twice for this product — a repeated row is only for opening stock at another location`);
+          if (earlier.openings.some((o) => o.locationId === rowLocation.id)) throw new Error(`${size.name} / ${color.name} appears twice for this product at ${rowLocation.name}`);
+          const cost = readMoney(row.values.unit_cost, "unit_cost") ?? earlier.unitCost;
+          if (cost === null) throw new Error("unit_cost is required with an opening_qty — it becomes the variant's cost");
+          if (earlier.unitCost !== null && Number(cost) !== Number(earlier.unitCost)) throw new Error(`unit_cost ${cost} differs from ${earlier.unitCost} on row ${earlier.line} — one size/colour has one cost`);
+          if (earlier.existingId && earlier.openingQty === 0) {
+            const existingVariant = existing?.variants.find((v) => v.id === earlier.existingId);
+            if (existingVariant && existingVariant._count.stockMovements > 0) {
+              throw new Error(`${existingVariant.sku} already has stock history — record a purchase or a stock adjustment instead of an opening balance`);
+            }
+          }
+          earlier.unitCost = cost;
+          earlier.openingQty += rowQty;
+          earlier.openings.push({ locationId: rowLocation.id, locationName: rowLocation.name, qty: rowQty });
+          continue;
+        }
         seenPairs.add(pair);
+        firstLocationOf.set(pair, rowLocation.id);
         const priceOverride = readMoney(row.values.price_override, "price_override");
         if (kind === "COMPONENT_ONLY" && priceOverride !== null) throw new Error("Packaging material has no selling price — leave price_override blank");
-        const openingQty = readWholeNumber(row.values.opening_qty, "opening_qty", { min: 0, max: 100_000 }) ?? 0;
+        const openingQty = rowQty;
         const unitCost = readMoney(row.values.unit_cost, "unit_cost");
         if (openingQty > 0 && unitCost === null) throw new Error("unit_cost is required with an opening_qty — it becomes the variant's cost");
         const sku = (row.values.sku ?? "").toUpperCase();
@@ -241,6 +288,7 @@ export async function planProductImport(db: Prisma.TransactionClient, table: Csv
           lowStockThreshold: readWholeNumber(row.values.low_stock_threshold, "low_stock_threshold", { min: 0, max: 1000 }),
           weightGrams: readWholeNumber(row.values.weight_grams, "weight_grams", { min: 1, max: 50_000 }),
           openingQty,
+          openings: openingQty > 0 ? [{ locationId: rowLocation.id, locationName: rowLocation.name, qty: openingQty }] : [],
           unitCost,
         });
       } catch (e) {
@@ -325,7 +373,7 @@ export function summarizeProductPlan(plan: ProductPlan): { summary: ImportSummar
       const p = plan.products.find((x) => x.variants.includes(v))!;
       return {
         line: v.line,
-        text: `${v.existingId ? "" : "New "}${v.sku} — ${p.name} ${v.label}${v.openingQty > 0 ? ` · opening ${v.openingQty} @ ${formatBDT(v.unitCost ?? 0)}` : ""}`,
+        text: `${v.existingId ? "" : "New "}${v.sku} — ${p.name} ${v.label}${v.openingQty > 0 ? ` · opening ${v.openings.map((o) => `${o.qty} at ${o.locationName}`).join(", ")} @ ${formatBDT(v.unitCost ?? 0)}` : ""}`,
       };
     }),
   };
@@ -353,8 +401,8 @@ export async function applyProductPlan(tx: Prisma.TransactionClient, plan: Produ
       } else if (v.openingQty > 0) {
         await tx.productVariant.update({ where: { id: variantId }, data: { weightedAvgCost: v.unitCost! } });
       }
-      if (v.openingQty > 0) {
-        await recordStockMovement(tx, { variantId, type: "ADJUSTMENT", qty: v.openingQty, unitCost: v.unitCost!, referenceType: "OPENING_BALANCE", actorId, note: "Opening stock (import)" });
+      for (const o of v.openings) {
+        await recordStockMovement(tx, { variantId, locationId: o.locationId, type: "ADJUSTMENT", qty: o.qty, unitCost: v.unitCost!, referenceType: "OPENING_BALANCE", actorId, note: "Opening stock (import)" });
       }
     }
 
@@ -366,7 +414,7 @@ export async function applyProductPlan(tx: Prisma.TransactionClient, plan: Produ
       after: {
         code: p.code,
         name: p.name,
-        variants: p.variants.map((v) => ({ sku: v.sku, created: !v.existingId, openingQty: v.openingQty, unitCost: v.unitCost })),
+        variants: p.variants.map((v) => ({ sku: v.sku, created: !v.existingId, openingQty: v.openingQty, openings: v.openings.map((o) => ({ location: o.locationName, qty: o.qty })), unitCost: v.unitCost })),
       },
       request,
     });

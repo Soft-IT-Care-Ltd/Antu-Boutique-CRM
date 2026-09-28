@@ -47,6 +47,7 @@ export const IMPORT_COLUMNS: Record<ImportKind, ColumnDoc[]> = {
     { name: "price_override", note: "This size/colour's price if it differs from base_price." },
     { name: "opening_qty", note: "Units on the shelf on the opening day. Posted as an opening balance in the stock ledger." },
     { name: "unit_cost", note: "Cost per unit (৳) — required with opening_qty. Becomes the variant's average cost." },
+    { name: "location", note: "Where the opening stock sits (a location name from Settings → Locations). Blank = the packing hub. Repeat a size/colour on another row to put stock at a second location." },
     { name: "low_stock_threshold", note: "Blank: the Settings default." },
     { name: "weight_grams", note: "Per unit, for courier cost estimates." },
   ],

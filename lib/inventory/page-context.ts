@@ -29,7 +29,10 @@ export async function getInventoryAccess(): Promise<InventoryAccess> {
 
   const navLinks: InventoryNavLink[] = [
     { href: "/inventory", label: "Stock" },
+    // C3 (CORRECTIONS.md items 2, 11).
+    { href: "/inventory/lookup", label: "Lookup" },
     { href: "/inventory/low-stock", label: "Low stock" },
+    { href: "/inventory/negative-stock", label: "Negative stock" },
   ];
   if (canViewLedger) navLinks.push({ href: "/inventory/movements", label: "Ledger" });
   if (canViewPurchases) {

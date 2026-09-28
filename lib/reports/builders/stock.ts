@@ -5,8 +5,9 @@ import { NOT_COUNTED_AS_SALE } from "@/lib/orders/list-presets";
 import { getSetAvailabilityReport } from "@/lib/sets/service";
 import { figure, orderScope, type BuildContext, type BuiltReport } from "@/lib/reports/shared";
 
-// R4 Stock and R5 Outfit-set availability (PRD §4.15). Stock is shop-wide
-// (single location, v1): what's on the shelf now, plus what moved in the
+// R4 Stock and R5 Outfit-set availability (PRD §4.15). Totals are
+// shop-wide (the sum over locations — C3), with each variant's split by
+// location alongside: what's on the shelf now, plus what moved in the
 // period. Cost (unit cost, value at cost) is flagged costOnly and removed
 // for anyone without product.cost.view.
 
@@ -34,6 +35,8 @@ export async function buildStockReport(ctx: BuildContext): Promise<BuiltReport> 
     sku: v.sku,
     variant: `${v.sizeName} · ${v.colorName}`,
     category: v.categoryName ?? "—",
+    // C3 — where it is (only locations with a non-zero figure).
+    where: v.byLocation.map((b) => `${b.name} ${b.qty}`).join(" · ") || "—",
     // Raw SQL can hand back a BigInt (COALESCE with a bound parameter); JSON can't carry one.
     onHand: Number(v.stockQty),
     reserved: Number(v.reservedQty),
@@ -70,6 +73,7 @@ export async function buildStockReport(ctx: BuildContext): Promise<BuiltReport> 
           { key: "sku", label: "SKU" },
           { key: "variant", label: "Size · colour" },
           { key: "category", label: "Category" },
+          { key: "where", label: "By location" },
           { key: "onHand", label: "On hand", format: "int" },
           { key: "reserved", label: "Reserved", format: "int" },
           { key: "available", label: "Available", format: "int" },
@@ -102,7 +106,7 @@ export async function buildStockReport(ctx: BuildContext): Promise<BuiltReport> 
       },
     ],
     notes: [
-      "On hand, reserved and available are as of now. In / out / sold are stock movements during the period (sold = packed online orders and counter sales).",
+      "On hand, reserved and available are as of now, over every location (by location shows the split). In / out / sold are stock movements during the period (sold = packed online orders and counter sales).",
       ...(ctx.canSeeCost ? ["Value at cost = units on the shelf × weighted average cost (reserved units included — they're still ours until packed)."] : []),
     ],
   };

@@ -27,6 +27,8 @@ import { adjustStock, writeOffDamagedStock } from "@/lib/inventory/adjustments";
 import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
 import { toPaisa } from "@/lib/inventory/costing";
 import { listDueFollowUps } from "@/lib/leads/queries";
+import { recordStockMovement } from "@/lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { moveOrderStatus } from "@/lib/orders/lifecycle";
 import { orderNumberYearMonth } from "@/lib/orders/constants";
 import { prisma } from "@/lib/prisma";
@@ -266,13 +268,13 @@ describe("5. the P&L rule (PRD §4.12)", () => {
       await step("product purchase", {});
 
       // Damage and unexplained loss, each at cost.
-      const variant = await tx.productVariant.findFirstOrThrow({ where: { isActive: true, stockQty: { gte: 5 }, weightedAvgCost: { gt: 0 } } });
+      const variant = await tx.productVariant.findFirstOrThrow({ where: { isActive: true, weightedAvgCost: { gt: 0 }, locationStocks: { some: { locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: { gte: 5 } } } } });
       const cost = toPaisa(variant.weightedAvgCost);
-      await writeOffDamagedStock(tx, { variantId: variant.id, qty: 1, reason: "Verify P4 — torn" }, admin.id);
+      await writeOffDamagedStock(tx, { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 1, reason: "Verify P4 — torn" }, admin.id);
       await step("damage write-off", { opex: cost });
-      await adjustStock(tx, { variantId: variant.id, qty: -2, reason: "Verify P4 — count short" }, admin.id);
+      await adjustStock(tx, { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: -2, reason: "Verify P4 — count short" }, admin.id);
       await step("stock shortage", { opex: 2 * cost });
-      await adjustStock(tx, { variantId: variant.id, qty: 1, reason: "Verify P4 — found one" }, admin.id);
+      await adjustStock(tx, { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, qty: 1, reason: "Verify P4 — found one" }, admin.id);
       await step("stock found", { opex: -cost });
 
       // A return with one damaged unit: revenue and cost leave with the
@@ -345,11 +347,14 @@ describe("6. store credit in P&L (PRD §4.12)", () => {
       const pos = await userFor(tx, PHONES.POS);
       const customer = await tx.customer.create({ data: { name: "Verify P4 credit", phone: `0181${String(Date.now()).slice(-7)}`, createdById: pos.id } });
       await adjustStoreCredit(tx, { customerId: customer.id, amount: 5_000, reason: "Verify P4 credit to spend", actorId: admin.id });
-      const variant = await tx.productVariant.findFirstOrThrow({ where: { isActive: true, stockQty: { gte: 3 }, product: { deletedAt: null, isActive: true } }, include: { product: true } });
+      const variant = await tx.productVariant.findFirstOrThrow({ where: { isActive: true, stockQty: { gte: 3 }, product: { deletedAt: null, isActive: true, kind: "SELLABLE" } }, include: { product: true } });
+      // C3 — a counter sale takes from the Shyamoli showroom: put one on its shelf, at the variant's own cost.
+      const onShelf = (await tx.variantStock.findUnique({ where: { variantId_locationId: { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.shyamoli } } }))?.qty ?? 0;
+      if (onShelf < 1) await recordStockMovement(tx, { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "ADJUSTMENT", qty: 1 - onShelf, unitCost: variant.weightedAvgCost, referenceType: "OPENING_BALANCE", actorId: null });
       const { createPosSale } = await import("@/lib/pos/sale");
       const cash = await tx.wallet.findFirstOrThrow({ where: { type: "CASH", isActive: true } });
       const price = Number(variant.priceOverride ?? variant.product.basePrice);
-      const sale = await createPosSale(tx, { user: pos, cashWalletId: cash.id, hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true }, {
+      const sale = await createPosSale(tx, { user: pos, cashWalletId: cash.id, hasCostAccess: false, canCreateCustomer: true }, {
         items: [{ variantId: variant.id, qty: 1, unitPrice: price, lineDiscount: 0 }],
         cartDiscount: 0,
         customer: { phone: customer.phone },

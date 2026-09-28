@@ -24,6 +24,7 @@ import { StockChangeDialog, type StockChangeMode } from "@/components/inventory/
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import type { StockStatusFilter, VariantStockStatus } from "@/lib/inventory/constants";
 import type { StockReportRow, StockReportTotals } from "@/lib/inventory/types";
+import type { LocationOption } from "@/lib/locations/constants";
 import { formatBDT, formatLakh } from "@/lib/money";
 
 const STATUS_BADGE: Record<VariantStockStatus, { label: string; variant: "success" | "warning" | "destructive" }> = {
@@ -45,9 +46,13 @@ type Props = {
   hasCostAccess: boolean;
   canAdjust: boolean;
   canViewLedger: boolean;
+  /** C3 — every location, to filter by one. */
+  locations: LocationOption[];
+  /** The locations this user may adjust or write off at. */
+  actableLocations: LocationOption[];
 };
 
-export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdjust, canViewLedger }: Props) {
+export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdjust, canViewLedger, locations, actableLocations }: Props) {
   const [items, setItems] = useState<StockReportRow[] | null>(null);
   const [totals, setTotals] = useState<StockReportTotals | null>(null);
   const [total, setTotal] = useState(0);
@@ -57,6 +62,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
   const [debouncedQ, setDebouncedQ] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const [status, setStatus] = useState<StockStatusFilter>("all");
+  const [locationId, setLocationId] = useState("all");
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [dialog, setDialog] = useState<{ mode: StockChangeMode; row: StockReportRow } | null>(null);
@@ -70,6 +76,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), status });
     if (debouncedQ) params.set("q", debouncedQ);
     if (categoryId !== "all") params.set("categoryId", categoryId);
+    if (locationId !== "all") params.set("locationId", locationId);
 
     fetchJson<{ items: StockReportRow[]; total: number; totals: StockReportTotals }>(`/api/inventory/stock?${params.toString()}`)
       .then((data) => {
@@ -79,24 +86,25 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load stock."));
-  }, [debouncedQ, categoryId, status, page, pageSize, reloadKey]);
+  }, [debouncedQ, categoryId, status, locationId, page, pageSize, reloadKey]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
     pager.reset();
   }
   const showActions = canAdjust || canViewLedger;
+  const locationName = locations.find((l) => l.id === locationId)?.name ?? null;
 
   return (
     <div className="flex flex-col gap-4">
       <div className={`grid grid-cols-2 gap-2 ${hasCostAccess ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
         <SummaryTile label="Variants" value={totals ? formatLakh(totals.variants) : null} />
-        <SummaryTile label="On hand" value={totals ? formatLakh(totals.onHand) : null} />
-        <SummaryTile label="Reserved" value={totals ? formatLakh(totals.reserved) : null} />
-        <SummaryTile label="Available" value={totals ? formatLakh(totals.available) : null} />
+        <SummaryTile label={locationName ? `On hand at ${locationName}` : "On hand"} value={totals ? formatLakh(totals.atLocation ?? totals.onHand) : null} />
+        <SummaryTile label={locationName ? "Reserved (all locations)" : "Reserved"} value={totals ? formatLakh(totals.reserved) : null} />
+        <SummaryTile label={locationName ? "Available (all locations)" : "Available"} value={totals ? formatLakh(totals.available) : null} />
         {hasCostAccess ? (
           <SummaryTile
-            label="Value at cost"
+            label={locationName ? `Value at ${locationName}` : "Value at cost"}
             value={totals?.valueAtCost !== undefined ? formatBDT(totals.valueAtCost) : null}
             className="col-span-2 md:col-span-1"
           />
@@ -119,6 +127,19 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
             {categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={locationId} onValueChange={(v) => updateFilter(setLocationId, v as string)}>
+          <SelectTrigger className="w-full sm:w-52">
+            <SelectValue placeholder="Location">{(value: string) => (value === "all" ? "All locations" : (locations.find((l) => l.id === value)?.name ?? "Location"))}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All locations</SelectItem>
+            {locations.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                {l.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -157,7 +178,9 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>Variant</TableHead>
-              <TableHead className="text-right">On hand</TableHead>
+              {locationName ? <TableHead className="text-right">At {locationName}</TableHead> : null}
+              <TableHead>Where</TableHead>
+              <TableHead className="text-right">{locationName ? "Total" : "On hand"}</TableHead>
               <TableHead className="text-right">Reserved</TableHead>
               <TableHead className="text-right">Available</TableHead>
               <TableHead>Status</TableHead>
@@ -191,6 +214,22 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
                     {row.isActive ? null : <Badge variant="outline">Inactive</Badge>}
                   </span>
                   <div className="font-mono text-xs text-muted-foreground">{row.sku}</div>
+                </TableCell>
+                {locationName ? (
+                  <TableCell className={`text-right font-semibold tabular-nums ${(row.atLocation ?? 0) < 0 ? "text-destructive" : ""}`}>{row.atLocation}</TableCell>
+                ) : null}
+                <TableCell className="max-w-56">
+                  {row.byLocation.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {row.byLocation.map((b) => (
+                        <Badge key={b.locationId} variant={b.qty < 0 ? "destructive" : "outline"} className="font-normal">
+                          {b.name} <span className="font-semibold tabular-nums">{b.qty}</span>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{row.stockQty}</TableCell>
                 <TableCell className="text-right text-muted-foreground tabular-nums">{row.reservedQty}</TableCell>
@@ -226,7 +265,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
                             </DropdownMenuItem>
                           ) : null}
                           {canAdjust ? (
-                            <DropdownMenuItem variant="destructive" disabled={row.stockQty <= 0} onClick={() => setDialog({ mode: "write-off", row })}>
+                            <DropdownMenuItem variant="destructive" disabled={!row.byLocation.some((b) => b.qty > 0)} onClick={() => setDialog({ mode: "write-off", row })}>
                               <Trash2 />
                               Write off damage
                             </DropdownMenuItem>
@@ -250,6 +289,8 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
         <StockChangeDialog
           mode={dialog?.mode ?? "adjust"}
           row={dialog?.row ?? null}
+          locations={actableLocations}
+          preferredLocationId={locationId === "all" ? null : locationId}
           onOpenChange={(open) => !open && setDialog(null)}
           onDone={() => setReloadKey((k) => k + 1)}
         />

@@ -12,8 +12,10 @@ import type { PosRecentSale, PosVariantHit } from "@/lib/pos/types";
 
 // The POS finds what to sell two ways: a scanned price tag (its barcode is
 // the variant's SKU, exactly — lib/catalog/price-tags.ts) or type-ahead by
-// product name, code or SKU. Both return selling price and live available
-// stock only; cost never leaves the server from here.
+// product name, code or SKU. Both return selling price and live stock only;
+// cost never leaves the server from here. C3 (CORRECTIONS.md item 11): the
+// stock shown is what THIS showroom holds (its location), since that is
+// what a POS sale takes — not the shop-wide available figure.
 
 const sellableVariant = {
   isActive: true,
@@ -21,18 +23,18 @@ const sellableVariant = {
   product: { isActive: true, deletedAt: null, kind: "SELLABLE" },
 } satisfies Prisma.ProductVariantWhereInput;
 
-const hitSelect = {
+const hitSelect = (locationId: string) =>
+  ({
   id: true,
   sku: true,
-  stockQty: true,
-  reservedQty: true,
+  locationStocks: { where: { locationId }, select: { qty: true } },
   priceOverride: true,
   size: { select: { name: true, sortOrder: true } },
   color: { select: { name: true, hexCode: true, sortOrder: true } },
   product: { select: { id: true, name: true, code: true, basePrice: true, images: { orderBy: { sortOrder: "asc" }, take: 1, select: { thumbPath: true } } } },
-} satisfies Prisma.ProductVariantSelect;
+}) satisfies Prisma.ProductVariantSelect;
 
-type HitRow = Prisma.ProductVariantGetPayload<{ select: typeof hitSelect }>;
+type HitRow = Prisma.ProductVariantGetPayload<{ select: ReturnType<typeof hitSelect> }>;
 
 function toHit(v: HitRow): PosVariantHit {
   return {
@@ -45,7 +47,7 @@ function toHit(v: HitRow): PosVariantHit {
     colorName: v.color.name,
     colorHex: v.color.hexCode,
     price: (v.priceOverride ?? v.product.basePrice).toFixed(2),
-    available: v.stockQty - v.reservedQty,
+    available: v.locationStocks[0]?.qty ?? 0,
     thumbPath: v.product.images[0]?.thumbPath ?? null,
   };
 }
@@ -55,17 +57,17 @@ function toHit(v: HitRow): PosVariantHit {
  * SKUs are stored uppercase and barcode-safe (lib/barcode/scan.ts), and the
  * scan is normalized the same way, so a tag always finds its variant.
  */
-export async function findVariantByCode(db: Db, raw: string): Promise<PosVariantHit | null> {
+export async function findVariantByCode(db: Db, raw: string, locationId: string): Promise<PosVariantHit | null> {
   const code = normalizeScannedCode(raw);
   if (!code) return null;
-  const rows = await db.productVariant.findMany({ where: { ...sellableVariant, sku: { equals: code, mode: "insensitive" } }, select: hitSelect, take: 2 });
+  const rows = await db.productVariant.findMany({ where: { ...sellableVariant, sku: { equals: code, mode: "insensitive" } }, select: hitSelect(locationId), take: 2 });
   // A legacy SKU could differ from another only by case; prefer the exact one.
   const row = rows.find((r) => r.sku === code) ?? rows[0];
   return row ? toHit(row) : null;
 }
 
 /** Type-ahead: every sellable size/colour of the products matching a name, code or SKU. */
-export async function searchSellableVariants(db: Db, q: string, limit = 24): Promise<PosVariantHit[]> {
+export async function searchSellableVariants(db: Db, q: string, locationId: string, limit = 24): Promise<PosVariantHit[]> {
   const term = q.trim();
   const rows = await db.productVariant.findMany({
     where: {
@@ -76,7 +78,7 @@ export async function searchSellableVariants(db: Db, q: string, limit = 24): Pro
         { product: { code: { contains: term, mode: "insensitive" } } },
       ],
     },
-    select: hitSelect,
+    select: hitSelect(locationId),
     orderBy: [{ product: { name: "asc" } }, { size: { sortOrder: "asc" } }, { color: { sortOrder: "asc" } }],
     take: limit,
   });

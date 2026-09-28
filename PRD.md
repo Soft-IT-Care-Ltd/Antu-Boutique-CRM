@@ -124,12 +124,27 @@ It must run the whole business in one place: lead → order → stock → packin
 
 ### 4.3 Inventory
 
-- **Purchase entry:** supplier, date, invoice no., per-variant qty and unit cost, transport/other cost allocation, payment made/due.
-- **Weighted average cost** recalculated on every purchase: `new_wac = (old_qty × old_wac + in_qty × in_cost) ÷ (old_qty + in_qty)`.
-- **`stock_movements` ledger is immutable and append-only.** Types: `PURCHASE_IN`, `SALE_OUT`, `RETURN_IN`, `EXCHANGE_OUT`, `EXCHANGE_IN`, `DAMAGE_OUT`, `ADJUSTMENT`, `POS_SALE_OUT`, `PACKAGING_OUT` (P3.3: packaging used at packing or at the counter). Every row: variant, qty (+/−), reference type/id, unit cost snapshot, actor, timestamp, note.
-- **Stock and its ledger row are written in one database transaction.** Never one without the other.
-- Manual stock adjustment requires a reason and is Admin/Manager only.
-- Damage/write-off posts `DAMAGE_OUT` and an expense line at cost.
+- **Stock is held per location** (CORRECTIONS.md item 2, C3): per *(variant, location)*; a variant's total stock is the sum over its locations (+ in transit, C4).
+- **Purchase entry:** supplier, date, invoice no., per-variant qty and unit cost **and the location each line is received at** (default: the packing hub), transport/other cost allocation, payment made/due.
+- **Weighted average cost** recalculated on every purchase: `new_wac = (old_qty × old_wac + in_qty × in_cost) ÷ (old_qty + in_qty)` — one cost per variant, over all locations.
+- **`stock_movements` ledger is immutable and append-only.** Types: `PURCHASE_IN`, `SALE_OUT`, `RETURN_IN`, `EXCHANGE_OUT`, `EXCHANGE_IN`, `DAMAGE_OUT`, `ADJUSTMENT`, `POS_SALE_OUT`, `PACKAGING_OUT` (P3.3: packaging used at packing or at the counter). Every row: variant, **location**, qty (+/−), reference type/id, unit cost snapshot, actor, timestamp, note.
+- **Stock and its ledger row are written in one database transaction.** Never one without the other. For each variant at each location, stock = the sum of that location's ledger rows.
+- Manual stock adjustment requires a reason and is Admin/Manager (or that location's manager) only; it happens at one location.
+- Damage/write-off posts `DAMAGE_OUT` at one location and an expense line at cost.
+
+#### Decisions made during build (C3 — locations and per-location stock)
+
+- **Locations** (`locations`, Settings → Locations, `settings.manage`): name, type (Warehouse / Shop / Sales corner / Studio), address, **packing hub** (exactly one — a partial unique index allows only one, and the hub can't be switched off or un-set, only moved to another location), **has POS**, active. Started with Mohammadpur Warehouse (packing hub), Shyamoli Showroom (the only POS), Parlour Sales Corner and Studio (fixed ids `loc_*`, created by the migration so the base seed has them too). Switched off, never deleted; a location still holding stock can't be switched off. Every change is audited, managers included.
+- **Storage.** `variant_stocks (variantId, locationId, qty)` holds each location's stock; `product_variants.stockQty` stays as the **total** (the sum), so everything that works on total stock — online reservations, low-stock alerts, outfit-set availability, catalog badges — reads it unchanged (CORRECTIONS "Changes to existing rules" 8). `stock_movements` carries `locationId` and `locationStockAfter` (the location's running balance) next to `stockAfter` (the total's). `recordStockMovement` (`lib/inventory/ledger.ts`) is still the only writer: it moves the variant's total, that location's row and the ledger in one transaction.
+- **The database enforces it.** Besides the existing per-variant trigger (total = sum of all its rows), a deferred constraint trigger checks at COMMIT that each `variant_stocks` row equals the sum of its location's ledger rows — so stock moved between locations by hand, or a row booked to the wrong location, can't commit. `variant_stocks` rows are never deleted or re-pointed (trigger). The Inventory screen's ledger check covers every variant at every location.
+- **Existing stock** (everything before C3) was booked to Mohammadpur Warehouse: the migration filled `locationId` on every existing ledger row (the append-only trigger lifted for that one statement — quantities, costs and references untouched) and built `variant_stocks` from the ledger, so the invariant held from the first commit.
+- **Where each movement happens.** Packing (`SALE_OUT` / `EXCHANGE_OUT`) deducts from the **packing hub**, and is refused when the hub doesn't hold every unit — the message names where the stock is (transfers to the hub arrive in C4). Cancelling after packing restocks where it was packed from. Courier returns and online exchanges are restocked (or written off) at the hub; a counter exchange takes the item back into, and the replacement out of, the POS showroom. Parcel packaging leaves the hub, counter packaging the showroom. Purchases, adjustments and write-offs name their location; an adjustment or write-off can't take that location below zero (whatever the others hold), but adding to a negative location is how it's put right.
+- **Reservations stay against total stock** (item 2): reserving and releasing never name a location.
+- **Location managers** (`user_locations`, set on Settings → Locations): they act — adjustments, write-offs, purchases received, opening stock, and (C4) transfers and counts — only for their locations. `location.all` (Admin and Manager templates) acts for every location. **Seeing stock is not scoped**: the stock lookup shows every location to anyone with `inventory.view`, so an SE can tell a customer where a dress is.
+- **Opening stock per location** (item 4): the product page's **Opening stock by location** grid lists the sizes/colours that have never held stock — one column per location the user acts for, plus a unit cost per row. Saving posts one `ADJUSTMENT` / `OPENING_BALANCE` row per location in one transaction (audited as `product.opening_stock`), and the cost becomes the variant's average cost; no expense. Needs `product.create` + `product.cost.view`. After that, stock comes in by purchase. The CSV import gains a `location` column (blank = the hub); a size/colour may repeat on another row for a second location.
+- **Stock lookup** (`/inventory/lookup`, item 2): type or scan a SKU (a scanner's exact SKU comes back alone), or search a name → every location's quantity, in transit (0 until C4), total, reserved and available. Cost-free; built for a phone.
+- **Stock screens.** The stock report shows each variant's split by location and filters by location (on hand and value at cost then that location's; reserved and available stay shop-wide). The ledger shows and filters by location, with the location's and the total's balance after each row. The R4 stock report has a *By location* column. Purchase detail shows where each line was received.
+- **Negative stock** (item 11): see §4.7. `/inventory/negative-stock` lists every (variant, location) below zero — a location manager sees their own locations, `location.all` sees all — and a `NEGATIVE_STOCK` in-app alert goes to that location's managers and everyone with `location.all` (once per variant, location and day).
 
 ### 4.4 Customers
 
@@ -207,6 +222,11 @@ plus `ON_HOLD`, `CANCELLED`, `RETURNED`, `REFUNDED`, `EXCHANGE_REQUESTED`, and `
 - Stock deducts **immediately** on sale (no `CONFIRMED` reservation step); status goes straight to `COMPLETED`.
 - Prints/skips an invoice; posts to the same payments, wallets and P&L tables as online orders.
 - Daily showroom cash drawer: opening balance, cash sales, cash out, closing balance, with a cash-reconciliation screen at day end.
+
+#### Decisions made during build (C3 — the POS sells from its showroom's stock)
+
+- **A POS sale deducts from its showroom's location** (CORRECTIONS.md item 11; the POS location is the active location with *has POS* — the one the user is assigned to, or the only one). Search and scan show what **that showroom** holds, not shop-wide availability.
+- **Selling with no stock showing** (replacing invariant 7 at the POS): if the cart holds more than the showroom shows, the operator sees a warning on the line and, on completing, a confirmation listing each short item; confirming ("it's in hand") completes the sale. No manager permission is needed. The showroom's stock goes negative, the line is marked as a stock override with the reason "Sold with N showing at … — stock went negative", the sale's audit row lists the shortages, and the location's managers and `location.all` holders get a **Negative stock** alert. The same applies to a counter exchange's replacement. Reservations for online orders are not the POS's to protect any more — fulfilment (C5) sorts out an online order whose unit was sold at the counter.
 
 #### Decisions made during build (P3.1 — POS, cash drawer, price tags)
 
@@ -468,7 +488,7 @@ All reports: date-range filter, plus filters for SE / team / status / channel / 
 
 ### 4.17 Settings (Admin only)
 
-Business profile (name, logo, address, phone, invoice footer) · Store credit expiry (optional, off by default — P3.2) · Size master · Colour master · Category master · Courier companies and zone charges · Payment methods and wallets · Order edit-window minutes · Low-stock default threshold · Office hours and late rule · Ad-cost allocation method · Target and reward rules · Roles and permissions · Users · Steadfast API credentials and webhook URL · Backup status.
+Business profile (name, logo, address, phone, invoice footer) · Stock locations, the packing hub, the POS showroom and each location's managers (C3) · Store credit expiry (optional, off by default — P3.2) · Size master · Colour master · Category master · Courier companies and zone charges · Payment methods and wallets · Order edit-window minutes · Low-stock default threshold · Office hours and late rule · Ad-cost allocation method · Target and reward rules · Roles and permissions · Users · Steadfast API credentials and webhook URL · Backup status.
 
 #### Decisions made during build (P5.2 — settings and go-live data)
 
@@ -482,7 +502,7 @@ Business profile (name, logo, address, phone, invoice footer) · Store credit ex
 - **Roles & permissions**: each role's template is edited in the database, which is what every request reads, one role at a time with a *starting template* reset. Per-person overrides (grant / take away, with a reason) sit on each person. All audited (`role.permissions_update`, `user.permission_overrides`). **The seed no longer resets role permissions**: a role gets its full template only when the seed creates it; an existing role only gains template keys for permissions that run added (`SEED_RESET_ROLE_PERMISSIONS=1` restores every template — dev only). The seed also stops overwriting courier zone charges.
 - **Go-live database**: `npm run db:seed:base` seeds only permissions and roles, the size/colour/category masters, the Steadfast courier, wallets, default settings and the first Admin (`SEED_ADMIN_NAME`, `SEED_ADMIN_PHONE`, `SEED_ADMIN_PASSWORD`, optional `SEED_ADMIN_EMAIL`; must change the password at first sign-in). No demo people, customers, stock or money.
 - **Import opening data** (Settings → Import, `lib/import/*`): CSV (UTF-8, Excel's BOM, quoted commas and line breaks; Bangla digits, ৳ and lakh commas in numbers; dates YYYY-MM-DD or day-first DD/MM/YYYY, never month-first; lists inside a cell separated by `;`). Each sheet has a downloadable template. **Check** plans the whole sheet and lists every problem by row; **Import** plans it again inside one transaction and writes only if nothing is wrong — all or nothing, audited. Needs `settings.manage` plus: products `product.create` + `product.cost.view`; customers `customer.create`; wallets `wallet.manage`.
-  - **Products**: one row per size/colour; rows with the same code (or, without one, the same name) are one product, and product-level cells must agree. Size, colour and category must already be in the masters (matched by name or code, case-insensitive) — never created from a typo. A new product without a code gets the first suggested code whose SKUs are free; a typed SKU or code that clashes is an error. **Opening stock** = one `ADJUSTMENT` / `OPENING_BALANCE` ledger row at the sheet's unit cost (required with a quantity), written with the stock change; that cost becomes the variant's weighted average cost; no expense. A variant with any stock history can't take an opening balance (use a purchase or adjustment). An existing product keeps its details and only gains new sizes/colours and opening stock.
+  - **Products**: one row per size/colour; rows with the same code (or, without one, the same name) are one product, and product-level cells must agree. Size, colour and category must already be in the masters (matched by name or code, case-insensitive) — never created from a typo. A new product without a code gets the first suggested code whose SKUs are free; a typed SKU or code that clashes is an error. **Opening stock** = one `ADJUSTMENT` / `OPENING_BALANCE` ledger row at the sheet's unit cost (required with a quantity), at the row's `location` (blank = the packing hub; C3 — a size/colour may repeat on another row for a second location), written with the stock change; that cost becomes the variant's weighted average cost; no expense. A variant with any stock history can't take an opening balance (use a purchase or adjustment). An existing product keeps its details and only gains new sizes/colours and opening stock.
   - **Customers**: one person per phone. A phone already in the system (trash included) is skipped, never overwritten, so a fixed sheet can be re-run. `owner_phone` makes a staff member the owner (their team copied), which is what lets a Sales Executive see their existing customers; blank = the importer.
   - **Wallets**: a name matching a wallet updates its opening balance, date, type (only if it has no payments) and account through the same audited service as the Wallets screen; a new name adds a wallet. Opening dates can't be in the future.
 
@@ -504,7 +524,7 @@ Business profile (name, logo, address, phone, invoice footer) · Store credit ex
 
 **LEADS** — `leads`, `lead_followups`, `lead_daily_counts`
 
-**CATALOG & STOCK** — `categories`, `products`, `product_images`, `product_variants`, `sizes`, `colors`, `outfit_sets`, `outfit_set_items`, `suppliers`, `purchases`, `purchase_items`, `stock_movements`
+**CATALOG & STOCK** — `categories`, `products`, `product_images`, `product_variants`, `sizes`, `colors`, `outfit_sets`, `outfit_set_items`, `suppliers`, `purchases`, `purchase_items`, `stock_movements`, `locations`, `variant_stocks`, `user_locations` (C3)
 
 **CUSTOMERS & ORDERS** — `customers`, `orders`, `order_items`, **`order_images`**, `order_status_history`, `order_edit_requests`, `invoices`
 
@@ -540,12 +560,12 @@ Business profile (name, logo, address, phone, invoice footer) · Store credit ex
 These are the rules a reviewer should check on every pull request:
 
 1. `order.due_amount` is **always** recomputed from `total − sum(payments)`. Never accepted from the client.
-2. A stock change and its `stock_movements` row are written **in the same transaction**. No exceptions.
+2. A stock change and its `stock_movements` row are written **in the same transaction**. No exceptions. Stock is held per location (C3): **for each variant at each location, stock = the sum of that location's ledger rows**, and a variant's total stock is the sum of its locations (+ in transit, C4). The database refuses any commit that breaks either.
 3. `unit_cost_snapshot` is frozen on the order item **at `PACKED`** and never changes afterwards — historical profit must not move when today's purchase price changes.
 4. `payments.transaction_id` is **globally unique** (where not null).
 5. Cost, profit, margin and purchase price are **stripped server-side** for roles without `product.cost.view`.
 6. List queries are **scoped server-side** by role (SE → own, TL → team). The client cannot widen the scope.
-7. Selling below available stock is blocked, except by an Admin/Manager override that records a reason.
+7. Selling below available stock is blocked on the **online order form** (and edits), except by an Admin/Manager override that records a reason — until C5, when online orders may be taken with no stock and those lines become backorders (CORRECTIONS "Changes to existing rules" 2). **At the POS** (C3), an item the showroom shows as 0 may be sold after the operator confirms it is in hand: that location goes negative and appears on the Negative stock alert for its manager.
 8. An approved order edit **regenerates the invoice as a new version**; old versions are retained.
 9. Every sensitive mutation writes an `audit_logs` row.
 10. Reference images are never a reason to block or delay an order — the field is **optional** everywhere.

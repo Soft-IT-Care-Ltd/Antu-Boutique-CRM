@@ -23,12 +23,13 @@ import { sessionUserFor, uniquePhone } from "@/lib/courier/__tests__/helpers";
 import { getDayAllocation } from "@/lib/expenses/ad-allocation";
 import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
 import { findStockLedgerDivergences, recordStockMovement } from "@/lib/inventory/ledger";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { toNumber } from "@/lib/money";
 import { CASH_OVER_SHORT_CATEGORY_ID } from "@/lib/pos/constants";
 import { closeDrawer, DrawerError, getDrawerSummary, openDrawer, recordDrawerMovement } from "@/lib/pos/drawer";
 import { findVariantByCode } from "@/lib/pos/lookup";
 import { loadReceiptOrder, renderReceiptHtml } from "@/lib/pos/receipt";
-import { createPosSale, PosSaleError, type PosContext } from "@/lib/pos/sale";
+import { createPosSale, NegativeStockConfirmError, PosSaleError, type PosContext } from "@/lib/pos/sale";
 import { testProductCode, testSku } from "@/lib/test/catalog-codes";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
 import { getWalletBalances } from "@/lib/wallets/ledger";
@@ -77,7 +78,8 @@ async function freshVariant(tx: Prisma.TransactionClient, opts: { stock?: number
   const product = await tx.product.create({ data: { code, name: `POS test ${code}`, basePrice: opts.price ?? 1000 } });
   const variant = await tx.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: opts.sku ?? testSku(code), weightedAvgCost: opts.wac ?? 400 } });
   if ((opts.stock ?? 10) > 0) {
-    await recordStockMovement(tx, { variantId: variant.id, type: "PURCHASE_IN", qty: opts.stock ?? 10, unitCost: opts.wac ?? 400, referenceType: "OPENING_BALANCE", actorId: null });
+    // C3 — the POS sells from the Shyamoli showroom's stock.
+    await recordStockMovement(tx, { variantId: variant.id, locationId: SEEDED_LOCATION_IDS.shyamoli, type: "PURCHASE_IN", qty: opts.stock ?? 10, unitCost: opts.wac ?? 400, referenceType: "OPENING_BALANCE", actorId: null });
   }
   return variant;
 }
@@ -90,7 +92,7 @@ async function freshCashWallet(tx: Prisma.TransactionClient, opening = 2000) {
 const balance = async (tx: Prisma.TransactionClient, walletId: string) => toNumber((await getWalletBalances(tx, { walletId }))[0].balance);
 
 async function posContext(walletId: string, phone = POS, extra: Partial<PosContext> = {}): Promise<PosContext> {
-  return { user: await sessionUserFor(phone), cashWalletId: walletId, hasCostAccess: false, hasStockOverride: false, canCreateCustomer: true, ...extra };
+  return { user: await sessionUserFor(phone), cashWalletId: walletId, hasCostAccess: false, canCreateCustomer: true, ...extra };
 }
 
 describe("a showroom day: open, sell, cash out, count and close", () => {
@@ -245,15 +247,21 @@ describe("POS sale guards", () => {
       // POS operator can't see cost, so can't unknowingly sell below it.
       await expect(createPosSale(tx, ctx, { items: [{ ...line, unitPrice: 350 }], cartDiscount: 0, tenders: [{ method: "CARD", amount: 350 }] })).rejects.toThrow(/below the minimum/);
 
-      // Reserved units belong to online orders.
-      await tx.productVariant.update({ where: { id: variant.id }, data: { reservedQty: 2 } });
-      await expect(createPosSale(tx, ctx, { items: [{ ...line, qty: 2 }], cartDiscount: 0, tenders: [{ method: "CARD", amount: 2000 }] })).rejects.toThrow(/Only 1/);
-      // A Manager may, with a reason (PRD §6 rule 7).
-      const manager = await posContext(cash.id, MANAGER, { hasStockOverride: true, hasCostAccess: true });
-      await expect(createPosSale(tx, manager, { items: [{ ...line, qty: 2 }], cartDiscount: 0, tenders: [{ method: "CARD", amount: 2000 }] })).rejects.toThrow(/reason/);
-      const sale = await createPosSale(tx, manager, { items: [{ ...line, qty: 2, stockOverrideReason: "Two on the rack, count was wrong" }], cartDiscount: 0, tenders: [{ method: "CARD", amount: 2000 }] });
+      // C3 (CORRECTIONS.md item 11): more than the showroom shows is sold
+      // only once the operator confirms the item is in hand…
+      const thin = await freshVariant(tx, { stock: 1, wac: 400, price: 1000 });
+      const thinSale = { items: [{ ...line, variantId: thin.id, qty: 2 }], cartDiscount: 0, tenders: [{ method: "CARD" as const, amount: 2000 }] };
+      await expect(createPosSale(tx, ctx, thinSale)).rejects.toBeInstanceOf(NegativeStockConfirmError);
+      // …then the showroom goes negative, the line says so, and the people
+      // who manage Shyamoli (its incharge, and Admin/Manager) are alerted.
+      const sale = await createPosSale(tx, ctx, { ...thinSale, acknowledgeNegativeStock: true });
       const item = await tx.orderItem.findFirstOrThrow({ where: { orderId: sale.orderId } });
-      expect(item).toMatchObject({ stockOverride: true, stockOverrideReason: "Two on the rack, count was wrong" });
+      expect(item.stockOverride).toBe(true);
+      expect(item.stockOverrideReason).toMatch(/went negative/);
+      expect((await tx.variantStock.findUniqueOrThrow({ where: { variantId_locationId: { variantId: thin.id, locationId: SEEDED_LOCATION_IDS.shyamoli } } })).qty).toBe(-1);
+      const alerted = await tx.notification.findMany({ where: { kind: "NEGATIVE_STOCK", dedupeKey: { contains: thin.id } }, select: { user: { select: { phone: true } } } });
+      expect(alerted.map((n) => n.user.phone)).toEqual(expect.arrayContaining([POS, MANAGER]));
+      expect(await findStockLedgerDivergences(tx)).toEqual([]);
 
       // A reused TrxID is refused by the database (CLAUDE.md rule 4).
       // (That sale took the last pieces — the next one needs fresh stock.)
@@ -298,10 +306,10 @@ describe("price tags ↔ POS scan", () => {
       expect(variants.length).toBeGreaterThan(0);
       for (const v of variants) {
         const scanned = decodeCode128Widths(code128Widths(v.sku));
-        expect((await findVariantByCode(tx, `${scanned}\r\n`))?.variantId).toBe(v.id);
-        expect((await findVariantByCode(tx, scanned.toLowerCase()))?.variantId).toBe(v.id);
+        expect((await findVariantByCode(tx, `${scanned}\r\n`, SEEDED_LOCATION_IDS.shyamoli))?.variantId).toBe(v.id);
+        expect((await findVariantByCode(tx, scanned.toLowerCase(), SEEDED_LOCATION_IDS.shyamoli))?.variantId).toBe(v.id);
       }
-      expect(await findVariantByCode(tx, "PRD-NOPE-XX")).toBeNull();
+      expect(await findVariantByCode(tx, "PRD-NOPE-XX", SEEDED_LOCATION_IDS.shyamoli)).toBeNull();
     });
   }, 120_000);
 

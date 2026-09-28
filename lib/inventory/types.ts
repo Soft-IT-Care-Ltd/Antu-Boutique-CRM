@@ -21,6 +21,10 @@ export type StockReportRow = {
   available: number;
   threshold: number;
   status: VariantStockStatus;
+  /** C3 — where it is: every location holding a non-zero figure. */
+  byLocation: { locationId: string; name: string; qty: number }[];
+  /** C3 — on hand at the location the report is filtered to (null = not filtered). */
+  atLocation: number | null;
   weightedAvgCost?: string;
   valueAtCost?: string;
 };
@@ -30,6 +34,8 @@ export type StockReportTotals = {
   onHand: number;
   reserved: number;
   available: number;
+  /** C3 — on hand at the filtered location (null = not filtered). */
+  atLocation: number | null;
   valueAtCost?: string;
 };
 
@@ -46,7 +52,11 @@ export type StockMovementRow = {
   createdAt: string;
   type: StockMovementTypeValue;
   qty: number;
+  /** The variant's total stock after this row. */
   stockAfter: number;
+  /** C3 — where it moved, and that location's stock after it. */
+  location: { id: string; name: string };
+  locationStockAfter: number;
   unitCostSnapshot?: string;
   referenceType: string;
   referenceId: string | null;
@@ -91,6 +101,8 @@ export type PurchaseDetailItem = {
   sizeName: string;
   colorName: string;
   colorHex: string;
+  /** C3 — where this line was received. */
+  location: { id: string; name: string };
   qty: number;
   unitCost: string;
   lineCost: string;
@@ -120,3 +132,24 @@ export type PurchaseDetail = {
 };
 
 export type InventoryNavLink = { href: string; label: string };
+
+/** C3 (CORRECTIONS.md item 2) — one variant on the stock lookup. Never carries cost. */
+export type StockLookupItem = {
+  variantId: string;
+  productId: string;
+  productName: string;
+  productCode: string;
+  isPackaging: boolean;
+  sku: string;
+  sizeName: string;
+  colorName: string;
+  colorHex: string;
+  isActive: boolean;
+  price: string | null;
+  thumbPath: string | null;
+  locations: { locationId: string; name: string; type: string; isPackingHub: boolean; hasPos: boolean; qty: number }[];
+  inTransit: number;
+  total: number;
+  reserved: number;
+  available: number;
+};

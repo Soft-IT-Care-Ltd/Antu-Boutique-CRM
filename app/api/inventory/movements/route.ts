@@ -12,6 +12,7 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-M
 const querySchema = z.object({
   q: z.string().trim().max(100).optional(),
   variantId: z.string().trim().max(50).optional(),
+  locationId: z.string().trim().max(50).optional(),
   type: z.enum(STOCK_MOVEMENT_TYPES).optional(),
   from: dateString.optional(),
   to: dateString.optional(),
@@ -26,12 +27,13 @@ export async function GET(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
-  const { from, to, q, variantId, ...rest } = parsed.data;
+  const { from, to, q, variantId, locationId, ...rest } = parsed.data;
 
   const result = await listStockMovements({
     ...rest,
     q: q || undefined,
     variantId: variantId || undefined,
+    locationId: locationId || undefined,
     from: from ? dhakaDayStartUtc(from) : undefined,
     to: to ? dhakaDayStartUtc(to, 1) : undefined,
   });

@@ -7,7 +7,9 @@ import type { SessionUser } from "@/lib/auth/types";
 import { isValidBdPhone, normalizeBdPhone } from "@/lib/customers/phone";
 import { withTx, type Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
-import { lockVariant, recordStockMovement } from "@/lib/inventory/ledger";
+import { lockVariantAt, recordStockMovement } from "@/lib/inventory/ledger";
+import { notifyNegativeStock } from "@/lib/inventory/negative-stock";
+import { getPosLocation } from "@/lib/locations/service";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { generateOrderNumber } from "@/lib/orders/order-number";
 import { isPriceBelowFloor } from "@/lib/orders/price-floor";
@@ -49,7 +51,24 @@ export class PosSaleError extends Error {
   }
 }
 
-export type PosSaleItemInput = { variantId: string; qty: number; unitPrice: number; lineDiscount: number; stockOverrideReason?: string | null };
+/**
+ * C3 (CORRECTIONS.md item 11): the cart would take the showroom's stock of
+ * these below zero. The operator confirms (the dress is in hand) and sends
+ * the sale again with acknowledgeNegativeStock.
+ */
+export class NegativeStockConfirmError extends Error {
+  readonly status = 409;
+  constructor(
+    readonly locationName: string,
+    readonly shortages: { variantId: string; sku: string; label: string; wanted: number; atLocation: number }[],
+  ) {
+    super(
+      `${shortages.map((s) => `${s.sku} shows ${Math.max(0, s.atLocation)} at ${locationName} (${s.wanted} in the cart)`).join("; ")}. If the item is in hand, confirm to sell anyway — ${locationName}'s stock will go negative and its manager will be alerted.`,
+    );
+  }
+}
+
+export type PosSaleItemInput = { variantId: string; qty: number; unitPrice: number; lineDiscount: number };
 
 export type PosTenderInput = { method: PosTenderMethod; amount: number; tendered?: number | null; walletId?: string | null; transactionId?: string | null };
 
@@ -61,6 +80,8 @@ export type PosSaleInput = {
   customer?: { phone: string; name?: string | null } | null;
   tenders: PosTenderInput[];
   note?: string | null;
+  /** C3 — the operator saw the negative-stock warning and sells anyway (item 11). */
+  acknowledgeNegativeStock?: boolean;
 };
 
 export type PosContext = {
@@ -68,7 +89,6 @@ export type PosContext = {
   /** The showroom drawer's wallet (lib/pos/drawer.ts getPosCashWalletId). */
   cashWalletId: string;
   hasCostAccess: boolean;
-  hasStockOverride: boolean;
   canCreateCustomer: boolean;
 };
 
@@ -147,17 +167,23 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       return { ...set, unitPrice: line.unitPricePaisa / 100, lineDiscount: line.discountPaisa / 100 };
     });
     const resolvedSets = await resolveSetLines(tx, pricedSets, { hasCostAccess: ctx.hasCostAccess });
-    const setChildren = resolvedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason })));
+    const setChildren = resolvedSets.flatMap((s) => s.children);
+
+    // C3 — the sale leaves this showroom's stock (CORRECTIONS.md item 11).
+    const showroom = await getPosLocation(tx, ctx.user);
 
     // Lock every variant (in id order, so two tills can't deadlock) before
     // reading stock and cost — nothing can move them between check and write.
     const variantIds = [...new Set([...input.items.map((i) => i.variantId), ...setChildren.map((c) => c.variantId)])].sort();
+    const atShowroom = new Map<string, number>();
     for (const id of variantIds) {
-      if (!(await lockVariant(tx, id))) throw new PosSaleError("One of the items is no longer in the catalog.");
+      const locked = await lockVariantAt(tx, id, showroom.id);
+      if (!locked) throw new PosSaleError("One of the items is no longer in the catalog.");
+      atShowroom.set(id, locked.locationQty);
     }
     const variants = await tx.productVariant.findMany({
       where: { id: { in: variantIds } },
-      select: { id: true, sku: true, stockQty: true, reservedQty: true, weightedAvgCost: true, isActive: true, product: { select: { name: true, isActive: true, deletedAt: true, kind: true } } },
+      select: { id: true, sku: true, weightedAvgCost: true, isActive: true, size: { select: { name: true } }, color: { select: { name: true } }, product: { select: { name: true, isActive: true, deletedAt: true, kind: true } } },
     });
     const variantById = new Map(variants.map((v) => [v.id, v]));
 
@@ -165,6 +191,7 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     for (const item of [...input.items, ...setChildren]) wanted.set(item.variantId, (wanted.get(item.variantId) ?? 0) + item.qty);
 
     const overrideByVariant = new Map<string, string>();
+    const shortages: NegativeStockConfirmError["shortages"] = [];
     for (const item of [...input.items, ...setChildren]) {
       const v = variantById.get(item.variantId);
       // Packaging material (P3.3) is never sold on its own.
@@ -173,17 +200,19 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       if (!("productId" in item) && isPriceBelowFloor(item.unitPrice, toNumber(v.weightedAvgCost), ctx.hasCostAccess)) {
         throw new PosSaleError(`The price for ${v.sku} is below the minimum allowed. Raise it, or ask a Manager/Admin.`);
       }
-      // PRD §6 rule 7: selling below available stock needs an Admin/Manager
-      // override with a reason. Reserved units belong to online orders.
-      const available = v.stockQty - v.reservedQty;
+      // C3 (CORRECTIONS.md item 11, replacing PRD §6 rule 7 at the POS):
+      // what counts is the showroom's own stock. More in the cart than it
+      // shows is allowed — the dress is in hand — once the operator has
+      // confirmed the warning; the location then goes negative and its
+      // manager is alerted. Recorded on the line as a stock override.
       const qty = wanted.get(v.id)!;
-      if (qty > available) {
-        const reason = item.stockOverrideReason?.trim();
-        if (!ctx.hasStockOverride) throw new PosSaleError(`Only ${Math.max(0, available)} of ${v.sku} available (${qty} in the cart). Ask a Manager to check the stock.`);
-        if (!reason && !overrideByVariant.has(v.id)) throw new PosSaleError(`A reason is required to sell ${v.sku} beyond available stock.`);
-        if (reason) overrideByVariant.set(v.id, reason);
+      const here = atShowroom.get(v.id) ?? 0;
+      if (qty > here && !overrideByVariant.has(v.id)) {
+        shortages.push({ variantId: v.id, sku: v.sku, label: `${v.product.name} (${v.size.name} / ${v.color.name})`, wanted: qty, atLocation: here });
+        overrideByVariant.set(v.id, `Sold with ${Math.max(0, here)} showing at ${showroom.name} — stock went negative`);
       }
     }
+    if (shortages.length > 0 && !input.acknowledgeNegativeStock) throw new NegativeStockConfirmError(showroom.name, shortages);
 
     const customer = await resolveCounterCustomer(tx, ctx, input.customer);
     const orderNo = await generateOrderNumber(tx);
@@ -212,13 +241,14 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       const v = variantById.get(child.variantId)!;
       await recordStockMovement(tx, {
         variantId: v.id,
+        locationId: showroom.id,
         type: "POS_SALE_OUT",
         qty: -child.qty,
         unitCost: v.weightedAvgCost,
         referenceType: "ORDER",
         referenceId: order.id,
         actorId: ctx.user.id,
-        note: overrideByVariant.has(v.id) ? `Sold beyond available stock: ${overrideByVariant.get(v.id)}` : "Part of an outfit set",
+        note: overrideByVariant.has(v.id) ? `Part of an outfit set — ${overrideByVariant.get(v.id)}` : "Part of an outfit set",
       });
     }
     for (const s of resolvedSets) lineAudit.push({ set: s.name, qty: s.qty, unitPrice: s.unitPrice, lineDiscount: s.lineDiscount, components: s.children.map((c) => ({ sku: c.sku, qty: c.qty })) });
@@ -242,13 +272,14 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       });
       await recordStockMovement(tx, {
         variantId: v.id,
+        locationId: showroom.id,
         type: "POS_SALE_OUT",
         qty: -item.qty,
         unitCost: v.weightedAvgCost,
         referenceType: "ORDER",
         referenceId: order.id,
         actorId: ctx.user.id,
-        note: overrideReason ? `Sold beyond available stock: ${overrideReason}` : null,
+        note: overrideReason,
       });
       lineAudit.push({ sku: v.sku, qty: item.qty, unitPrice: fromPaisa(line.unitPricePaisa), lineDiscount: fromPaisa(line.discountPaisa), stockOverrideReason: overrideReason });
     }
@@ -283,7 +314,8 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
     if (toPaisa(due) !== 0) throw new PosSaleError("The payments don't add up to the total.");
 
     // P3.3 — the shopping bag, tissue and tags this sale uses.
-    await consumePackaging(tx, { orderId: order.id, orderNo, scope: "POS_SALE", actorId: ctx.user.id });
+    await consumePackaging(tx, { orderId: order.id, orderNo, scope: "POS_SALE", locationId: showroom.id, actorId: ctx.user.id });
+    if (shortages.length > 0) await notifyNegativeStock(tx, { locationId: showroom.id, variantIds: shortages.map((s) => s.variantId) });
 
     await tx.orderStatusHistory.create({
       data: { orderId: order.id, fromStatus: null, toStatus: "COMPLETED", changedById: ctx.user.id, note: "Showroom sale (POS) — paid in full at the counter" },
@@ -297,6 +329,8 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       after: {
         orderNo,
         channel: "WALK_IN",
+        location: showroom.name,
+        negativeStock: shortages.length > 0 ? shortages.map((s) => ({ sku: s.sku, wanted: s.wanted, atLocation: s.atLocation })) : undefined,
         customerId: customer?.id ?? null,
         subtotal: fromPaisa(priced.subtotalPaisa),
         cartDiscount: input.cartDiscount,

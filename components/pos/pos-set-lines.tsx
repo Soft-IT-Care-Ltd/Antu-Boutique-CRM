@@ -20,20 +20,17 @@ export type CartSetLine = {
   qty: number;
   unitPrice: string;
   lineDiscount: string;
-  overrideReason: string;
 };
 
 export function PosSetLines({
   lines,
   priced,
-  canSellOutOfStock,
   onChange,
   onRemove,
   onRechoose,
 }: {
   lines: CartSetLine[];
   priced: Map<string, PricedCartLine> | null;
-  canSellOutOfStock: boolean;
   onChange: (key: string, patch: Partial<CartSetLine>) => void;
   onRemove: (key: string) => void;
   onRechoose: (line: CartSetLine) => void;
@@ -101,11 +98,9 @@ export function PosSetLines({
               </Button>
             </div>
             {short ? (
-              canSellOutOfStock ? (
-                <Input className="h-10" placeholder={`Only ${Math.max(0, line.available)} set(s) in these sizes — reason to sell anyway`} value={line.overrideReason} onChange={(e) => onChange(line.key, { overrideReason: e.target.value })} />
-              ) : (
-                <p className="text-sm text-destructive">Only {Math.max(0, line.available)} set(s) in these sizes — the sale will be refused. Pick other sizes, or ask a Manager.</p>
-              )
+              <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                The system shows {Math.max(0, line.available)} set(s) in these sizes — you can still sell it if the pieces are in hand; you&apos;ll be asked to confirm.
+              </p>
             ) : null}
           </li>
         );

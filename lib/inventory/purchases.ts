@@ -18,7 +18,8 @@ export type CreatePurchaseInput = {
   otherCost: string | number;
   amountPaid: string | number;
   note?: string | null;
-  items: { variantId: string; qty: number; unitCost: string | number }[];
+  /** C3 (CORRECTIONS.md item 4): each line is received at a location — the route defaults it to the packing hub and checks the user acts there. */
+  items: { variantId: string; locationId: string; qty: number; unitCost: string | number }[];
 };
 
 /** Supplier due is always derived, never typed (same principle as order.due_amount). */
@@ -38,16 +39,23 @@ export function computePurchaseDue(totalCost: string | number | { toString(): st
 export async function createPurchase(tx: Prisma.TransactionClient, input: CreatePurchaseInput, actorId: string | null) {
   if (input.items.length === 0) throw new PurchaseError("A purchase needs at least one item");
 
-  const variantIds = input.items.map((i) => i.variantId);
-  if (new Set(variantIds).size !== variantIds.length) {
-    throw new PurchaseError("The same variant appears twice — combine it into one line");
+  // The same variant may come in at two locations (two lines), never twice
+  // at one.
+  const lineKeys = input.items.map((i) => `${i.variantId}@${i.locationId}`);
+  if (new Set(lineKeys).size !== lineKeys.length) {
+    throw new PurchaseError("The same variant appears twice for one location — combine it into one line");
   }
+  const variantIds = [...new Set(input.items.map((i) => i.variantId))];
 
   const variants = await tx.productVariant.findMany({
     where: { id: { in: variantIds }, product: { deletedAt: null } },
     select: { id: true },
   });
   if (variants.length !== variantIds.length) throw new PurchaseError("One of the selected variants no longer exists");
+
+  const locationIds = [...new Set(input.items.map((i) => i.locationId))];
+  const locations = await tx.location.count({ where: { id: { in: locationIds }, isActive: true } });
+  if (locations !== locationIds.length) throw new PurchaseError("One of the locations doesn't exist or is switched off");
 
   const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId }, select: { id: true } });
   if (!supplier) throw new PurchaseError("Supplier not found");
@@ -74,7 +82,7 @@ export async function createPurchase(tx: Prisma.TransactionClient, input: Create
     },
   });
 
-  const processingOrder = input.items.map((_, i) => i).sort((a, b) => input.items[a].variantId.localeCompare(input.items[b].variantId));
+  const processingOrder = input.items.map((_, i) => i).sort((a, b) => input.items[a].variantId.localeCompare(input.items[b].variantId) || input.items[a].locationId.localeCompare(input.items[b].locationId));
 
   for (const i of processingOrder) {
     const item = input.items[i];
@@ -83,6 +91,8 @@ export async function createPurchase(tx: Prisma.TransactionClient, input: Create
     const locked = await lockVariant(tx, item.variantId);
     if (!locked) throw new PurchaseError("One of the selected variants no longer exists");
 
+    // Weighted average cost is per variant, across every location: the same
+    // dress costs the same wherever it sits.
     const wacBeforePaisa = toPaisa(locked.weightedAvgCost);
     const wacAfterPaisa = computeWeightedAverageCostPaisa(locked.stockQty, wacBeforePaisa, item.qty, line.landedUnitCostPaisa);
 
@@ -90,6 +100,7 @@ export async function createPurchase(tx: Prisma.TransactionClient, input: Create
 
     await recordStockMovement(tx, {
       variantId: item.variantId,
+      locationId: item.locationId,
       type: "PURCHASE_IN",
       qty: item.qty,
       unitCost: fromPaisa(line.landedUnitCostPaisa),
@@ -103,6 +114,7 @@ export async function createPurchase(tx: Prisma.TransactionClient, input: Create
       data: {
         purchaseId: purchase.id,
         variantId: item.variantId,
+        locationId: item.locationId,
         qty: item.qty,
         unitCost: fromPaisa(line.unitCostPaisa),
         lineCost: fromPaisa(line.lineCostPaisa),

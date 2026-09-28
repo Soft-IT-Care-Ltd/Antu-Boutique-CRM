@@ -21,14 +21,13 @@ export type CartLine = {
   qty: number;
   unitPrice: string;
   lineDiscount: string;
-  overrideReason: string;
 };
 
 export function PosCart({
   lines,
   priced,
   selectedVariantId,
-  canSellOutOfStock,
+  showroomName,
   onSelect,
   onChange,
   onRemove,
@@ -39,7 +38,8 @@ export function PosCart({
   lines: CartLine[];
   priced: Map<string, PricedCartLine> | null;
   selectedVariantId: string | null;
-  canSellOutOfStock: boolean;
+  /** C3 — the showroom this POS sells from; `available` is its stock. */
+  showroomName: string;
   onSelect: (variantId: string) => void;
   onChange: (key: string, patch: Partial<CartLine>) => void;
   onRemove: (key: string) => void;
@@ -111,16 +111,9 @@ export function PosCart({
             </div>
 
             {short ? (
-              canSellOutOfStock ? (
-                <Input
-                  className="h-10"
-                  placeholder={`Only ${Math.max(0, line.available)} available — reason to sell anyway`}
-                  value={line.overrideReason}
-                  onChange={(e) => onChange(line.key, { overrideReason: e.target.value })}
-                />
-              ) : (
-                <p className="text-sm text-destructive">Only {Math.max(0, line.available)} available — the sale will be refused. Ask a Manager to check the stock.</p>
-              )
+              <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                {showroomName} shows {Math.max(0, line.available)} — you can still sell it if it&apos;s in hand. The stock will go negative and the manager will be told to fix it.
+              </p>
             ) : null}
           </li>
         );

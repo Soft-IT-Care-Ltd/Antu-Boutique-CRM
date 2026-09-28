@@ -21,6 +21,8 @@ import type { LowStockProductAlert, StockReportRow, StockReportTotals } from "@/
 export type StockReportQuery = {
   q?: string;
   categoryId?: string;
+  /** C3 — only variants that hold stock (≠ 0) at this location; on hand and value are that location's. */
+  locationId?: string;
   status: StockStatusFilter;
   page: number;
   pageSize: number;
@@ -41,6 +43,8 @@ type RawRow = {
   reservedQty: number;
   threshold: number;
   weightedAvgCost: Prisma.Decimal;
+  byLocation: { locationId: string; name: string; qty: number }[];
+  atLocation: number | null;
 };
 
 const AVAILABLE = Prisma.sql`(v."stockQty" - v."reservedQty")`;
@@ -49,7 +53,17 @@ const AVAILABLE = Prisma.sql`(v."stockQty" - v."reservedQty")`;
 // stock route 500'd on it).
 const THRESHOLD = Prisma.sql`COALESCE(v."lowStockThreshold", ${LOW_STOCK_DEFAULT_SQL})`;
 
-function whereClause(query: Pick<StockReportQuery, "q" | "categoryId" | "status">): Prisma.Sql {
+// C3 — each variant's stock per location (only the non-zero ones), and the
+// chosen location's own figure.
+const BY_LOCATION = Prisma.sql`COALESCE((
+  SELECT json_agg(json_build_object('locationId', vs."locationId", 'name', l."name", 'qty', vs."qty") ORDER BY l."sortOrder", l."name")
+  FROM "variant_stocks" vs JOIN "locations" l ON l."id" = vs."locationId"
+  WHERE vs."variantId" = v."id" AND vs."qty" <> 0
+), '[]'::json)`;
+const atLocationSql = (locationId: string | undefined) =>
+  locationId ? Prisma.sql`COALESCE((SELECT vs."qty" FROM "variant_stocks" vs WHERE vs."variantId" = v."id" AND vs."locationId" = ${locationId}), 0)` : Prisma.sql`NULL::int`;
+
+function whereClause(query: Pick<StockReportQuery, "q" | "categoryId" | "status" | "locationId">): Prisma.Sql {
   // An inactive variant still shows while it physically holds stock —
   // otherwise its value would silently drop out of the stock valuation.
   const conditions: Prisma.Sql[] = [Prisma.sql`p."deletedAt" IS NULL`, Prisma.sql`(v."isActive" = true OR v."stockQty" <> 0)`];
@@ -60,6 +74,9 @@ function whereClause(query: Pick<StockReportQuery, "q" | "categoryId" | "status"
   }
   if (query.categoryId) {
     conditions.push(Prisma.sql`(p."categoryId" = ${query.categoryId} OR cat."parentId" = ${query.categoryId})`);
+  }
+  if (query.locationId) {
+    conditions.push(Prisma.sql`EXISTS (SELECT 1 FROM "variant_stocks" vs WHERE vs."variantId" = v."id" AND vs."locationId" = ${query.locationId} AND vs."qty" <> 0)`);
   }
   if (query.status === "out") conditions.push(Prisma.sql`${AVAILABLE} <= 0`);
   if (query.status === "low") conditions.push(Prisma.sql`${AVAILABLE} > 0 AND ${AVAILABLE} <= ${THRESHOLD}`);
@@ -79,8 +96,9 @@ const FROM = Prisma.sql`
 function toRow(r: RawRow): StockReportRow {
   const available = r.stockQty - r.reservedQty;
   // Value of what is physically on the shelf (reserved units included —
-  // they're still ours until packed). Negative stock is valued at zero.
-  const valuePaisa = Math.max(r.stockQty, 0) * toPaisa(r.weightedAvgCost);
+  // they're still ours until packed) — at the chosen location when the
+  // report is filtered to one. Negative stock is valued at zero.
+  const valuePaisa = Math.max(r.atLocation ?? r.stockQty, 0) * toPaisa(r.weightedAvgCost);
   return {
     variantId: r.variantId,
     productId: r.productId,
@@ -95,6 +113,8 @@ function toRow(r: RawRow): StockReportRow {
     stockQty: r.stockQty,
     reservedQty: r.reservedQty,
     available,
+    byLocation: r.byLocation.map((b) => ({ ...b, qty: Number(b.qty) })),
+    atLocation: r.atLocation === null ? null : Number(r.atLocation),
     threshold: r.threshold,
     status: variantStockStatus(available, r.threshold),
     weightedAvgCost: r.weightedAvgCost.toString(),
@@ -104,22 +124,25 @@ function toRow(r: RawRow): StockReportRow {
 
 export async function getStockReport(query: StockReportQuery): Promise<{ items: StockReportRow[]; total: number; totals: StockReportTotals }> {
   const where = whereClause(query);
+  const atLocation = atLocationSql(query.locationId);
 
   const [rows, aggregate] = await Promise.all([
     prisma.$queryRaw<RawRow[]>`
       SELECT v."id" AS "variantId", p."id" AS "productId", p."name" AS "productName", p."code" AS "productCode",
              cat."name" AS "categoryName", v."sku", s."name" AS "sizeName", c."name" AS "colorName", c."hexCode" AS "colorHex",
-             v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost"
+             v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost",
+             ${BY_LOCATION} AS "byLocation", ${atLocation} AS "atLocation"
       ${FROM}
       WHERE ${where}
       ORDER BY p."name" ASC, s."sortOrder" ASC, c."sortOrder" ASC
       LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}
     `,
-    prisma.$queryRaw<{ variants: bigint; onHand: bigint | null; reserved: bigint | null; value: Prisma.Decimal | null }[]>`
+    prisma.$queryRaw<{ variants: bigint; onHand: bigint | null; reserved: bigint | null; atLocation: bigint | null; value: Prisma.Decimal | null }[]>`
       SELECT COUNT(*) AS "variants",
              SUM(v."stockQty") AS "onHand",
              SUM(v."reservedQty") AS "reserved",
-             SUM(GREATEST(v."stockQty", 0) * v."weightedAvgCost") AS "value"
+             SUM(${atLocation}) AS "atLocation",
+             SUM(GREATEST(${query.locationId ? atLocation : Prisma.sql`v."stockQty"`}, 0) * v."weightedAvgCost") AS "value"
       ${FROM}
       WHERE ${where}
     `,
@@ -138,6 +161,7 @@ export async function getStockReport(query: StockReportQuery): Promise<{ items: 
       onHand,
       reserved,
       available: onHand - reserved,
+      atLocation: query.locationId ? Number(agg?.atLocation ?? 0) : null,
       valueAtCost: fromPaisa(toPaisa(agg?.value ?? 0)),
     },
   };
@@ -152,7 +176,8 @@ export async function getLowStockAlerts(): Promise<LowStockProductAlert[]> {
   const rows = await prisma.$queryRaw<(RawRow & { sizeSort: number; colorSort: number })[]>`
     SELECT v."id" AS "variantId", p."id" AS "productId", p."name" AS "productName", p."code" AS "productCode",
            cat."name" AS "categoryName", v."sku", s."name" AS "sizeName", c."name" AS "colorName", c."hexCode" AS "colorHex",
-           v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost"
+           v."isActive", v."stockQty", v."reservedQty", ${THRESHOLD} AS "threshold", v."weightedAvgCost",
+           '[]'::json AS "byLocation", NULL::int AS "atLocation"
     ${FROM}
     WHERE p."deletedAt" IS NULL AND p."isActive" = true AND v."isActive" = true
       AND p."id" IN (

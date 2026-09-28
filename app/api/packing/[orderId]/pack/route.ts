@@ -4,7 +4,8 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
-import { IllegalTransitionError, packOrder } from "@/lib/orders/pack";
+import { LocationError } from "@/lib/locations/service";
+import { IllegalTransitionError, PackStockError, packOrder } from "@/lib/orders/pack";
 import { loadPackingOrder, serializePackingOrderDetail } from "@/lib/packing/queue";
 import { getPackingSlaHours } from "@/lib/settings/get";
 import type { OrderStatusValue } from "@/lib/orders/constants";
@@ -54,9 +55,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // order room over Prisma's 5s default.
     }, { timeout: 30_000 });
   } catch (error) {
-    if (error instanceof IllegalTransitionError) {
+    if (error instanceof IllegalTransitionError || error instanceof PackStockError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    if (error instanceof LocationError) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }
 

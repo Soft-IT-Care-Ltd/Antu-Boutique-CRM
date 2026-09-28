@@ -18,6 +18,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import { recordStockMovement } from "@/lib/inventory/ledger";
 import { lowStockAlertText, sendLowStockAlert } from "@/lib/inventory/low-stock-alert";
 import type { LowStockProductAlert } from "@/lib/inventory/types";
+import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { listNotifications, markNotificationsRead } from "@/lib/notifications/queries";
 import { resolveCounterCustomer } from "@/lib/pos/sale";
 import { prisma } from "@/lib/prisma";
@@ -66,7 +67,7 @@ async function product(tx: Prisma.TransactionClient, opts: { stocked?: boolean }
   const code = testProductCode();
   const p = await tx.product.create({ data: { code, name: `Trash test ${code}`, basePrice: 1200 } });
   const v = await tx.productVariant.create({ data: { productId: p.id, sizeId: size.id, colorId: color.id, sku: testSku(code) } });
-  if (opts.stocked) await recordStockMovement(tx, { variantId: v.id, type: "PURCHASE_IN", qty: 3, unitCost: 500, referenceType: "OPENING_BALANCE", actorId: null });
+  if (opts.stocked) await recordStockMovement(tx, { variantId: v.id, locationId: SEEDED_LOCATION_IDS.mohammadpur, type: "PURCHASE_IN", qty: 3, unitCost: 500, referenceType: "OPENING_BALANCE", actorId: null });
   return p;
 }
 

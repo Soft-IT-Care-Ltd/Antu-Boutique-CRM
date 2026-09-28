@@ -1,11 +1,12 @@
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
-import { Building2, DatabaseBackup, FileUp, KeyRound, Package, Settings2, Shirt, Trophy, Truck, UsersRound, Wallet } from "lucide-react";
+import { Building2, DatabaseBackup, FileUp, KeyRound, MapPin, Package, Settings2, Shirt, Trophy, Truck, UsersRound, Wallet } from "lucide-react";
 
 import { AdAllocationSettings } from "@/components/settings/ad-allocation-settings";
 import { BusinessProfileSettings } from "@/components/settings/business-profile-settings";
 import { CourierSettings } from "@/components/settings/courier-settings";
 import { ImportSettings } from "@/components/settings/import-settings";
+import { LocationsSettings } from "@/components/settings/locations-settings";
 import { OfficeHoursSettings } from "@/components/settings/office-hours-settings";
 import { OperationsSettings } from "@/components/settings/operations-settings";
 import { PaymentMethodsSettings } from "@/components/settings/payment-methods-settings";
@@ -39,11 +40,12 @@ export const dynamic = "force-dynamic";
 // screen, one section at a time (?section=). Sections that change people or
 // permissions also need that permission, and each API route checks its own.
 
-type SectionId = "profile" | "catalog" | "couriers" | "steadfast" | "money" | "operations" | "targets" | "users" | "roles" | "import" | "system";
+type SectionId = "profile" | "catalog" | "locations" | "couriers" | "steadfast" | "money" | "operations" | "targets" | "users" | "roles" | "import" | "system";
 
 const SECTIONS: (Omit<SettingsSectionLink, "icon"> & { id: SectionId; icon: LucideIcon; title: string; description: string })[] = [
   { id: "profile", label: "Business profile", icon: Building2, title: "Business profile", description: "The name, logo, address and footer printed on invoices, packing slips and showroom receipts." },
   { id: "catalog", label: "Catalog masters", icon: Shirt, title: "Categories, sizes & colours", description: "The master lists every product picks from — one spelling of each." },
+  { id: "locations", label: "Locations", icon: MapPin, title: "Stock locations", description: "Warehouses, showrooms and corners that hold stock: the packing hub, the POS showroom, and who manages each." },
   { id: "couriers", label: "Couriers & zones", icon: Truck, title: "Couriers & zone charges", description: "Who delivers, and what the customer is charged per zone." },
   { id: "steadfast", label: "Steadfast", icon: Package, title: "Steadfast integration", description: "API credentials, the webhook URL and token, status sync and what we pay per parcel." },
   { id: "money", label: "Payments & wallets", icon: Wallet, title: "Payments & wallets", description: "Payment methods staff can pick, wallets and their opening balances, ad-cost allocation and store credit." },
@@ -94,6 +96,8 @@ async function SectionBody({ id, has, currentUserId }: { id: SectionId; has: (ke
       return <BusinessProfileSettings initial={await getBusinessProfile(prisma)} />;
     case "catalog":
       return <CatalogMasters canManage={has("catalog.manage")} />;
+    case "locations":
+      return <LocationsSettings />;
     case "couriers":
       return <CourierSettings />;
     case "steadfast":

@@ -126,12 +126,13 @@ export function PurchaseDetail({ initial, canPrintTags = false }: { initial: Pur
             <TableHeader>
               <TableRow>
                 <TableHead>Variant</TableHead>
+                <TableHead>Received at</TableHead>
                 <TableHead className="text-right">Qty</TableHead>
                 <TableHead className="text-right">Unit cost</TableHead>
                 <TableHead className="text-right">Share</TableHead>
                 <TableHead className="text-right">Landed / unit</TableHead>
                 <TableHead>Avg cost</TableHead>
-                <TableHead>Stock</TableHead>
+                <TableHead>Total stock</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -149,6 +150,7 @@ export function PurchaseDetail({ initial, canPrintTags = false }: { initial: Pur
                       </Link>
                     </div>
                   </TableCell>
+                  <TableCell className="whitespace-nowrap">{item.location.name}</TableCell>
                   <TableCell className="text-right tabular-nums">{item.qty}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatBDT(item.unitCost)}</TableCell>
                   <TableCell className="text-right text-muted-foreground tabular-nums">{formatBDT(item.allocatedCost)}</TableCell>

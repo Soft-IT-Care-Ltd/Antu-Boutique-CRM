@@ -56,14 +56,15 @@ export function PosScreen({
   initialDrawer,
   drawerError,
   wallets,
-  canSellOutOfStock,
+  showroomName,
   canManageDrawer,
   canExchange = false,
 }: {
   initialDrawer: DrawerState | null;
   drawerError: string | null;
   wallets: WalletOption[];
-  canSellOutOfStock: boolean;
+  /** C3 — the showroom whose stock this POS sells (CORRECTIONS.md item 11). */
+  showroomName: string;
   canManageDrawer: boolean;
   /** P3.2 — exchange.create: swap an item the customer brought back. */
   canExchange?: boolean;
@@ -89,6 +90,8 @@ export function PosScreen({
   const [drawer, setDrawer] = useState<DrawerState | null>(initialDrawer);
   const [exchangeOpen, setExchangeOpen] = useState(false);
   const [recent, setRecent] = useState<PosRecentSale[]>([]);
+  // C3 — the server found lines the showroom shows too few of: confirm, then send again.
+  const [negativeConfirm, setNegativeConfirm] = useState<{ message: string; shortages: { sku: string; label: string; wanted: number; atLocation: number }[] } | null>(null);
 
   const refreshSide = useCallback(() => {
     fetchJson<{ state: DrawerState }>("/api/pos/drawer")
@@ -129,10 +132,9 @@ export function PosScreen({
 
   const paidPaisa = tenders.reduce((a, t) => a + toPaisa(Number(t.amount) || 0), 0);
   const tendersValid = tenders.every((t) => toPaisa(Number(t.amount) || 0) > 0 && (t.method !== "CASH" || !t.tendered || toPaisa(Number(t.tendered) || 0) >= toPaisa(Number(t.amount) || 0)));
-  const stockOk = [...lines, ...outfitLines].every((l) => l.qty <= l.available || (canSellOutOfStock && l.overrideReason.trim()));
   // Store credit belongs to a customer: it needs their phone number.
   const creditNeedsPhone = tenders.some((t) => t.method === "STORE_CREDIT") && !customer.phone.trim();
-  const canComplete = lines.length + outfitLines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && stockOk && !creditNeedsPhone && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
+  const canComplete = lines.length + outfitLines.length > 0 && priced !== null && paidPaisa === totalPaisa && tendersValid && !creditNeedsPhone && (cashAllowed || !tenders.some((t) => t.method === "CASH"));
 
   function addHit(hit: PosVariantHit) {
     setError(null);
@@ -157,7 +159,6 @@ export function PosScreen({
           qty: 1,
           unitPrice: String(Number(hit.price)),
           lineDiscount: "",
-          overrideReason: "",
         },
       ];
     });
@@ -175,7 +176,7 @@ export function PosScreen({
   function chooseSet(chosen: ChosenSet) {
     const patch = { setId: chosen.setId, name: chosen.name, parts: chosen.parts, choices: chosen.choices, available: chosen.available };
     if (choosing?.key) setOutfitLines((prev) => prev.map((l) => (l.key === choosing.key ? { ...l, ...patch } : l)));
-    else setOutfitLines((prev) => [...prev, { key: newLocalId(), qty: 1, unitPrice: String(Number(chosen.price)), lineDiscount: "", overrideReason: "", ...patch }]);
+    else setOutfitLines((prev) => [...prev, { key: newLocalId(), qty: 1, unitPrice: String(Number(chosen.price)), lineDiscount: "", ...patch }]);
     setChoosing(null);
   }
 
@@ -191,16 +192,17 @@ export function PosScreen({
     setError(null);
   }
 
-  async function complete() {
+  async function complete(acknowledgeNegativeStock = false) {
     if (!canComplete || busy || !priced) return;
     setBusy(true);
     setError(null);
+    setNegativeConfirm(null);
     try {
       const { sale } = await fetchJson<{ sale: PosSaleResult }>("/api/pos/sales", {
         method: "POST",
         body: JSON.stringify({
-          items: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0, stockOverrideReason: l.overrideReason.trim() || null })),
-          sets: outfitLines.map((l) => ({ setId: l.setId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0, choices: l.choices, stockOverrideReason: l.overrideReason.trim() || null })),
+          items: lines.map((l) => ({ variantId: l.variantId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0 })),
+          sets: outfitLines.map((l) => ({ setId: l.setId, qty: l.qty, unitPrice: Number(l.unitPrice) || 0, lineDiscount: Number(l.lineDiscount) || 0, choices: l.choices })),
           cartDiscount: Number(cartDiscountAmount),
           customer: customer.phone.trim() ? { phone: customer.phone.trim(), name: customer.name.trim() || null } : null,
           tenders: tenders.map((t) => ({
@@ -211,13 +213,18 @@ export function PosScreen({
             transactionId: t.transactionId.trim() || null,
           })),
           note: note.trim() || null,
+          acknowledgeNegativeStock,
         }),
       });
       setDone(sale);
       reset();
       refreshSide();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "The sale didn't go through — nothing was charged. Try again.");
+      if (err instanceof ApiError && err.body.code === "CONFIRM_NEGATIVE_STOCK") {
+        setNegativeConfirm({ message: err.message, shortages: (err.body.shortages as { sku: string; label: string; wanted: number; atLocation: number }[]) ?? [] });
+      } else {
+        setError(err instanceof ApiError ? err.message : "The sale didn't go through — nothing was charged. Try again.");
+      }
     } finally {
       setBusy(false);
     }
@@ -299,13 +306,13 @@ export function PosScreen({
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="flex min-w-0 flex-col gap-3">
-          <PosSearch ref={searchRef} onAdd={addHit} onAddSet={(s) => setChoosing({ setId: s.id })} canSellOutOfStock={canSellOutOfStock} />
+          <PosSearch ref={searchRef} onAdd={addHit} onAddSet={(s) => setChoosing({ setId: s.id })} showroomName={showroomName} />
           <PosCart
             hasOtherLines={outfitLines.length > 0}
             lines={lines}
             priced={pricedByKey}
             selectedVariantId={selectedVariantId}
-            canSellOutOfStock={canSellOutOfStock}
+            showroomName={showroomName}
             onSelect={setSelectedVariantId}
             onChange={(key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))}
             onRemove={(key) => setLines((prev) => prev.filter((l) => l.key !== key))}
@@ -313,7 +320,6 @@ export function PosScreen({
           <PosSetLines
             lines={outfitLines}
             priced={pricedByKey}
-            canSellOutOfStock={canSellOutOfStock}
             onChange={(key, patch) => setOutfitLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))}
             onRemove={(key) => setOutfitLines((prev) => prev.filter((l) => l.key !== key))}
             onRechoose={(l) => setChoosing({ setId: l.setId, key: l.key, initial: l.choices })}
@@ -407,6 +413,39 @@ export function PosScreen({
           </Button>
         )}
       </div>
+
+      <Dialog open={negativeConfirm !== null} onOpenChange={(open) => !open && setNegativeConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-5 text-amber-600" /> Sell with no stock showing?
+            </DialogTitle>
+            <DialogDescription>
+              {showroomName} shows fewer than you&apos;re selling. If the item is in your hand, sell it — the stock goes negative and the manager is alerted to count or transfer.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="flex flex-col gap-1 text-sm">
+            {negativeConfirm?.shortages.map((s) => (
+              <li key={s.sku} className="flex justify-between gap-2 rounded-md bg-muted/60 px-2.5 py-1.5">
+                <span className="min-w-0 truncate">
+                  {s.label} <span className="font-mono text-xs text-muted-foreground">{s.sku}</span>
+                </span>
+                <span className="shrink-0 tabular-nums">
+                  {Math.max(0, s.atLocation)} showing · selling {s.wanted}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" className="h-12" onClick={() => setNegativeConfirm(null)}>
+              Go back
+            </Button>
+            <Button className="h-12" disabled={busy} onClick={() => void complete(true)}>
+              It&apos;s in hand — sell it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={done !== null} onOpenChange={(open) => !open && setDone(null)}>
         <DialogContent

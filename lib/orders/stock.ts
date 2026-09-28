@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { recordStockMovement } from "@/lib/inventory/ledger";
+import { getPackingHub } from "@/lib/locations/service";
 
 // PRD §4.6 section 2 + CLAUDE.md rule 10: stock is reserved at CONFIRMED,
 // deducted at PACKED. This form creates orders directly at CONFIRMED (see
@@ -38,18 +39,29 @@ export async function releaseVariantStock(
   });
 }
 
+// C3 — reservations stay against the variant's TOTAL stock (CORRECTIONS.md
+// item 2: "reservations for online orders are against total available
+// stock, not a location"), so reserve/release above never name a location.
+
 // PRD §4.6 + CLAUDE.md rule 2: "cancelling after PACKED restores stock via
 // a ledger row." Goes back on the shelf as RETURN_IN at the cost it left
 // with (the line's frozen unitCostSnapshot), so the ledger's value in
 // matches its value out. reservedQty is untouched: it was already released
-// when the line was packed.
+// when the line was packed. C3: back to the location it was packed from
+// (the packing hub at the time), found from its own SALE_OUT row.
 export async function restoreVariantStockAfterPack(
   tx: Prisma.TransactionClient,
   input: { orderId: string; variantId: string; qty: number; unitCostSnapshot: Prisma.Decimal; actorId: string | null },
 ): Promise<void> {
   if (input.qty === 0) return;
+  const packedFrom = await tx.stockMovement.findFirst({
+    where: { referenceType: "ORDER", referenceId: input.orderId, variantId: input.variantId, type: { in: ["SALE_OUT", "EXCHANGE_OUT"] } },
+    orderBy: { createdAt: "desc" },
+    select: { locationId: true },
+  });
   await recordStockMovement(tx, {
     variantId: input.variantId,
+    locationId: packedFrom?.locationId ?? (await getPackingHub(tx)).id,
     type: "RETURN_IN",
     qty: input.qty,
     unitCost: input.unitCostSnapshot,
@@ -69,13 +81,15 @@ export async function restoreVariantStockAfterPack(
 // status move.
 // P3.2 (PRD §4.11): an exchange's replacement order leaves as EXCHANGE_OUT —
 // the same deduction through the normal packing flow, told apart in the ledger.
+// C3: from the packing hub (lib/orders/pack.ts checks the hub holds it).
 export async function deductVariantStockAtPack(
   tx: Prisma.TransactionClient,
-  input: { orderId: string; variantId: string; qty: number; unitCost: Prisma.Decimal; actorId: string; isExchange?: boolean },
+  input: { orderId: string; variantId: string; locationId: string; qty: number; unitCost: Prisma.Decimal; actorId: string; isExchange?: boolean },
 ): Promise<void> {
   if (input.qty === 0) return;
   await recordStockMovement(tx, {
     variantId: input.variantId,
+    locationId: input.locationId,
     type: input.isExchange ? "EXCHANGE_OUT" : "SALE_OUT",
     qty: -input.qty,
     unitCost: input.unitCost,

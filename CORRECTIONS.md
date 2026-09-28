@@ -210,7 +210,8 @@ Report findings, fix them, merge and push.
 - Fast on a mid-range Android phone on 4G: product pages cached and revalidated when the product changes, images resized and lazy-loaded.
 - SEO basics: sitemap, page titles/descriptions, Open Graph images so links shared on Facebook/Messenger show a proper preview.
 
-### 2. Multiple stock locations — [OPEN]
+### 2. Multiple stock locations — [DONE in C3, except scan receiving and scan counting → C4]
+> C3: `locations` (Settings → Locations: type, packing hub, has POS, active, managers), per-(variant, location) stock in `variant_stocks`, a location on every ledger row with a DB trigger holding stock = ledger per location, location-scoped users (`user_locations` + `location.all`), existing stock moved to Mohammadpur Warehouse by the migration, and the stock lookup (`/inventory/lookup`). Commit: "feat(stock): locations and per-location stock (C3)". Purchase receiving by scan and stock count by scan are C4.
 - **Locations** (Settings, Admin): name, type (Warehouse / Shop / Sales corner / Studio), address, **Packing hub** (exactly one), **Has POS**, active. More can be added any time.
 - Start with: **Shyamoli Showroom** (shop, **the only POS**), **Mohammadpur Warehouse** (warehouse, **packing hub**), **Parlour Sales Corner** (stock only), **Studio** (stock only).
 - **Scanners at every location.** Each location has a barcode scanner for what goes out and what comes in. Every screen that moves stock — transfer send and receive, purchase receiving, stock count, packing, POS — works with a handheld scanner (it types the SKU + Enter) and, as a fallback, the phone's camera.
@@ -229,7 +230,8 @@ Report findings, fix them, merge and push.
 - Only the source location can send and only the destination can receive (Admin can do both).
 - **"Needed at the packing hub"** screen, per location: every unpacked online order that has an item the hub doesn't have but *this* location does, with the quantity needed. The manager ticks items → one click creates a transfer to the hub, pre-filled and linked to those orders. When the hub receives it, those orders update automatically (item 13).
 
-### 4. Stock entered per location when a product is added — [OPEN]
+### 4. Stock entered per location when a product is added — [DONE]
+> C3: the product page's "Opening stock by location" grid (sizes/colours × locations + unit cost → OPENING_BALANCE rows per location, cost becomes WAC), a location per purchase line (default: packing hub), a location on adjustments and write-offs, and a `location` column in the CSV import. Commit: "feat(stock): locations and per-location stock (C3)".
 - Adding a product shows a **stock-in grid**: one row per size/colour, one column per location, plus a unit cost per row. Example: 5 at Shyamoli, 10 at Mohammadpur.
 - Saving posts *opening stock* ledger rows per location in one transaction, and the unit cost becomes the variant's average cost. Stock is never typed into a stock field directly.
 - After that, new stock comes in through **Purchase entry**, which now has a location per line (default: packing hub).
@@ -288,7 +290,8 @@ Report findings, fix them, merge and push.
 - The design keeps room for a second showroom later, but no multi-showroom screens are built now.
 - Not included now (ask if wanted): a tailoring job tracker — measurements, fabric received, ready-by date, delivered to customer.
 
-### 11. POS sales reduce that location's stock — [OPEN]
+### 11. POS sales reduce that location's stock — [DONE]
+> C3: POS sales, counter exchanges and counter packaging deduct from the POS showroom's location; more than it shows sells after an "It's in hand" confirmation, the location goes negative, the line is marked as a stock override, and a NEGATIVE_STOCK alert goes to its managers and Admin/Manager; `/inventory/negative-stock` lists them. Commit: "feat(stock): locations and per-location stock (C3)".
 - A POS sale deducts from the showroom's location, which is part of total stock.
 - If the system shows 0 at that location but the item is physically in hand, the sale goes through with a warning; that location's stock goes negative and appears on a **Negative stock** alert for its manager to fix (count or transfer).
 
