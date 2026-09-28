@@ -7,6 +7,7 @@ import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { ALL_PAYMENT_METHOD_VALUES, ORDER_CHANNEL_VALUES } from "@/lib/orders/constants";
 import { listPayments, paymentQueueCounts } from "@/lib/payments/queries";
 import { PAYMENT_LIST_VIEWS, REFUND_STATUS_VALUES } from "@/lib/payments/types";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // PRD §4.10 — the verification queue (view=unverified, oldest first), payment
 // history, and refunds. Scoped through the order (lib/payments/queries.ts).
@@ -19,8 +20,7 @@ const querySchema = z.object({
   from: dayString.optional(),
   to: dayString.optional(),
   q: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

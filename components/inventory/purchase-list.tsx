@@ -3,20 +3,22 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, ReceiptText, Search } from "lucide-react";
+import { Plus, ReceiptText, Search } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import { formatDhakaDate } from "@/lib/inventory/constants";
 import type { PurchaseListItem } from "@/lib/inventory/types";
 import { formatBDT } from "@/lib/money";
-
-const PAGE_SIZE = 20;
 
 type Props = { suppliers: { id: string; name: string }[]; initialSupplierId: string | null };
 
@@ -24,13 +26,13 @@ export function PurchaseList({ suppliers, initialSupplierId }: Props) {
   const router = useRouter();
   const [items, setItems] = useState<PurchaseListItem[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const pager = usePager("purchases");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? "all");
   const [dueOnly, setDueOnly] = useState(false);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,12 +41,11 @@ export function PurchaseList({ suppliers, initialSupplierId }: Props) {
   }, [q]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (debouncedQ) params.set("q", debouncedQ);
     if (supplierId !== "all") params.set("supplierId", supplierId);
     if (dueOnly) params.set("due", "true");
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
 
     fetchJson<{ items: PurchaseListItem[]; total: number }>(`/api/inventory/purchases?${params.toString()}`)
       .then((data) => {
@@ -53,14 +54,12 @@ export function PurchaseList({ suppliers, initialSupplierId }: Props) {
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load purchases."));
-  }, [debouncedQ, supplierId, dueOnly, from, to, page]);
+  }, [debouncedQ, supplierId, dueOnly, range, page, pageSize]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
   }
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,10 +84,7 @@ export function PurchaseList({ suppliers, initialSupplierId }: Props) {
               ))}
             </SelectContent>
           </Select>
-          <div className="grid grid-cols-2 gap-2">
-            <Input type="date" aria-label="From date" value={from} onChange={(e) => updateFilter(setFrom, e.target.value)} />
-            <Input type="date" aria-label="To date" value={to} onChange={(e) => updateFilter(setTo, e.target.value)} />
-          </div>
+          <DateRangeFilter value={range} onChange={(v) => updateFilter(setRange, v)} />
           <label className="flex items-center gap-2 text-sm whitespace-nowrap text-muted-foreground">
             <Switch checked={dueOnly} onCheckedChange={(checked) => updateFilter(setDueOnly, checked)} />
             Due only
@@ -148,19 +144,7 @@ export function PurchaseList({ suppliers, initialSupplierId }: Props) {
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {total} purchases
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={total} noun="purchases" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
     </div>
   );

@@ -1,7 +1,9 @@
 import Link from "next/link";
 
+import { UrlListPagination } from "@/components/list/url-list-pagination";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PAGE_SIZE_OPTIONS } from "@/lib/list/pagination";
 import { formatCell, isNegative } from "@/lib/reports/format";
 import type { CellFormat, ReportFigure, ReportResult, ReportTable } from "@/lib/reports/types";
 import { cn } from "@/lib/utils";
@@ -9,12 +11,12 @@ import { cn } from "@/lib/utils";
 // P4.4 — renders any ReportResult (R1–R14, P&L). Server component: the
 // numbers arrive already scoped and cost-stripped (lib/reports/run.ts).
 
-/** On screen a table stops here; the export carries every row. */
-const SCREEN_ROWS = 300;
+/** Page size and each table's page (URL `page_<table id>`); the export carries every row. */
+export type ReportPaging = { pageSize: number; pages: Record<string, number> };
 
 const numeric = (f?: CellFormat) => f !== undefined && f !== "text" && f !== "day";
 
-export function ReportView({ report }: { report: ReportResult }) {
+export function ReportView({ report, paging }: { report: ReportResult; paging: ReportPaging }) {
   return (
     <div className="flex flex-col gap-4">
       {report.figures.length ? (
@@ -25,7 +27,7 @@ export function ReportView({ report }: { report: ReportResult }) {
         </div>
       ) : null}
       {report.tables.map((t) => (
-        <ReportTableCard key={t.id} table={t} />
+        <ReportTableCard key={t.id} table={t} pageSize={paging.pageSize} page={paging.pages[t.id] ?? 1} />
       ))}
       {report.notes.length ? (
         <div className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -55,8 +57,9 @@ function Figure({ figure: f }: { figure: ReportFigure }) {
   );
 }
 
-function ReportTableCard({ table: t }: { table: ReportTable }) {
-  const rows = t.rows.slice(0, SCREEN_ROWS);
+function ReportTableCard({ table: t, page: asked, pageSize }: { table: ReportTable; page: number; pageSize: number }) {
+  const page = Math.min(asked, Math.max(1, Math.ceil(t.rows.length / pageSize)));
+  const rows = t.rows.slice((page - 1) * pageSize, page * pageSize);
   return (
     <Card>
       <CardHeader>
@@ -113,7 +116,11 @@ function ReportTableCard({ table: t }: { table: ReportTable }) {
             </Table>
           </div>
         )}
-        {t.rows.length > SCREEN_ROWS ? <p className="pt-2 text-sm text-muted-foreground">Showing the first {SCREEN_ROWS} of {t.rows.length} rows — the totals and the export include them all.</p> : null}
+        {t.rows.length > PAGE_SIZE_OPTIONS[0] ? (
+          <div className="pt-3">
+            <UrlListPagination listKey="report" pageParam={`page_${t.id}`} page={page} pageSize={pageSize} total={t.rows.length} noun="rows" />
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

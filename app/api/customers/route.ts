@@ -10,14 +10,14 @@ import { CUSTOMER_TAG_VALUES } from "@/lib/customers/constants";
 import { isValidBdPhone, normalizeBdPhone } from "@/lib/customers/phone";
 import { serializeCustomerListItem } from "@/lib/customers/serialize";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
+import { pageArgs, paginationQuery } from "@/lib/list/pagination";
 
 const VIEW_PERMISSIONS: PermissionKey[] = ["customer.view_own", "customer.view_team", "customer.view_all"];
 
 const querySchema = z.object({
   q: z.string().trim().optional(),
   tag: z.enum(CUSTOMER_TAG_VALUES).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 const createSchema = z.object({
@@ -65,8 +65,7 @@ export async function GET(request: NextRequest) {
     prisma.customer.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...pageArgs({ page, pageSize }),
     }),
   ]);
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { UrlListPagination } from "@/components/list/url-list-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,36 +9,36 @@ import { Input } from "@/components/ui/input";
 import { auditFilterOptions, auditFilterSchema, listAuditLogs, type AuditFilters } from "@/lib/audit/queries";
 import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
+import { dateRangeFromParams, resolveDateRange } from "@/lib/date-range";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
+import { readPageParams } from "@/lib/list/pagination";
+import { getListPageSize } from "@/lib/list/prefs";
 import { prisma } from "@/lib/prisma";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 // P4.4 (PRD §3.1) — the audit-log viewer: every sensitive change with who,
 // what, which record, before/after and IP. ADMIN only (audit.view, gated
 // through the nav map by guardPage). Filter by person, record type (and
-// id), action and Dhaka dates; newest first, 50 a page.
+// id), action and Dhaka dates; newest first, 25 / 50 / 100 a page.
 
 const SELECT_CLASS =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30";
 
 const labelOf = (entity: string) => entity.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
-function pageHref(f: AuditFilters, page: number): string {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries({ ...f, page: String(page) })) if (v && !(k === "page" && v === "1")) q.set(k, String(v));
-  const s = q.toString();
-  return s ? `/audit-log?${s}` : "/audit-log";
-}
-
 export default async function AuditLogPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await guardPage("/audit-log");
-  const raw = Object.fromEntries(Object.entries(await searchParams).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v));
-  const parsed = auditFilterSchema.safeParse(raw);
-  const filters: AuditFilters = parsed.success ? parsed.data : { page: 1 };
+  const params = await searchParams;
+  const raw = Object.fromEntries(Object.entries(params).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v));
+  // CORRECTIONS.md items 15/16 — the shared date filter and page size.
+  const range = dateRangeFromParams(params, "all");
+  const { page, pageSize } = readPageParams(params, await getListPageSize(prisma, user.id, "audit_log"));
+  const parsed = auditFilterSchema.safeParse({ ...raw, ...resolveDateRange(range), page, pageSize });
+  const filters: AuditFilters = parsed.success ? parsed.data : { page: 1, pageSize };
   const [list, options] = await Promise.all([listAuditLogs(prisma, filters, await can(user, "product.cost.view")), auditFilterOptions(prisma)]);
-  const pages = Math.max(1, Math.ceil(list.total / list.pageSize));
-  const filtered = Object.keys(raw).some((k) => k !== "page");
+  const filtered = Object.keys(raw).some((k) => k !== "page" && k !== "pageSize" && !(k === "range" && raw.range === "all"));
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
@@ -46,7 +47,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
         <p className="text-sm text-muted-foreground">Every sensitive change — orders, prices, payments, stock, permissions, images, approvals — with who made it, before and after.</p>
       </div>
 
-      <form method="get" className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-7 lg:items-end">
+      <form method="get" className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-6 lg:items-end">
         <Field label="Person" htmlFor="a-actor">
           <select id="a-actor" name="actor" defaultValue={filters.actor ?? ""} className={SELECT_CLASS}>
             <option value="">Everyone</option>
@@ -73,11 +74,8 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
         <Field label="Action contains" htmlFor="a-action">
           <Input id="a-action" name="action" defaultValue={filters.action ?? ""} placeholder="e.g. payment" />
         </Field>
-        <Field label="From" htmlFor="a-from">
-          <Input id="a-from" type="date" name="from" defaultValue={filters.from ?? ""} />
-        </Field>
-        <Field label="To" htmlFor="a-to">
-          <Input id="a-to" type="date" name="to" defaultValue={filters.to ?? ""} />
+        <Field label="Dates" htmlFor="a-range" className="col-span-2">
+          <DateRangeFilter id="a-range" defaultValue={range} inForm />
         </Field>
         <div className="col-span-2 flex gap-2 sm:col-span-1">
           <Button type="submit" className="flex-1">
@@ -140,26 +138,14 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
         </ul>
       )}
 
-      {pages > 1 ? (
-        <div className="flex items-center justify-between gap-2">
-          <Button variant="outline" size="sm" disabled={list.page <= 1} render={list.page > 1 ? <Link href={pageHref(filters, list.page - 1)} /> : undefined} nativeButton={list.page <= 1}>
-            <ChevronLeft /> Newer
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {list.page} of {pages}
-          </span>
-          <Button variant="outline" size="sm" disabled={list.page >= pages} render={list.page < pages ? <Link href={pageHref(filters, list.page + 1)} /> : undefined} nativeButton={list.page >= pages}>
-            Older <ChevronRight />
-          </Button>
-        </div>
-      ) : null}
+      {list.total > 0 ? <UrlListPagination listKey="audit_log" page={list.page} pageSize={list.pageSize} total={list.total} noun={list.total === 1 ? "entry" : "entries"} /> : null}
     </div>
   );
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, className, children }: { label: string; htmlFor: string; className?: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className={cn("flex min-w-0 flex-col gap-1", className)}>
       <label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>

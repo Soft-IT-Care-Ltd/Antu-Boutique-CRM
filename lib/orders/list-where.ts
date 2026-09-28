@@ -2,9 +2,9 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
-import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { DELIVERY_STATUSES, IN_TRANSIT_STATUSES, NOT_COUNTED_AS_SALE, STUCK_AFTER_HOURS, STUCK_STATUSES, type OrderDateBasis, type OrderListPreset } from "@/lib/orders/list-presets";
 import type { OrderStatusValue } from "@/lib/orders/constants";
+import { ORDER_TAB_BY_KEY, type OrderSubTabKey, type OrderTabKey } from "@/lib/orders/tabs";
 
 // The where clauses behind lib/orders/list-presets.ts. The order list API
 // and every dashboard count build from these, then AND in the caller's
@@ -65,7 +65,25 @@ export function dateBasisWhere(basis: OrderDateBasis, range: { gte?: Date; lt?: 
   }
 }
 
-/** Inclusive Dhaka days (YYYY-MM-DD, either end optional) → a [from, to) range. */
-export function dhakaDaysRange(fromDay?: string, toDay?: string): { gte?: Date; lt?: Date } {
-  return { ...(fromDay ? { gte: dhakaDayStartUtc(fromDay) } : {}), ...(toDay ? { lt: dhakaDayStartUtc(toDay, 1) } : {}) };
+export { dhakaDaysRange } from "@/lib/date-range";
+
+// CORRECTIONS.md item 14 — the where behind each Orders tab and sub-tab.
+
+const APPROVAL_PENDING = ["DELIVERY_APPROVAL_PENDING", "PARTIAL_DELIVERY_APPROVAL_PENDING", "RETURN_APPROVAL_PENDING"] as const;
+const NONE: Prisma.OrderWhereInput = { id: { in: [] } };
+
+export function orderTabWhere(tab: OrderTabKey, sub?: OrderSubTabKey): Prisma.OrderWhereInput {
+  const def = ORDER_TAB_BY_KEY[tab];
+  // Fulfilment states arrive with per-location stock and backorders (C3/C5).
+  if (tab === "waiting_for_stock" || tab === "needs_transfer") return NONE;
+  if (tab === "with_courier" && sub) {
+    if (sub === "handed_over") return { status: "HANDED_TO_COURIER" };
+    if (sub === "in_transit") return { status: "IN_TRANSIT", NOT: { shipment: { is: { subStatus: { in: [...APPROVAL_PENDING] } } } } };
+    if (sub === "approval_pending") return { status: "IN_TRANSIT", shipment: { is: { subStatus: { in: [...APPROVAL_PENDING] } } } };
+  }
+  if (tab === "returns" && sub) {
+    if (sub === "returned") return { status: { in: ["RETURNED", "REFUNDED"] } };
+    if (sub === "exchange") return { status: "EXCHANGE_REQUESTED" };
+  }
+  return def.statuses === "all" ? {} : { status: { in: def.statuses } };
 }

@@ -7,7 +7,7 @@ import { scopedWhere } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
 import { listLeaveRequests } from "@/lib/attendance/sheet";
 import { attendanceViewLevel } from "@/lib/attendance/http";
-import { dashboardRanges, type DashboardRanges } from "@/lib/dashboard/ranges";
+import { dashboardPeriod, dashboardRanges, type DashboardPeriod, type DashboardRanges } from "@/lib/dashboard/ranges";
 import type { Db } from "@/lib/db/tx";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
@@ -23,7 +23,7 @@ import { SALES_WHERE } from "@/lib/orders/list-where";
 
 /** Still being worked — counted whenever they were placed. */
 export const OPEN_ORDER_STATUSES: OrderStatusValue[] = ["LEAD", "CONFIRMED", "PACKED", "HANDED_TO_COURIER", "IN_TRANSIT", "ON_HOLD", "PARTIAL_DELIVERED", "EXCHANGE_REQUESTED"];
-/** Finished — counted for orders placed this month. */
+/** Finished — counted for orders placed in the dashboard's period. */
 export const CLOSED_ORDER_STATUSES: OrderStatusValue[] = ["DELIVERED", "COMPLETED", "CANCELLED", "RETURNED", "REFUNDED"];
 
 export type SalesNumbers = {
@@ -31,24 +31,26 @@ export type SalesNumbers = {
   leads: { status: LeadStatusValue; count: number }[];
   leadsOpen: number;
   openOrders: { status: OrderStatusValue; count: number }[];
-  closedThisMonth: { status: OrderStatusValue; count: number }[];
-  month: { value: string; orders: number };
+  period: DashboardPeriod;
+  closedInPeriod: { status: OrderStatusValue; count: number }[];
+  inPeriod: { value: string; orders: number };
   today: { value: string; orders: number };
 };
 
-export async function getSalesNumbers(db: Db, user: SessionUser, now = new Date()): Promise<SalesNumbers> {
+export async function getSalesNumbers(db: Db, user: SessionUser, now = new Date(), period = dashboardPeriod({ preset: "this_month" }, undefined, now)): Promise<SalesNumbers> {
   const ranges = dashboardRanges(now);
-  const monthFrom = dhakaDayStartUtc(ranges.monthStart);
+  const periodFrom = dhakaDayStartUtc(period.range.from);
+  const periodTo = dhakaDayStartUtc(period.range.to, 1);
   const todayFrom = dhakaDayStartUtc(ranges.today);
   const to = dhakaDayStartUtc(ranges.today, 1);
   const orderWhere = (where: Prisma.OrderWhereInput) => scopedWhere({ AND: [{ deletedAt: null }, where] }, user) as Prisma.OrderWhereInput;
   const leadWhere = (where: Prisma.LeadWhereInput) => scopedWhere({ AND: [{ deletedAt: null }, where] }, user) as Prisma.LeadWhereInput;
 
-  const [leadRows, openRows, closedRows, month, today] = await Promise.all([
+  const [leadRows, openRows, closedRows, inPeriod, today] = await Promise.all([
     db.lead.groupBy({ by: ["status"], where: leadWhere({ status: { in: [...OPEN_LEAD_STATUSES] } }), _count: { _all: true } }),
     db.order.groupBy({ by: ["status"], where: orderWhere({ status: { in: OPEN_ORDER_STATUSES } }), _count: { _all: true } }),
-    db.order.groupBy({ by: ["status"], where: orderWhere({ status: { in: CLOSED_ORDER_STATUSES }, createdAt: { gte: monthFrom, lt: to } }), _count: { _all: true } }),
-    db.order.aggregate({ where: orderWhere({ AND: [SALES_WHERE, { createdAt: { gte: monthFrom, lt: to } }] }), _sum: { total: true }, _count: { _all: true } }),
+    db.order.groupBy({ by: ["status"], where: orderWhere({ status: { in: CLOSED_ORDER_STATUSES }, createdAt: { gte: periodFrom, lt: periodTo } }), _count: { _all: true } }),
+    db.order.aggregate({ where: orderWhere({ AND: [SALES_WHERE, { createdAt: { gte: periodFrom, lt: periodTo } }] }), _sum: { total: true }, _count: { _all: true } }),
     db.order.aggregate({ where: orderWhere({ AND: [SALES_WHERE, { createdAt: { gte: todayFrom, lt: to } }] }), _sum: { total: true }, _count: { _all: true } }),
   ]);
 
@@ -59,8 +61,9 @@ export async function getSalesNumbers(db: Db, user: SessionUser, now = new Date(
     leads,
     leadsOpen: leads.reduce((a, l) => a + l.count, 0),
     openOrders: OPEN_ORDER_STATUSES.map((status) => ({ status, count: countOf(openRows, status) })),
-    closedThisMonth: CLOSED_ORDER_STATUSES.map((status) => ({ status, count: countOf(closedRows, status) })),
-    month: { value: fromPaisa(toPaisa(month._sum.total ?? 0)), orders: month._count._all },
+    period,
+    closedInPeriod: CLOSED_ORDER_STATUSES.map((status) => ({ status, count: countOf(closedRows, status) })),
+    inPeriod: { value: fromPaisa(toPaisa(inPeriod._sum.total ?? 0)), orders: inPeriod._count._all },
     today: { value: fromPaisa(toPaisa(today._sum.total ?? 0)), orders: today._count._all },
   };
 }

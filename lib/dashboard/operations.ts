@@ -6,7 +6,7 @@ import { scopedWhere } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
 import { codOverdueSummary, codSummary } from "@/lib/courier/cod-queries";
 import { COD_OVERDUE_DAYS } from "@/lib/courier/constants";
-import { dashboardRanges, type DashboardRanges } from "@/lib/dashboard/ranges";
+import { dashboardPeriod, dashboardRanges, type DashboardPeriod, type DashboardRanges } from "@/lib/dashboard/ranges";
 import type { Db } from "@/lib/db/tx";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
@@ -20,7 +20,6 @@ import { getWalletBalances, type WalletBalance } from "@/lib/wallets/ledger";
 // P4.3 (PRD §4.16) — the Packing and Accounts dashboards, and the alert
 // counts the owner's dashboard shares with them. Each figure is computed
 // with the same where as the screen it links to.
-
 
 export { COD_OVERDUE_DAYS };
 
@@ -49,19 +48,27 @@ export type AccountsNumbers = {
   ranges: DashboardRanges;
   unverified: { count: number; amount: string };
   pendingRefunds: number;
-  collectedToday: { count: number; amount: string };
-  expensesToday: { count: number; amount: string };
+  period: DashboardPeriod;
+  /** Money received in the dashboard's period (the collection report's "Collected"). */
+  collected: { count: number; amount: string };
+  expenses: { count: number; amount: string };
   cod: { count: number; amount: string; overdueCount: number; overdueAmount: string } | null;
   wallets: WalletBalance[] | null;
 };
 
-export async function getAccountsNumbers(db: Db, user: SessionUser, opts: { cod: boolean; wallets: boolean; expenses: boolean }, now = new Date()): Promise<AccountsNumbers> {
+export async function getAccountsNumbers(
+  db: Db,
+  user: SessionUser,
+  opts: { cod: boolean; wallets: boolean; expenses: boolean },
+  now = new Date(),
+  period = dashboardPeriod({ preset: "today" }, undefined, now),
+): Promise<AccountsNumbers> {
   const ranges = dashboardRanges(now);
-  const from = dhakaDayStartUtc(ranges.today);
-  const to = dhakaDayStartUtc(ranges.today, 1);
+  const from = dhakaDayStartUtc(period.range.from);
+  const to = dhakaDayStartUtc(period.range.to, 1);
   const [queue, collected, expenses, cod, codLate, wallets] = await Promise.all([
     paymentQueueCounts(user),
-    // The collection report's "Collected" for today.
+    // The collection report's "Collected" for the period.
     db.payment.aggregate({ where: { kind: "PAYMENT", paidAt: { gte: from, lt: to }, order: scopedWhere({ deletedAt: null }, user) as Prisma.OrderWhereInput }, _sum: { amount: true }, _count: { _all: true } }),
     opts.expenses ? db.expense.aggregate({ where: { deletedAt: null, expenseDate: { gte: from, lt: to } }, _sum: { amount: true }, _count: { _all: true } }) : null,
     opts.cod ? codSummary(user) : null,
@@ -72,8 +79,9 @@ export async function getAccountsNumbers(db: Db, user: SessionUser, opts: { cod:
     ranges,
     unverified: { count: queue.unverified, amount: queue.unverifiedAmount },
     pendingRefunds: queue.pendingRefunds,
-    collectedToday: { count: collected._count._all, amount: fromPaisa(toPaisa(collected._sum.amount ?? 0)) },
-    expensesToday: expenses ? { count: expenses._count._all, amount: fromPaisa(toPaisa(expenses._sum.amount ?? 0)) } : { count: 0, amount: "0.00" },
+    period,
+    collected: { count: collected._count._all, amount: fromPaisa(toPaisa(collected._sum.amount ?? 0)) },
+    expenses: expenses ? { count: expenses._count._all, amount: fromPaisa(toPaisa(expenses._sum.amount ?? 0)) } : { count: 0, amount: "0.00" },
     cod: cod && codLate ? { count: cod.awaitingCount, amount: cod.awaitingCod, overdueCount: codLate.count, overdueAmount: codLate.amount } : null,
     wallets: wallets ? wallets.filter((w) => w.isActive) : null,
   };

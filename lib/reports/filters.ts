@@ -11,7 +11,9 @@ import type { SessionUser } from "@/lib/auth/types";
 import type { ViewLevel } from "@/lib/auth/scope";
 import { peopleWhere } from "@/lib/reports/access";
 import { GROUP_BY_LABELS, GROUP_BY_VALUES, type GroupByValue, type ReportDef } from "@/lib/reports/catalog";
-import { shiftMonth } from "@/lib/targets/month";
+import { shiftDay } from "@/lib/dashboard/links";
+import { DATE_RANGE_PRESETS, resolveDateRange, type DateRangePreset } from "@/lib/date-range";
+import { dhakaToday, shiftMonth } from "@/lib/targets/month";
 
 // Parses a report's filters from the query string (Zod, CLAUDE.md rule 9).
 // Only the filters the report declares are read; the rest are ignored.
@@ -24,6 +26,8 @@ const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-MM-DD");
 const id = z.string().trim().min(1).max(50);
 
 const schema = z.object({
+  // CORRECTIONS.md item 16 — the shared date filter's preset; from/to carry a custom range.
+  range: z.enum(DATE_RANGE_PRESETS).optional(),
   from: day.optional(),
   to: day.optional(),
   person: id.optional(),
@@ -39,6 +43,8 @@ const schema = z.object({
 });
 
 export type ReportFilters = {
+  /** The preset the range came from, when it came from one (the filter bar shows it). */
+  rangePreset?: DateRangePreset;
   fromDay: string;
   toDay: string;
   /** [from, to) UTC instants covering the inclusive Dhaka days. */
@@ -69,7 +75,20 @@ type Parsed = { ok: true; filters: ReportFilters } | { ok: false; error: string 
  * Strict for the API (a bad value is a 400); `lenient` for the page, where
  * a mistyped URL just falls back to the default.
  */
-export function parseReportFilters(def: ReportDef, params: Record<string, string | string[] | undefined>, opts: { lenient?: boolean } = {}): Parsed {
+/** The first Dhaka day the shop has any order or expense on — where "All Time" starts. */
+export async function reportAllTimeFrom(db: Db): Promise<string | undefined> {
+  const [orders, expenses] = await Promise.all([db.order.aggregate({ _min: { createdAt: true } }), db.expense.aggregate({ _min: { expenseDate: true } })]);
+  const first = [orders._min.createdAt, expenses._min.expenseDate].filter((d): d is Date => d !== null).sort((a, b) => a.getTime() - b.getTime())[0];
+  return first ? dhakaToday(first) : undefined;
+}
+
+/** parseReportFilters, looking up where "All Time" starts when that's what was asked for. */
+export async function parseReportRequest(db: Db, def: ReportDef, params: Record<string, string | string[] | undefined>, opts: { lenient?: boolean } = {}): Promise<Parsed> {
+  const range = Array.isArray(params.range) ? params.range[0] : params.range;
+  return parseReportFilters(def, params, { ...opts, allTimeFrom: range === "all" ? await reportAllTimeFrom(db) : undefined });
+}
+
+export function parseReportFilters(def: ReportDef, params: Record<string, string | string[] | undefined>, opts: { lenient?: boolean; allTimeFrom?: string } = {}): Parsed {
   const raw: Record<string, string> = {};
   for (const [k, v] of Object.entries(params)) {
     const value = Array.isArray(v) ? v[0] : v;
@@ -89,13 +108,25 @@ export function parseReportFilters(def: ReportDef, params: Record<string, string
   }
 
   const fallback = defaultRange(def);
+  const preset = data.range && data.range !== "custom" ? data.range : undefined;
+  if (preset === "all") {
+    // Every report needs both ends: All Time runs from the first order or expense, capped below.
+    data.from = opts.allTimeFrom ?? fallback.fromDay;
+    data.to = todayInDhaka();
+  } else if (preset) {
+    const r = resolveDateRange({ preset });
+    data.from = r.from;
+    data.to = r.to;
+  }
   let fromDay = data.from ?? fallback.fromDay;
   let toDay = data.to ?? fallback.toDay;
   if (fromDay > toDay) {
     if (!opts.lenient) return { ok: false, error: "The start date must be on or before the end date" };
     [fromDay, toDay] = [toDay, fromDay];
   }
-  if (daysBetween(fromDay, toDay) >= MAX_RANGE_DAYS) {
+  if (daysBetween(fromDay, toDay) >= MAX_RANGE_DAYS && preset === "all") {
+    fromDay = shiftDay(toDay, -(MAX_RANGE_DAYS - 1));
+  } else if (daysBetween(fromDay, toDay) >= MAX_RANGE_DAYS) {
     if (!opts.lenient) return { ok: false, error: "Pick a range of two years or less" };
     fromDay = fallback.fromDay;
     toDay = fallback.toDay;
@@ -105,6 +136,7 @@ export function parseReportFilters(def: ReportDef, params: Record<string, string
   return {
     ok: true,
     filters: {
+      ...(preset ? { rangePreset: preset } : {}),
       fromDay,
       toDay,
       from: dhakaDayStartUtc(fromDay),

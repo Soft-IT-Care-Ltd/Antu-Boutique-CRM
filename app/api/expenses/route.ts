@@ -8,6 +8,7 @@ import { createExpense } from "@/lib/expenses/service";
 import { badRequest, dayString, financeErrorResponse, idString, money, moneyDayString } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // PRD §4.12 — daily expense entry. Admin/Manager/Accounts (expense.*).
 const querySchema = z.object({
@@ -18,8 +19,7 @@ const querySchema = z.object({
   walletId: idString.optional(),
   from: dayString.optional(),
   to: dayString.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  ...paginationQuery,
 });
 
 const createSchema = z.object({

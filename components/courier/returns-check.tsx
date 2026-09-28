@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ClipboardCheck, Loader2, Undo2 } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -25,23 +27,28 @@ type Mode = { kind: "kept" | "check"; row: CourierReturnRow };
 export function ReturnsCheck({ canCheck, canMarkKept }: { canCheck: boolean; canMarkKept: boolean }) {
   const [status, setStatus] = useState<"open" | "completed">("open");
   const [rows, setRows] = useState<CourierReturnRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const pager = usePager("courier_returns");
+  const { page, pageSize, setPage } = pager;
   const [mode, setMode] = useState<Mode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    fetchJson<{ items: CourierReturnRow[] }>(`/api/courier/returns?status=${status}&pageSize=50`)
+    fetchJson<{ items: CourierReturnRow[]; total: number }>(`/api/courier/returns?status=${status}&page=${page}&pageSize=${pageSize}`)
       .then((data) => {
         setRows(data.items);
+        setTotal(data.total);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load returns."));
-  }, [status, reloadKey]);
+  }, [status, page, pageSize, reloadKey]);
 
   function showStatus(next: "open" | "completed") {
     if (next === status) return;
     setRows(null);
     setStatus(next);
+    pager.reset();
   }
 
   return (
@@ -139,6 +146,8 @@ export function ReturnsCheck({ canCheck, canMarkKept }: { canCheck: boolean; can
           ))}
         </div>
       )}
+
+      {rows && rows.length > 0 ? <ListPagination page={page} pageSize={pageSize} total={total} noun="parcels" onPageChange={setPage} onPageSizeChange={pager.setPageSize} /> : null}
 
       {mode ? (
         <ReturnActionDialog

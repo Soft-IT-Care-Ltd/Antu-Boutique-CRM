@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, Users2 } from "lucide-react";
+import { Plus, Search, Users2 } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { FollowUpTime, LeadStatusBadge } from "@/components/leads/lead-badges";
 import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { Button } from "@/components/ui/button";
@@ -26,9 +29,8 @@ import {
   type LeadStatusValue,
 } from "@/lib/leads/constants";
 import type { LeadListItem, LeadPerson, LeadStatusCounts } from "@/lib/leads/types";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { ApiError, fetchJson } from "@/lib/orders/client";
-
-const PAGE_SIZE = 20;
 
 type StatusFilter = LeadStatusValue | "open" | "all";
 
@@ -57,7 +59,8 @@ export function LeadList({
 }) {
   const router = useRouter();
   const [data, setData] = useState<ListResponse | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("leads");
+  const { page, pageSize, setPage, reset } = pager;
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>(initialFilters.status ?? "open");
@@ -65,6 +68,7 @@ export function LeadList({
   const [followUp, setFollowUp] = useState<LeadFollowUpFilter | "all">(initialFilters.followUp ?? "all");
   const [ownerId, setOwnerId] = useState<string>(initialFilters.ownerId ?? "all");
   const [campaign, setCampaign] = useState<string>(initialFilters.campaign ?? "");
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -72,19 +76,20 @@ export function LeadList({
   useEffect(() => {
     const timer = setTimeout(() => {
       setQuery(q.trim());
-      setPage(1);
+      reset();
     }, 300);
     return () => clearTimeout(timer);
-  }, [q]);
+  }, [q, reset]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (query) params.set("q", query);
     if (status !== "all") params.set("status", status);
     if (source !== "all") params.set("source", source);
     if (followUp !== "all") params.set("followUp", followUp);
     if (ownerId !== "all") params.set("ownerId", ownerId);
     if (campaign) params.set("campaign", campaign);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     let live = true;
     fetchJson<ListResponse>(`/api/leads?${params}`)
       .then((d) => {
@@ -96,11 +101,11 @@ export function LeadList({
     return () => {
       live = false;
     };
-  }, [query, status, source, followUp, ownerId, campaign, page, reloadKey]);
+  }, [query, status, source, followUp, ownerId, campaign, range, page, pageSize, reloadKey]);
 
   function filter<T>(setter: (v: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
   }
 
   const counts = data?.counts;
@@ -114,7 +119,6 @@ export function LeadList({
 
   const items = data?.items ?? null;
   const total = data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const showOwner = people.length > 1;
 
   return (
@@ -142,6 +146,7 @@ export function LeadList({
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input placeholder="Name, phone, campaign…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-8" aria-label="Search leads" />
           </div>
+          <DateRangeFilter value={range} onChange={(v) => filter(setRange, v)} />
           <Select value={source} onValueChange={(v) => filter(setSource, v as LeadSourceValue | "all")}>
             <SelectTrigger className="w-full lg:w-44" aria-label="Source">
               <SelectValue>{(v: string) => (v === "all" ? "All sources" : LEAD_SOURCE_LABELS[v as LeadSourceValue])}</SelectValue>
@@ -294,19 +299,7 @@ export function LeadList({
             </Table>
           </div>
 
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Page {page} of {totalPages} · {total} lead{total === 1 ? "" : "s"}
-            </span>
-            <div className="flex gap-1">
-              <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-                <ChevronLeft />
-              </Button>
-              <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-                <ChevronRight />
-              </Button>
-            </div>
-          </div>
+          <ListPagination page={page} pageSize={pageSize} total={total} noun={total === 1 ? "lead" : "leads"} onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
         </>
       )}
 

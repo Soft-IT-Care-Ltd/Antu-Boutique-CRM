@@ -6,6 +6,7 @@ import { z } from "zod";
 import { stripCostFields } from "@/lib/auth/strip-cost-fields";
 import type { Db } from "@/lib/db/tx";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
+import { DEFAULT_PAGE_SIZE, pageArgs } from "@/lib/list/pagination";
 
 // P4.4 (PRD §3.1, §4.15) — the audit-log viewer's read side: every
 // sensitive change, newest first, filterable by who did it, what kind of
@@ -27,12 +28,11 @@ export const auditFilterSchema = z
     from: day.optional(),
     to: day.optional(),
     page: z.coerce.number().int().min(1).max(10_000).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).optional(),
   })
   .refine((q) => !q.from || !q.to || q.from <= q.to, "The start date must be on or before the end date");
 
 export type AuditFilters = z.infer<typeof auditFilterSchema>;
-
-export const AUDIT_PAGE_SIZE = 50;
 
 export type AuditLogView = {
   id: string;
@@ -77,20 +77,20 @@ export function auditWhere(f: AuditFilters): Prisma.AuditLogWhereInput {
 
 export async function listAuditLogs(db: Db, f: AuditFilters, canSeeCost: boolean): Promise<{ items: AuditLogView[]; total: number; page: number; pageSize: number }> {
   const where = auditWhere(f);
+  const pageSize = f.pageSize ?? DEFAULT_PAGE_SIZE;
   const [total, rows] = await Promise.all([
     db.auditLog.count({ where }),
     db.auditLog.findMany({
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      skip: (f.page - 1) * AUDIT_PAGE_SIZE,
-      take: AUDIT_PAGE_SIZE,
+      ...pageArgs({ page: f.page, pageSize }),
       include: { actor: { select: { id: true, name: true } } },
     }),
   ]);
   return {
     total,
     page: f.page,
-    pageSize: AUDIT_PAGE_SIZE,
+    pageSize,
     items: rows.map((r) => {
       const before = stripCostFields(r.before, canSeeCost);
       const after = stripCostFields(r.after, canSeeCost);

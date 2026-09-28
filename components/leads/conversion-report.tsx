@@ -4,13 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { LEAD_LOST_REASON_LABELS, LEAD_SOURCE_LABELS, LEAD_SOURCE_VALUES, type LeadSourceValue } from "@/lib/leads/constants";
 import type { ConversionRow, LeadConversionReport, LeadPerson } from "@/lib/leads/types";
 import { formatBDT } from "@/lib/money";
@@ -22,15 +22,14 @@ const pct = (rate: number | null) => (rate === null ? "—" : `${(rate * 100).to
  * PRD §4.5 conversion rate per executive, source and campaign. A cohort:
  * leads that came in during the period, and how many have bought since.
  */
-export function ConversionReportView({ people, canExport, monthStart, today }: { people: LeadPerson[]; canExport: boolean; monthStart: string; today: string }) {
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
+export function ConversionReportView({ people, canExport }: { people: LeadPerson[]; canExport: boolean }) {
+  const [range, setRange] = useState<DateRangeValue>({ preset: "this_month" });
   const [ownerId, setOwnerId] = useState("all");
   const [source, setSource] = useState<LeadSourceValue | "all">("all");
   const [report, setReport] = useState<LeadConversionReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const params = new URLSearchParams({ from, to });
+  const params = new URLSearchParams(dateRangeQuery(range, { bounded: true }));
   if (ownerId !== "all") params.set("ownerId", ownerId);
   if (source !== "all") params.set("source", source);
   const query = params.toString();
@@ -56,16 +55,7 @@ export function ConversionReportView({ people, canExport, monthStart, today }: {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="grid grid-cols-2 gap-2 sm:flex">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="report-from">From</Label>
-            <Input id="report-from" type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="report-to">To</Label>
-            <Input id="report-to" type="date" value={to} min={from} max={today} onChange={(e) => e.target.value && setTo(e.target.value)} />
-          </div>
-        </div>
+        <DateRangeFilter value={range} onChange={setRange} />
         {people.length > 1 ? (
           <Select value={ownerId} onValueChange={(v) => setOwnerId(v as string)}>
             <SelectTrigger className="w-full sm:w-48" aria-label="Sales executive">

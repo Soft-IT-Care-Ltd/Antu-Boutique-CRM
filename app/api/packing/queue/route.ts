@@ -5,12 +5,12 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { loadPackingQueuePage, serializePackingQueueItem } from "@/lib/packing/queue";
 import { getPackingSlaHours } from "@/lib/settings/get";
 import { PACKING_VIEWS } from "@/lib/packing/types";
+import { paginationQuery } from "@/lib/list/pagination";
 
 const querySchema = z.object({
   q: z.string().trim().optional(),
   view: z.enum(PACKING_VIEWS).default("queue"),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 // PRD §4.8: "packing queue — all CONFIRMED orders, oldest first." No money

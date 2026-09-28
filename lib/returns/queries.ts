@@ -11,6 +11,8 @@ import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { RETURNABLE_ORDER_STATUSES, type ReturnCaseModeValue, type ReturnCaseStatusValue, type ReturnCaseTypeValue, type ReturnReasonValue } from "@/lib/returns/constants";
 import type { CounterLookup, ExchangeReport, OrderReturnInfo, ReturnCaseView, ReturnableItem } from "@/lib/returns/types";
 import { getStoreCreditBalance } from "@/lib/store-credit/ledger";
+import { dhakaDaysRange } from "@/lib/date-range";
+import { pageArgs } from "@/lib/list/pagination";
 
 // Read side of PRD §4.11. Every list and detail is scoped through the
 // ORIGINAL order (CLAUDE.md rule 6): an SE sees the returns on their own
@@ -123,10 +125,14 @@ function caseSearch(q: string | undefined): Prisma.ReturnCaseWhereInput {
 export async function listReturnCases(
   db: Db,
   user: SessionUser,
-  opts: { tab: CaseTab; type?: ReturnCaseTypeValue; channel?: OrderChannelValue; q?: string; page: number; pageSize: number },
+  opts: { tab: CaseTab; type?: ReturnCaseTypeValue; channel?: OrderChannelValue; q?: string; from?: string; to?: string; page: number; pageSize: number },
 ): Promise<{ items: ReturnCaseView[]; total: number; counts: Record<CaseTab, number> }> {
   // The channel narrows inside the scope; it can never widen it (CLAUDE.md rule 6).
-  const base: Prisma.ReturnCaseWhereInput = { order: orderScope(user, opts.channel ? { channel: opts.channel } : {}), ...(opts.type ? { type: opts.type } : {}) };
+  const base: Prisma.ReturnCaseWhereInput = {
+    order: orderScope(user, opts.channel ? { channel: opts.channel } : {}),
+    ...(opts.type ? { type: opts.type } : {}),
+    ...(opts.from || opts.to ? { createdAt: dhakaDaysRange(opts.from, opts.to) } : {}),
+  };
   const where: Prisma.ReturnCaseWhereInput = { AND: [base, { status: { in: TAB_STATUS[opts.tab] } }, caseSearch(opts.q)] };
   const [total, rows, ...counts] = await Promise.all([
     db.returnCase.count({ where }),
@@ -134,8 +140,7 @@ export async function listReturnCases(
       where,
       include: CASE_VIEW_INCLUDE,
       orderBy: opts.tab === "requested" || opts.tab === "approved" ? { createdAt: "asc" } : { updatedAt: "desc" },
-      skip: (opts.page - 1) * opts.pageSize,
-      take: opts.pageSize,
+      ...pageArgs(opts),
     }),
     ...(Object.keys(TAB_STATUS) as CaseTab[]).map((tab) => db.returnCase.count({ where: { AND: [base, { status: { in: TAB_STATUS[tab] } }] } })),
   ]);

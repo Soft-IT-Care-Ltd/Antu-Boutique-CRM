@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, Inbox, Loader2, Search } from "lucide-react";
+import { CheckCheck, CheckCircle2, Inbox, Loader2, Search } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { WalletSelect } from "@/components/wallets/wallet-select";
+import { dateRangeFromDays, dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
@@ -23,8 +27,6 @@ import { ALL_PAYMENT_METHOD_VALUES, PAYMENT_METHOD_LABELS, type PaymentMethodVal
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { REFUND_STATUS_LABELS, REFUND_STATUS_VALUES, type PaymentListItem, type PaymentListView, type RefundStatusValue } from "@/lib/payments/types";
 import type { WalletOption } from "@/lib/wallets/constants";
-
-const PAGE_SIZE = 25;
 
 type ListResponse = { items: PaymentListItem[]; total: number; totalAmount: string; counts: { unverified: number; unverifiedAmount: string; pendingRefunds: number } };
 
@@ -55,15 +57,15 @@ export function PaymentList({
   initialFilters?: { from?: string; to?: string };
 }) {
   const [data, setData] = useState<ListResponse | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("payments");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [method, setMethod] = useState<PaymentMethodValue | "all">("all");
   const [walletId, setWalletId] = useState("");
   const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const [refundStatus, setRefundStatus] = useState<RefundStatusValue | "all">(view === "refunds" ? "PENDING" : "all");
-  const [from, setFrom] = useState(initialFilters.from ?? "");
-  const [to, setTo] = useState(initialFilters.to ?? "");
+  const [range, setRange] = useState<DateRangeValue>(() => dateRangeFromDays(initialFilters.from, initialFilters.to));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -78,21 +80,20 @@ export function PaymentList({
   }, [q]);
 
   const load = useCallback(() => {
-    const params = new URLSearchParams({ view, page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ view, page: String(page), pageSize: String(pageSize) });
     if (debouncedQ) params.set("q", debouncedQ);
     if (method !== "all") params.set("method", method);
     if (walletId) params.set("walletId", walletId);
     if (channel !== "all") params.set("channel", channel);
     if (view === "refunds" && refundStatus !== "all") params.set("refundStatus", refundStatus);
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     fetchJson<ListResponse>(`/api/payments?${params.toString()}`)
       .then((res) => {
         setData(res);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load payments."));
-  }, [view, page, debouncedQ, method, walletId, channel, refundStatus, from, to]);
+  }, [view, page, pageSize, debouncedQ, method, walletId, channel, refundStatus, range]);
 
   useEffect(() => {
     load();
@@ -100,7 +101,7 @@ export function PaymentList({
 
   function filter<T>(setter: (value: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
     setSelected(new Set());
   }
 
@@ -137,7 +138,6 @@ export function PaymentList({
   }
 
   const items = data?.items ?? null;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
   const selectable = view === "unverified" && canVerify;
   const selectedSum = items?.filter((i) => selected.has(i.id)).reduce((a, i) => a + Number(i.amount), 0) ?? 0;
 
@@ -186,10 +186,7 @@ export function PaymentList({
             </Select>
           ) : null}
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input type="date" aria-label="From date" value={from} onChange={(e) => filter(setFrom, e.target.value)} />
-          <Input type="date" aria-label="To date" value={to} onChange={(e) => filter(setTo, e.target.value)} />
-        </div>
+        <DateRangeFilter value={range} onChange={(v) => filter(setRange, v)} />
         {selectable && selected.size > 0 ? (
           <Button onClick={() => verify([...selected])} disabled={busy} className="lg:ml-auto">
             {busy ? <Loader2 className="animate-spin" /> : <CheckCheck />}
@@ -327,19 +324,20 @@ export function PaymentList({
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {data!.total} rows · {formatBDT(data!.totalAmount)}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={data!.total}
+          noun="rows"
+          onPageChange={setPage}
+          onPageSizeChange={(n) => {
+            pager.setPageSize(n);
+            setSelected(new Set());
+          }}
+        >
+          {" "}
+          · {formatBDT(data!.totalAmount)}
+        </ListPagination>
       ) : null}
 
       <Dialog open={rejecting !== null} onOpenChange={(o) => !o && setRejecting(null)}>

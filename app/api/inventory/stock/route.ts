@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { STOCK_STATUS_FILTERS } from "@/lib/inventory/constants";
 import { getStockReport } from "@/lib/inventory/stock-report";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // PRD §4.15 R4 — stock per variant. Open to every inventory.view role; the
 // valuation columns are stripped for anyone without product.cost.view.
@@ -13,8 +14,7 @@ const querySchema = z.object({
   q: z.string().trim().max(100).optional(),
   categoryId: z.string().trim().max(50).optional(),
   status: z.enum(STOCK_STATUS_FILTERS).default("all"),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

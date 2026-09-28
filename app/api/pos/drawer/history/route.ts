@@ -2,14 +2,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requirePermission } from "@/lib/auth/require-permission";
-import { badRequest } from "@/lib/finance/http";
+import { badRequest, dayString } from "@/lib/finance/http";
 import { getPosCashWalletId, listDrawers } from "@/lib/pos/drawer";
 import { posErrorResponse } from "@/lib/pos/http";
 import { prisma } from "@/lib/prisma";
+import { paginationQuery } from "@/lib/list/pagination";
 
 const querySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(60).default(15),
+  from: dayString.optional(),
+  to: dayString.optional(),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
   if (!parsed.success) return badRequest(parsed.error);
   try {
     const walletId = await getPosCashWalletId(prisma);
-    return NextResponse.json({ ...(await listDrawers(prisma, walletId, parsed.data.page, parsed.data.pageSize)), ...parsed.data });
+    return NextResponse.json({ ...(await listDrawers(prisma, walletId, parsed.data)), ...parsed.data });
   } catch (error) {
     return posErrorResponse(error);
   }

@@ -234,10 +234,25 @@ model User {
   notifications             Notification[]           @relation("NotificationUser")
   decidedLeaveRequests      LeaveRequest[]           @relation("LeaveRequestDecidedBy")
   cancelledLeaveRequests    LeaveRequest[]           @relation("LeaveRequestCancelledBy")
+  listPreferences           UserListPreference[]
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
   @@map("users")
+}
+
+// CORRECTIONS.md item 15 — the page size each person picked on each list
+// (25 / 50 / 100), remembered across devices. listKey is one of LIST_KEYS
+// in lib/list/pagination.ts.
+model UserListPreference {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listKey   String
+  pageSize  Int
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, listKey])
+  @@map("user_list_preferences")
 }
 
 // Lightweight catalog master lists, seeded in Phase 0 so Settings and the

@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, UserX } from "lucide-react";
+import { Plus, Search, UserX } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +23,6 @@ import { ApiError, fetchJson } from "@/lib/customers/client";
 import { CUSTOMER_TAG_LABELS, CUSTOMER_TAG_VALUES, type CustomerTagValue } from "@/lib/customers/constants";
 import type { CustomerListItem } from "@/lib/customers/types";
 
-const PAGE_SIZE = 20;
-
 const TAG_VARIANT: Record<CustomerTagValue, "default" | "secondary" | "destructive"> = {
   VIP: "default",
   WHOLESALE: "secondary",
@@ -33,7 +33,8 @@ export function CustomerList({ canCreate }: { canCreate: boolean }) {
   const router = useRouter();
   const [items, setItems] = useState<CustomerListItem[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const pager = usePager("customers");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [tag, setTag] = useState<string>("all");
@@ -49,7 +50,7 @@ export function CustomerList({ canCreate }: { canCreate: boolean }) {
     if (debouncedQ) params.set("q", debouncedQ);
     if (tag !== "all") params.set("tag", tag);
     params.set("page", String(page));
-    params.set("pageSize", String(PAGE_SIZE));
+    params.set("pageSize", String(pageSize));
 
     fetchJson<{ items: CustomerListItem[]; total: number }>(`/api/customers?${params.toString()}`)
       .then((data) => {
@@ -58,14 +59,12 @@ export function CustomerList({ canCreate }: { canCreate: boolean }) {
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load customers."));
-  }, [debouncedQ, tag, page]);
+  }, [debouncedQ, tag, page, pageSize]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
   }
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
@@ -162,19 +161,7 @@ export function CustomerList({ canCreate }: { canCreate: boolean }) {
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {total} customers
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={total} noun="customers" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
     </div>
   );

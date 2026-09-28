@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ClipboardList, Loader2 } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,21 +35,24 @@ function formatDateTime(iso: string): string {
 export function EditRequestsList() {
   const [status, setStatus] = useState<OrderEditRequestStatusValue>("PENDING");
   const [items, setItems] = useState<InboxRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const pager = usePager("edit_requests");
+  const { page, pageSize, setPage } = pager;
+  const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
 
-  function reload() {
-    fetchJson<{ items: InboxRow[] }>(`/api/order-edit-requests?status=${status}`)
-      .then((data) => setItems(data.items))
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load edit requests."));
-  }
+  const reload = () => setReloadKey((k) => k + 1);
 
   useEffect(() => {
-    fetchJson<{ items: InboxRow[] }>(`/api/order-edit-requests?status=${status}`)
-      .then((data) => setItems(data.items))
+    fetchJson<{ items: InboxRow[]; total: number }>(`/api/order-edit-requests?status=${status}&page=${page}&pageSize=${pageSize}`)
+      .then((data) => {
+        setItems(data.items);
+        setTotal(data.total);
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load edit requests."));
-  }, [status]);
+  }, [status, page, pageSize, reloadKey]);
 
   async function review(id: string, action: "approve" | "reject") {
     setBusyId(id);
@@ -67,7 +72,13 @@ export function EditRequestsList() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Select value={status} onValueChange={(v) => setStatus(v as OrderEditRequestStatusValue)}>
+      <Select
+        value={status}
+        onValueChange={(v) => {
+          setStatus(v as OrderEditRequestStatusValue);
+          pager.reset();
+        }}
+      >
         <SelectTrigger className="w-52">
           <SelectValue placeholder="Status">{(value: string) => ORDER_EDIT_REQUEST_STATUS_LABELS[value as OrderEditRequestStatusValue]}</SelectValue>
         </SelectTrigger>
@@ -147,6 +158,7 @@ export function EditRequestsList() {
           </Card>
         ))
       )}
+      {items && items.length > 0 ? <ListPagination page={page} pageSize={pageSize} total={total} noun="requests" onPageChange={setPage} onPageSizeChange={pager.setPageSize} /> : null}
     </div>
   );
 }

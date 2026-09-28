@@ -1,29 +1,30 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { UrlListPagination } from "@/components/list/url-list-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { guardPage } from "@/lib/auth/guard-page";
 import { can } from "@/lib/auth/permissions";
 import { expensesHref } from "@/lib/dashboard/links";
 import { dashboardRanges } from "@/lib/dashboard/ranges";
+import { dateRangeFromParams, resolveDateRange } from "@/lib/date-range";
 import { EXPENSE_KIND_LABELS, OPERATING_EXPENSE_FILTER } from "@/lib/expenses/constants";
 import { getProfitReport, grossPaisa, netPaisa } from "@/lib/finance/profit";
 import { dhakaDayStartUtc, formatDhakaDateTime } from "@/lib/inventory/constants";
 import { fromPaisa } from "@/lib/inventory/costing";
 import { formatBDT } from "@/lib/money";
 import { ORDER_CHANNEL_LABELS } from "@/lib/orders/constants";
+import { readPageParams } from "@/lib/list/pagination";
+import { getListPageSize } from "@/lib/list/prefs";
 import { prisma } from "@/lib/prisma";
+import { reportAllTimeFrom } from "@/lib/reports/filters";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_ROWS = 500;
 
 const money = (paisa: number) => formatBDT(fromPaisa(paisa));
 
@@ -37,13 +38,16 @@ export default async function ProfitBreakdownPage({ searchParams }: { searchPara
   if (!(await can(user, ["report.pl.view", "product.cost.view"], "all"))) redirect("/dashboard");
 
   const ranges = dashboardRanges();
-  const params = await searchParams;
-  const day = z.string().regex(DAY);
-  let from = day.catch(ranges.monthStart).parse(params.from);
-  let to = day.catch(ranges.today).parse(params.to);
-  if (to < from) [from, to] = [to, from];
+  // CORRECTIONS.md item 16 — the shared date filter; All Time runs from the first order or expense.
+  const query = await searchParams;
+  const range = dateRangeFromParams(query, "this_month");
+  const days = resolveDateRange(range);
+  const from = days.from ?? (range.preset === "all" ? ((await reportAllTimeFrom(prisma)) ?? ranges.monthStart) : ranges.monthStart);
+  const to = days.to ?? ranges.today;
 
-  const report = await getProfitReport(prisma, dhakaDayStartUtc(from), dhakaDayStartUtc(to, 1));
+  const [report, savedPageSize] = await Promise.all([getProfitReport(prisma, dhakaDayStartUtc(from), dhakaDayStartUtc(to, 1)), getListPageSize(prisma, user.id, "report")]);
+  const { page: askedPage, pageSize } = readPageParams(query, savedPageSize);
+  const page = Math.min(askedPage, Math.max(1, Math.ceil(report.orders.length / pageSize)));
   const t = report.totals;
   const net = netPaisa(t);
   const gross = grossPaisa(t);
@@ -57,8 +61,7 @@ export default async function ProfitBreakdownPage({ searchParams }: { searchPara
           <p className="text-sm text-muted-foreground">Orders that went out in the period, what they cost, and the period&apos;s operating expenses.</p>
         </div>
         <form className="flex flex-wrap items-center gap-2" method="get">
-          <Input type="date" name="from" defaultValue={from} className="w-36" aria-label="From" />
-          <Input type="date" name="to" defaultValue={to} className="w-36" aria-label="To" />
+          <DateRangeFilter defaultValue={range} inForm />
           <Button type="submit" variant="outline">
             Show
           </Button>
@@ -99,7 +102,7 @@ export default async function ProfitBreakdownPage({ searchParams }: { searchPara
                   <TableBody>
                     {[...report.orders]
                       .reverse()
-                      .slice(0, MAX_ROWS)
+                      .slice((page - 1) * pageSize, page * pageSize)
                       .map((o) => (
                         <TableRow key={o.id}>
                           <TableCell>
@@ -122,7 +125,11 @@ export default async function ProfitBreakdownPage({ searchParams }: { searchPara
                 </Table>
               </div>
             )}
-            {report.orders.length > MAX_ROWS ? <p className="pt-2 text-sm text-muted-foreground">Showing the latest {MAX_ROWS} of {report.orders.length} — the totals above include them all.</p> : null}
+            {report.orders.length > 0 ? (
+              <div className="pt-3">
+                <UrlListPagination listKey="report" page={page} pageSize={pageSize} total={report.orders.length} noun="orders" />
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

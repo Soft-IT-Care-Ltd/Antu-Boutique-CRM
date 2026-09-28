@@ -2,12 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
 import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { EXPENSE_KIND_LABELS, EXPENSE_NATURE_LABELS, type ExpenseKindValue, type ExpenseNatureValue } from "@/lib/expenses/constants";
 import { formatDhakaDate } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
@@ -30,25 +30,6 @@ function useReport<T>(endpoint: string, from: string, to: string, extra = "") {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the report."));
   }, [endpoint, from, to, extra]);
   return { report, error };
-}
-
-function RangePicker({ from, to, setFrom, setTo }: { from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void }) {
-  return (
-    <div className="grid grid-cols-2 gap-2 sm:w-80">
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="rep-from" className="text-xs">
-          From
-        </Label>
-        <Input id="rep-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="rep-to" className="text-xs">
-          To
-        </Label>
-        <Input id="rep-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-      </div>
-    </div>
-  );
 }
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -150,16 +131,16 @@ function StoreCreditPanel({ credit, to }: { credit: CollectionReport["storeCredi
   );
 }
 
-export function CollectionReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
+export function CollectionReportView({ initialRange }: { initialRange: DateRangeValue }) {
+  const [range, setRange] = useState(initialRange);
+  const { from, to } = dateRangeQuery(range, { bounded: true });
   const [channel, setChannel] = useState<ChannelFilterValue>("all");
   const { report, error } = useReport<CollectionReport>("/api/reports/collection", from, to, channel === "all" ? "" : `&channel=${channel}`);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end gap-2">
-        <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+        <DateRangeFilter value={range} onChange={setRange} />
         <ChannelSelect value={channel} onChange={setChannel} />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -305,15 +286,15 @@ type ExpenseReport = {
   byDay: { day: string; amount: string }[];
 };
 
-export function ExpenseReportView({ initialFrom, initialTo }: { initialFrom: string; initialTo: string }) {
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
+export function ExpenseReportView({ initialRange }: { initialRange: DateRangeValue }) {
+  const [range, setRange] = useState(initialRange);
+  const { from, to } = dateRangeQuery(range, { bounded: true });
   const { report, error } = useReport<ExpenseReport>("/api/reports/expenses", from, to);
   const nature = (n: ExpenseNatureValue) => report?.byNature.find((b) => b.nature === n)?.amount ?? "0";
 
   return (
     <div className="flex flex-col gap-4">
-      <RangePicker from={from} to={to} setFrom={setFrom} setTo={setTo} />
+      <DateRangeFilter value={range} onChange={setRange} />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {!report ? (
         <Loading />

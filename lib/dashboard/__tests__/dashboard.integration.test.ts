@@ -72,7 +72,7 @@ describe("every number is the list it links to", () => {
     const r = n.ranges;
     for (const [row, range] of [
       [n.today, r.todayRange],
-      [n.mtd, r.mtdRange],
+      [n.inPeriod, r.mtdRange],
     ] as const) {
       const sales = await listFor(ordersHref({ preset: "sales", range }));
       expect([sales.total, sales.totalValue]).toEqual([row.orders, Number(row.value)]);
@@ -94,15 +94,15 @@ describe("every number is the list it links to", () => {
     asSession(se);
     const n = await getSalesNumbers(prisma, se);
     const list = await listFor(ordersHref({ preset: "sales", range: n.ranges.mtdRange }));
-    expect([list.total, list.totalValue]).toEqual([n.month.orders, Number(n.month.value)]);
+    expect([list.total, list.totalValue]).toEqual([n.inPeriod.orders, Number(n.inPeriod.value)]);
 
     const own = await prisma.order.aggregate({
       where: { createdById: se.id, deletedAt: null, exchangedFromOrderId: null, status: { notIn: ["LEAD", "CANCELLED", "RETURNED", "REFUNDED"] }, createdAt: { gte: dhakaDayStartUtc(n.ranges.monthStart) } },
       _sum: { total: true },
       _count: { _all: true },
     });
-    expect([n.month.orders, toPaisa(n.month.value)]).toEqual([own._count._all, toPaisa(own._sum.total ?? 0)]);
-    expect(n.month.orders).toBeGreaterThan(0);
+    expect([n.inPeriod.orders, toPaisa(n.inPeriod.value)]).toEqual([own._count._all, toPaisa(own._sum.total ?? 0)]);
+    expect(n.inPeriod.orders).toBeGreaterThan(0);
     for (const s of n.openOrders) expect((await listFor(ordersHref({ status: s.status }))).total).toBe(s.count);
     expect(JSON.stringify(n)).not.toMatch(/cost|profit|margin/i);
   });
@@ -114,7 +114,7 @@ describe("every number is the list it links to", () => {
     const team = await prisma.order.count({
       where: { teamId: tl.teamId, deletedAt: null, exchangedFromOrderId: null, status: { notIn: ["LEAD", "CANCELLED", "RETURNED", "REFUNDED"] }, createdAt: { gte: dhakaDayStartUtc(n.ranges.monthStart) } },
     });
-    expect(n.month.orders).toBe(team);
+    expect(n.inPeriod.orders).toBe(team);
     expect((await listFor(ordersHref({ preset: "sales", range: n.ranges.mtdRange }))).total).toBe(team);
   });
 

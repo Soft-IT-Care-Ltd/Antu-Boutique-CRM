@@ -2,8 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, KeyRound, Loader2, Lock, Pencil, Plus, Search, ShieldCheck, Users } from "lucide-react";
+import { KeyRound, Loader2, Lock, Pencil, Plus, Search, ShieldCheck, Users } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +24,6 @@ import type { StaffListItem, TeamView } from "@/lib/settings/staff";
 type RoleOption = { id: string; name: string; label: string };
 type StaffPage = { items: StaffListItem[]; total: number; page: number; pageSize: number };
 
-const PAGE_SIZE = 25;
 const DHAKA_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" });
 
 /** A readable temporary password: no 0/O/1/l look-alikes. getRandomValues works on iOS 15 and over plain http. */
@@ -52,7 +53,8 @@ export function UsersSettings(props: Props) {
   const [q, setQ] = useState("");
   const [roleId, setRoleId] = useState("all");
   const [status, setStatus] = useState<"active" | "inactive" | "all">("active");
-  const [page, setPage] = useState(1);
+  const pager = usePager("users");
+  const { page, pageSize, setPage } = pager;
   const [data, setData] = useState<StaffPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<StaffListItem | "new" | null>(null);
@@ -60,7 +62,7 @@ export function UsersSettings(props: Props) {
   const [overriding, setOverriding] = useState<StaffListItem | null>(null);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ status, page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
     if (q.trim()) params.set("q", q.trim());
     if (roleId !== "all") params.set("roleId", roleId);
     try {
@@ -69,7 +71,7 @@ export function UsersSettings(props: Props) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load staff.");
     }
-  }, [q, roleId, status, page]);
+  }, [q, roleId, status, page, pageSize]);
 
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -78,9 +80,8 @@ export function UsersSettings(props: Props) {
 
   const filter = <T,>(set: (v: T) => void, v: T) => {
     set(v);
-    setPage(1);
+    pager.reset();
   };
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
   const changed = async () => {
     await load();
     router.refresh();
@@ -207,21 +208,7 @@ export function UsersSettings(props: Props) {
               </Table>
             </div>
           )}
-          {data && data.total > PAGE_SIZE ? (
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>
-                Page {page} of {totalPages} · {data.total} people
-              </span>
-              <div className="flex gap-1">
-                <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-                  <ChevronLeft />
-                </Button>
-                <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-                  <ChevronRight />
-                </Button>
-              </div>
-            </div>
-          ) : null}
+          {data && data.total > 0 ? <ListPagination page={page} pageSize={pageSize} total={data.total} noun="people" onPageChange={setPage} onPageSizeChange={pager.setPageSize} /> : null}
         </CardContent>
       </Card>
 

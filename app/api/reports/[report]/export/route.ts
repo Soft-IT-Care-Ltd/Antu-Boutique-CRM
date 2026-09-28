@@ -5,7 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { prisma } from "@/lib/prisma";
 import { isReportKey, REPORT_BY_KEY } from "@/lib/reports/catalog";
 import { reportFileName, reportToCsv, reportToPdf } from "@/lib/reports/export";
-import { parseReportFilters } from "@/lib/reports/filters";
+import { parseReportRequest } from "@/lib/reports/filters";
 import { ReportAccessError, runReport } from "@/lib/reports/run";
 
 // P4.4 (PRD §4.15) — CSV and PDF export. Needs report.export on top of
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const search = Object.fromEntries(request.nextUrl.searchParams);
   const format = formatSchema.safeParse(search.format);
   if (!format.success) return NextResponse.json({ error: "Choose csv or pdf" }, { status: 400 });
-  const parsed = parseReportFilters(REPORT_BY_KEY[report], search);
+  const parsed = await parseReportRequest(prisma, REPORT_BY_KEY[report], search);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   let result;

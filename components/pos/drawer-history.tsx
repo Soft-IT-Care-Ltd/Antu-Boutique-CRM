@@ -2,42 +2,54 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, History } from "lucide-react";
+import { History } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatDhakaDate } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { DrawerHistoryItem } from "@/lib/pos/types";
 
-const PAGE_SIZE = 15;
 const dayLabel = (ymd: string) => formatDhakaDate(`${ymd}T00:00:00+06:00`);
 
 /** Every day's count, newest first — each row opens that day's reconciliation. */
 export function DrawerHistory() {
   const [data, setData] = useState<{ items: DrawerHistoryItem[]; total: number } | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("drawer_history");
+  const { page, pageSize, setPage } = pager;
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchJson<{ items: DrawerHistoryItem[]; total: number }>(`/api/pos/drawer/history?page=${page}&pageSize=${PAGE_SIZE}`)
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), ...dateRangeQuery(range) });
+    fetchJson<{ items: DrawerHistoryItem[]; total: number }>(`/api/pos/drawer/history?${params.toString()}`)
       .then((d) => {
         setData(d);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load past days."));
-  }, [page]);
-
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
+  }, [page, pageSize, range]);
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="flex items-center gap-2 text-base font-semibold">
-        <History className="size-4" /> Past days
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <History className="size-4" /> Past days
+        </h2>
+        <DateRangeFilter
+          value={range}
+          onChange={(v) => {
+            setRange(v);
+            pager.reset();
+          }}
+        />
+      </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {!data ? (
         <div className="flex flex-col gap-2">
@@ -46,7 +58,8 @@ export function DrawerHistory() {
           ))}
         </div>
       ) : data.items.length === 0 ? (
-        <p className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">No drawer has been opened yet.</p>
+        <p className="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground">
+          {range.preset === "all" ? "No drawer has been opened yet." : "No drawer was opened in these dates."}</p>
       ) : (
         <div>
           <Table>
@@ -85,21 +98,7 @@ export function DrawerHistory() {
           </Table>
         </div>
       )}
-      {data && data.total > PAGE_SIZE ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      {data && data.total > 0 ? <ListPagination page={page} pageSize={pageSize} total={data.total} noun="days" onPageChange={setPage} onPageSizeChange={pager.setPageSize} /> : null}
     </section>
   );
 }

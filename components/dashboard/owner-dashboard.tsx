@@ -12,6 +12,7 @@ import { getTodayBoard } from "@/lib/attendance/sheet";
 import { codHref, collectionHref, expensesHref, followUpsHref, leadsHref, ordersHref, profitHref, returnsHref, targetsHref, type DayRange } from "@/lib/dashboard/links";
 import { COD_OVERDUE_DAYS, getLowStockSummary } from "@/lib/dashboard/operations";
 import { getOwnerNumbers, type PeriodRow } from "@/lib/dashboard/owner";
+import type { DashboardPeriod } from "@/lib/dashboard/ranges";
 import type { DashboardPanels } from "@/lib/dashboard/panels";
 import { codOverdueSummary } from "@/lib/courier/cod-queries";
 import { OPERATING_EXPENSE_FILTER } from "@/lib/expenses/constants";
@@ -27,8 +28,9 @@ import { getLeaderboard, getTargetBoard } from "@/lib/targets/service";
 import type { Progress } from "@/lib/targets/types";
 
 // PRD §4.16 Owner/Admin — "the owner sees the business in 10 seconds":
-// today, month to date with target progress, the live operations funnel,
-// the team, 30-day charts and what needs attention. Rendered only when
+// today, the period the date filter picked (This Month by default, with
+// target progress), the live operations funnel, the team, the daily charts
+// and what needs attention. Rendered only when
 // dashboardPanels() says owner (report.pl.view + product.cost.view +
 // order.view_all), because profit is on it.
 
@@ -36,7 +38,7 @@ function PeriodTiles({ row, range, label }: { row: PeriodRow; range: DayRange; l
   const profit = toNumber(row.profit);
   return (
     <TileGrid>
-      <StatTile label={`${label} orders`} value={row.orders} href={ordersHref({ preset: "sales", range })} sub="not cancelled or returned" icon={ShoppingBag} />
+      <StatTile label={label} value={row.orders} href={ordersHref({ preset: "sales", range })} sub="not cancelled or returned" icon={ShoppingBag} />
       <StatTile label="Value" value={formatBDT(row.value)} href={ordersHref({ preset: "sales", range })} sub="order totals" icon={Banknote} />
       <StatTile label="Collected" value={formatBDT(row.collected)} href={collectionHref(range)} sub="money received" icon={HandCoins} />
       <StatTile label="Due" value={formatBDT(row.due)} href={ordersHref({ preset: "due", range })} sub="still unpaid on these orders" icon={Clock} tone={toNumber(row.due) > 0 ? "warning" : undefined} />
@@ -105,9 +107,9 @@ function Funnel({ stages }: { stages: { label: string; count: number; href: stri
   );
 }
 
-export async function OwnerDashboard({ user, panels }: { user: SessionUser; panels: DashboardPanels }) {
+export async function OwnerDashboard({ user, panels, period }: { user: SessionUser; panels: DashboardPanels; period: DashboardPeriod }) {
   const now = new Date();
-  const [numbers, targetLevel, attendanceLevel] = await Promise.all([getOwnerNumbers(prisma, user, now), targetViewLevel(user), attendanceViewLevel(user)]);
+  const [numbers, targetLevel, attendanceLevel] = await Promise.all([getOwnerNumbers(prisma, user, now, period), targetViewLevel(user), attendanceViewLevel(user)]);
   const { ranges } = numbers;
   const [board, leaderboard, attendance, lowStock, followUps, unverified, codLate] = await Promise.all([
     targetLevel ? getTargetBoard(prisma, user, targetLevel, ranges.month) : null,
@@ -128,13 +130,13 @@ export async function OwnerDashboard({ user, panels }: { user: SessionUser; pane
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3">
         <SectionTitle title="Today" description="Orders placed today, money in, and the profit on what went out." />
-        <PeriodTiles row={numbers.today} range={ranges.todayRange} label="Today's" />
+        <PeriodTiles row={numbers.today} range={ranges.todayRange} label="Today's orders" />
       </section>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle title={`${monthLabel(ranges.month)} so far`} />
-        <PeriodTiles row={numbers.mtd} range={ranges.mtdRange} label="Month's" />
-        {board ? <TargetStrip subjects={teamTargets} month={ranges.month} daysLeft={daysLeftInMonth(ranges.month, now)} /> : null}
+        <SectionTitle title={period.value.preset === "this_month" ? `${monthLabel(ranges.month)} so far` : period.label} />
+        <PeriodTiles row={numbers.inPeriod} range={period.range} label="Orders" />
+        {board && period.value.preset === "this_month" ? <TargetStrip subjects={teamTargets} month={ranges.month} daysLeft={daysLeftInMonth(ranges.month, now)} /> : null}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -265,7 +267,7 @@ export async function OwnerDashboard({ user, panels }: { user: SessionUser; pane
       </div>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle title="Last 30 days" description="Click a bar to open that day." />
+        <SectionTitle title={period.chartLabel} description="Click a bar to open that day." />
         <div className="grid gap-4 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader>
@@ -279,10 +281,10 @@ export async function OwnerDashboard({ user, panels }: { user: SessionUser; pane
           <Card>
             <CardHeader>
               <CardTitle>Channel split</CardTitle>
-              <CardDescription>Online vs walk-in, 30 days.</CardDescription>
+              <CardDescription>Online vs walk-in, {period.label}.</CardDescription>
             </CardHeader>
             <CardContent>
-              <ChannelSplitChart split={numbers.channel} range={ranges.chartRange} />
+              <ChannelSplitChart split={numbers.channel} range={period.range} />
             </CardContent>
           </Card>
           <Card className="lg:col-span-2">
@@ -290,7 +292,7 @@ export async function OwnerDashboard({ user, panels }: { user: SessionUser; pane
               <CardTitle>Profit trend</CardTitle>
               <CardDescription>What went out each day, less its cost and that day&apos;s expenses.</CardDescription>
               <CardAction>
-                <Button variant="outline" size="sm" render={<Link href={profitHref(ranges.chartRange)} />} nativeButton={false}>
+                <Button variant="outline" size="sm" render={<Link href={profitHref(period.chartRange)} />} nativeButton={false}>
                   {formatBDT(numbers.days.reduce((a, d) => a + d.profit, 0))}
                 </Button>
               </CardAction>

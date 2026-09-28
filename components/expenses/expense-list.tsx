@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, FileText, Loader2, Paperclip, Pencil, Plus, Receipt, Search, Trash2, X } from "lucide-react";
+import { FileText, Loader2, Paperclip, Pencil, Plus, Receipt, Search, Trash2, X } from "lucide-react";
 
 import {
   AlertDialog,
@@ -14,6 +14,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -35,12 +38,11 @@ import {
   type ExpenseKindValue,
   type ExpenseNatureValue,
 } from "@/lib/expenses/constants";
+import { dateRangeFromDays, dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatDhakaDate, todayInDhaka } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { WalletOption } from "@/lib/wallets/constants";
-
-const PAGE_SIZE = 25;
 
 type ExpenseItem = {
   id: string;
@@ -83,14 +85,14 @@ export function ExpenseList({
   initialFilters?: { kind?: ExpenseKindFilter; from?: string; to?: string };
 }) {
   const [data, setData] = useState<{ items: ExpenseItem[]; total: number; totalAmount: string } | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("expenses");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [kind, setKind] = useState<ExpenseKindFilter | "all">(initialFilters.kind ?? "all");
   const [nature, setNature] = useState<ExpenseNatureValue | "all">("all");
   const [walletId, setWalletId] = useState("");
-  const [from, setFrom] = useState(initialFilters.from ?? "");
-  const [to, setTo] = useState(initialFilters.to ?? "");
+  const [range, setRange] = useState<DateRangeValue>(() => dateRangeFromDays(initialFilters.from, initialFilters.to));
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ExpenseItem | "new" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -101,27 +103,26 @@ export function ExpenseList({
   }, [q]);
 
   const load = useCallback(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (debouncedQ) params.set("q", debouncedQ);
     if (kind !== "all") params.set("kind", kind);
     if (nature !== "all") params.set("nature", nature);
     if (walletId) params.set("walletId", walletId);
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     fetchJson<{ items: ExpenseItem[]; total: number; totalAmount: string }>(`/api/expenses?${params.toString()}`)
       .then((r) => {
         setData(r);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load expenses."));
-  }, [page, debouncedQ, kind, nature, walletId, from, to]);
+  }, [page, pageSize, debouncedQ, kind, nature, walletId, range]);
   useEffect(() => {
     load();
   }, [load, reloadKey]);
 
   function filter<T>(setter: (v: T) => void, v: T) {
     setter(v);
-    setPage(1);
+    pager.reset();
   }
 
   async function remove(id: string) {
@@ -134,7 +135,6 @@ export function ExpenseList({
   }
 
   const items = data?.items ?? null;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
@@ -173,10 +173,7 @@ export function ExpenseList({
           </Select>
           <WalletSelect wallets={wallets} value={walletId} onChange={(v) => filter(setWalletId, v)} allowAll className="col-span-2 w-full lg:w-48" />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input type="date" aria-label="From date" value={from} onChange={(e) => filter(setFrom, e.target.value)} />
-          <Input type="date" aria-label="To date" value={to} onChange={(e) => filter(setTo, e.target.value)} />
-        </div>
+        <DateRangeFilter value={range} onChange={(v) => filter(setRange, v)} />
         {canCreate ? (
           <Button className="lg:ml-auto" onClick={() => setEditing("new")}>
             <Plus />
@@ -269,19 +266,10 @@ export function ExpenseList({
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {data!.total} expenses · {formatBDT(data!.totalAmount)}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={data!.total} noun="expenses" onPageChange={setPage} onPageSizeChange={pager.setPageSize}>
+          {" "}
+          · {formatBDT(data!.totalAmount)}
+        </ListPagination>
       ) : null}
 
       {editing ? (

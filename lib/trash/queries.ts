@@ -8,6 +8,7 @@ import { scopedWhere } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
 import type { Db } from "@/lib/db/tx";
 import { daysLeftInTrash, purgeDueAt, TRASH_KINDS, type TrashKind } from "@/lib/trash/policy";
+import { DEFAULT_PAGE_SIZE, pageArgs } from "@/lib/list/pagination";
 
 // PRD §4.18 — the Trash screen's read side. One kind at a time, each gated
 // by that module's delete permission (the same one that restores it) and,
@@ -22,12 +23,11 @@ export const TRASH_PERMISSIONS: Record<TrashKind, PermissionKey> = {
   lead: "lead.delete",
 };
 
-export const TRASH_PAGE_SIZE = 25;
-
 export const trashQuerySchema = z.object({
   kind: z.enum(TRASH_KINDS).optional(),
   q: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 export type TrashQuery = z.infer<typeof trashQuerySchema>;
 
@@ -90,8 +90,8 @@ async function countKind(db: Db, kind: TrashKind, user: SessionUser, q?: string)
 
 type Row = { id: string; title: string; subtitle: string | null; deletedAt: Date };
 
-async function rowsOf(db: Db, kind: TrashKind, user: SessionUser, q: string | undefined, skip: number): Promise<Row[]> {
-  const page = { orderBy: { deletedAt: "desc" as const }, skip, take: TRASH_PAGE_SIZE };
+async function rowsOf(db: Db, kind: TrashKind, user: SessionUser, q: string | undefined, paging: { skip: number; take: number }): Promise<Row[]> {
+  const page = { orderBy: { deletedAt: "desc" as const }, ...paging };
   switch (kind) {
     case "order": {
       const rows = await db.order.findMany({ where: orderWhere(user, q), ...page, select: { id: true, orderNo: true, status: true, deletedAt: true, customer: { select: { name: true, phone: true } } } });
@@ -120,11 +120,12 @@ export function visibleTrashKinds(permissions: ReadonlySet<PermissionKey>): Tras
 export async function listTrash(db: Db, user: SessionUser, kinds: TrashKind[], query: TrashQuery, now = new Date()): Promise<TrashPage | null> {
   const kind = query.kind && kinds.includes(query.kind) ? query.kind : kinds[0];
   if (!kind) return null;
+  const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
 
   const [countEntries, total, rows] = await Promise.all([
     Promise.all(kinds.map(async (k) => [k, await countKind(db, k, user)] as const)),
     countKind(db, kind, user, query.q),
-    rowsOf(db, kind, user, query.q, (query.page - 1) * TRASH_PAGE_SIZE),
+    rowsOf(db, kind, user, query.q, pageArgs({ page: query.page, pageSize })),
   ]);
 
   // Who deleted each one: the newest trash audit row per record.
@@ -142,7 +143,7 @@ export async function listTrash(db: Db, user: SessionUser, kinds: TrashKind[], q
     kind,
     total,
     page: query.page,
-    pageSize: TRASH_PAGE_SIZE,
+    pageSize,
     counts: Object.fromEntries(countEntries),
     items: rows.map((r) => ({
       id: r.id,

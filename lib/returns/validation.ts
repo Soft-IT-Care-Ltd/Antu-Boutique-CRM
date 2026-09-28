@@ -5,6 +5,7 @@ import { transactionIdSchema } from "@/lib/orders/payment-validation";
 import { POS_TENDER_METHODS } from "@/lib/pos/constants";
 import { RETURN_SETTLEMENT_VALUES } from "@/lib/store-credit/constants";
 import { COURIER_CHARGE_BEARER_VALUES, RETURN_CASE_TYPE_VALUES, RETURN_REASON_VALUES } from "@/lib/returns/constants";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // Zod shapes for the PRD §4.11 routes (CLAUDE.md rule 9). Client-safe.
 
@@ -70,8 +71,10 @@ export const caseListSchema = z.object({
   /** The original sale's channel (P3.1: every order-based list filters Online / Walk-in). */
   channel: z.enum(ORDER_CHANNEL_VALUES).optional(),
   q: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  // CORRECTIONS.md item 16 — inclusive Dhaka days the case was opened on.
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  ...paginationQuery,
 });
 
 export const counterQuoteSchema = z.object({

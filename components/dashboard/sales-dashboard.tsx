@@ -9,6 +9,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import type { SessionUser } from "@/lib/auth/types";
 import { leadsHref, ordersHref, returnsHref } from "@/lib/dashboard/links";
 import type { DashboardPanels } from "@/lib/dashboard/panels";
+import type { DashboardPeriod } from "@/lib/dashboard/ranges";
 import { getPendingApprovals, getSalesNumbers } from "@/lib/dashboard/sales";
 import { LEAD_STATUS_LABELS } from "@/lib/leads/constants";
 import { formatBDT } from "@/lib/money";
@@ -24,8 +25,8 @@ import { getMyProgress, getTargetBoard } from "@/lib/targets/service";
 // Every query below runs through the shared scope helper; the target board
 // through target.view_* — so an executive's page can only hold their own.
 
-export async function SalesDashboard({ user, panels, followUps }: { user: SessionUser; panels: DashboardPanels; followUps: React.ReactNode }) {
-  const [numbers, approvals, level] = await Promise.all([getSalesNumbers(prisma, user), getPendingApprovals(prisma, user), targetViewLevel(user)]);
+export async function SalesDashboard({ user, panels, period, followUps }: { user: SessionUser; panels: DashboardPanels; period: DashboardPeriod; followUps: React.ReactNode }) {
+  const [numbers, approvals, level] = await Promise.all([getSalesNumbers(prisma, user, new Date(), period), getPendingApprovals(prisma, user), targetViewLevel(user)]);
   const { ranges } = numbers;
   const team = level === "team" && user.teamId !== null;
   const [mine, board] = await Promise.all([
@@ -38,7 +39,13 @@ export async function SalesDashboard({ user, panels, followUps }: { user: Sessio
   return (
     <div className="flex flex-col gap-6">
       <TileGrid className="xl:grid-cols-4">
-        <StatTile label={`${my} value this month`} value={formatBDT(numbers.month.value)} href={ordersHref({ preset: "sales", range: ranges.mtdRange })} sub={`${numbers.month.orders} orders · ${monthLabel(ranges.month)}`} icon={CalendarDays} />
+        <StatTile
+          label={period.value.preset === "this_month" ? `${my} value this month` : `${my} value`}
+          value={formatBDT(numbers.inPeriod.value)}
+          href={ordersHref({ preset: "sales", range: period.range })}
+          sub={`${numbers.inPeriod.orders} orders · ${period.value.preset === "this_month" ? monthLabel(ranges.month) : period.label}`}
+          icon={CalendarDays}
+        />
         <StatTile label="Today" value={formatBDT(numbers.today.value)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${numbers.today.orders} orders placed`} icon={Banknote} />
         {panels.can.leads ? <StatTile label={`${my} open leads`} value={numbers.leadsOpen} href={leadsHref({ status: "open" })} sub="still being worked" icon={Users} /> : null}
         <StatTile
@@ -151,15 +158,15 @@ export async function SalesDashboard({ user, panels, followUps }: { user: Sessio
         <Card>
           <CardHeader>
             <CardTitle>{my} orders by status</CardTitle>
-            <CardDescription>In progress now, and how this month&apos;s orders ended.</CardDescription>
+            <CardDescription>In progress now, and how the orders placed in {period.label.toLowerCase().startsWith("custom") ? "these dates" : period.label} ended.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <CountBars
               rows={numbers.openOrders.map((o) => ({ key: o.status, label: ORDER_STATUS_LABELS[o.status], count: o.count, href: ordersHref({ status: o.status }), tone: o.status === "ON_HOLD" ? ("danger" as const) : undefined }))}
             />
             <div className="flex flex-col gap-1">
-              <p className="text-xs font-medium text-muted-foreground">Placed this month</p>
-              <CountBars rows={numbers.closedThisMonth.map((o) => ({ key: o.status, label: ORDER_STATUS_LABELS[o.status], count: o.count, href: ordersHref({ status: o.status, range: ranges.mtdRange }) }))} />
+              <p className="text-xs font-medium text-muted-foreground">Placed · {period.label}</p>
+              <CountBars rows={numbers.closedInPeriod.map((o) => ({ key: o.status, label: ORDER_STATUS_LABELS[o.status], count: o.count, href: ordersHref({ status: o.status, range: period.range }) }))} />
             </div>
           </CardContent>
         </Card>

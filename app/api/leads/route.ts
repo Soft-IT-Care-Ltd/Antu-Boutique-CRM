@@ -7,6 +7,8 @@ import { badRequest, dhakaDateTime, LEAD_VIEW_PERMISSIONS, leadErrorResponse } f
 import { listLeads } from "@/lib/leads/queries";
 import { createLead } from "@/lib/leads/service";
 import { prisma } from "@/lib/prisma";
+import { paginationQuery } from "@/lib/list/pagination";
+import { dayString } from "@/lib/finance/http";
 
 const querySchema = z.object({
   q: z.string().trim().max(100).optional(),
@@ -19,8 +21,9 @@ const querySchema = z.object({
   ownerId: z.string().cuid().optional(),
   followUp: z.enum(LEAD_FOLLOW_UP_FILTERS).optional(),
   campaign: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  from: dayString.optional(),
+  to: dayString.optional(),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

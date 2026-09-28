@@ -2,14 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
+import { History, Search, X } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { ApiError, fetchJson } from "@/lib/catalog/client";
 import {
   formatDhakaDateTime,
@@ -21,8 +25,6 @@ import {
 import type { StockMovementRow } from "@/lib/inventory/types";
 import { formatBDT } from "@/lib/money";
 
-const PAGE_SIZE = 30;
-
 type Props = {
   hasCostAccess: boolean;
   initialVariant: { id: string; sku: string } | null;
@@ -31,12 +33,12 @@ type Props = {
 export function MovementList({ hasCostAccess, initialVariant }: Props) {
   const [items, setItems] = useState<StockMovementRow[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const pager = usePager("movements");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [type, setType] = useState<"all" | StockMovementTypeValue>("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [variant, setVariant] = useState(initialVariant);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,11 +48,10 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
   }, [q]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (debouncedQ) params.set("q", debouncedQ);
     if (type !== "all") params.set("type", type);
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     if (variant) params.set("variantId", variant.id);
 
     fetchJson<{ items: StockMovementRow[]; total: number }>(`/api/inventory/movements?${params.toString()}`)
@@ -60,14 +61,12 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the ledger."));
-  }, [debouncedQ, type, from, to, variant, page]);
+  }, [debouncedQ, type, range, variant, page, pageSize]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
   }
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
@@ -91,10 +90,7 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
             ))}
           </SelectContent>
         </Select>
-        <div className="grid grid-cols-2 gap-2">
-          <Input type="date" aria-label="From date" value={from} onChange={(e) => updateFilter(setFrom, e.target.value)} />
-          <Input type="date" aria-label="To date" value={to} onChange={(e) => updateFilter(setTo, e.target.value)} />
-        </div>
+        <DateRangeFilter value={range} onChange={(v) => updateFilter(setRange, v)} />
       </div>
 
       {variant ? (
@@ -186,19 +182,7 @@ export function MovementList({ hasCostAccess, initialVariant }: Props) {
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {total} movements
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={total} noun="movements" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
     </div>
   );

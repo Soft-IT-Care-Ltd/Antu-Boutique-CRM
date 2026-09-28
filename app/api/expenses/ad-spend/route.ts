@@ -8,14 +8,14 @@ import { adSpendSchema } from "@/lib/expenses/validation";
 import { badRequest, dayString, financeErrorResponse } from "@/lib/finance/http";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { prisma } from "@/lib/prisma";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // PRD §4.12 — daily ad spend. Each row posts one "Ad cost" expense (paid
 // from its wallet) and is spread over that day's confirmed orders.
 const querySchema = z.object({
   from: dayString.optional(),
   to: dayString.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

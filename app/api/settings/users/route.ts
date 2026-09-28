@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { badRequest } from "@/lib/finance/http";
 import { prisma } from "@/lib/prisma";
 import { createUser, createUserSchema, listStaff, staffErrorResponse } from "@/lib/settings/staff";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // PRD §4.1 staff accounts (Settings → Users). Never returns a password hash.
 
@@ -12,8 +13,7 @@ const listSchema = z.object({
   q: z.string().trim().max(100).optional(),
   roleId: z.string().trim().max(50).optional(),
   status: z.enum(["active", "inactive", "all"]).default("active"),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

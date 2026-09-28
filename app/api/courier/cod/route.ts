@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { codSummary, listAwaitingPayout, listDiscrepancies, listStatements } from "@/lib/courier/cod-queries";
 import { COD_OVERDUE_DAYS } from "@/lib/courier/constants";
 import { zodError } from "@/lib/courier/route-errors";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // COD reconciliation board (PRD §4.9): parcels delivered but not yet paid out
 // by the courier, statements/payouts, and the discrepancy list for ACCOUNTS.
@@ -12,8 +13,7 @@ const querySchema = z.object({
   view: z.enum(["awaiting", "statements", "discrepancies"]).default("awaiting"),
   // Awaiting only: parcels delivered over COD_OVERDUE_DAYS ago (the owner's alert opens this).
   overdue: z.enum(["1"]).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

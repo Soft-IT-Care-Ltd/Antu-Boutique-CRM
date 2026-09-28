@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, History, MoreHorizontal, PackageX, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { History, MoreHorizontal, PackageX, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,8 +25,6 @@ import { ApiError, fetchJson } from "@/lib/catalog/client";
 import type { StockStatusFilter, VariantStockStatus } from "@/lib/inventory/constants";
 import type { StockReportRow, StockReportTotals } from "@/lib/inventory/types";
 import { formatBDT, formatLakh } from "@/lib/money";
-
-const PAGE_SIZE = 25;
 
 const STATUS_BADGE: Record<VariantStockStatus, { label: string; variant: "success" | "warning" | "destructive" }> = {
   OK: { label: "In stock", variant: "success" },
@@ -51,7 +51,8 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
   const [items, setItems] = useState<StockReportRow[] | null>(null);
   const [totals, setTotals] = useState<StockReportTotals | null>(null);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const pager = usePager("stock");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [categoryId, setCategoryId] = useState("all");
@@ -66,7 +67,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
   }, [q]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), status });
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), status });
     if (debouncedQ) params.set("q", debouncedQ);
     if (categoryId !== "all") params.set("categoryId", categoryId);
 
@@ -78,14 +79,12 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load stock."));
-  }, [debouncedQ, categoryId, status, page, reloadKey]);
+  }, [debouncedQ, categoryId, status, page, pageSize, reloadKey]);
 
   function updateFilter<T>(setter: (value: T) => void, value: T) {
     setter(value);
-    setPage(1);
+    pager.reset();
   }
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const showActions = canAdjust || canViewLedger;
 
   return (
@@ -244,19 +243,7 @@ export function StockReport({ categories, canViewCatalog, hasCostAccess, canAdju
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {total} variants
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={total} noun="variants" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
 
       {canAdjust ? (

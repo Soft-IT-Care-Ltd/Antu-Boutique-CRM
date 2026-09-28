@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { dhakaDayStartUtc, STOCK_MOVEMENT_TYPES } from "@/lib/inventory/constants";
 import { LEDGER_VIEW_PERMISSIONS, listStockMovements } from "@/lib/inventory/queries";
+import { paginationQuery } from "@/lib/list/pagination";
 
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-MM-DD");
 
@@ -14,10 +15,8 @@ const querySchema = z.object({
   type: z.enum(STOCK_MOVEMENT_TYPES).optional(),
   from: dateString.optional(),
   to: dateString.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(30),
+  ...paginationQuery,
 });
-
 
 export async function GET(request: NextRequest) {
   const guard = await requirePermission(LEDGER_VIEW_PERMISSIONS);

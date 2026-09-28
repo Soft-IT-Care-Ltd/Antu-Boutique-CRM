@@ -9,6 +9,7 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { PRODUCT_CODE_MESSAGE, PRODUCT_CODE_PATTERN } from "@/lib/catalog/codes";
 import { generateProductCode } from "@/lib/catalog/sku";
 import { getProductStockSummaries, summaryFor, type StockStatus } from "@/lib/catalog/stock-status";
+import { pageArgs, paginationQuery } from "@/lib/list/pagination";
 
 const STOCK_STATUSES: StockStatus[] = ["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"];
 
@@ -19,8 +20,7 @@ const querySchema = z.object({
   lowStockOnly: z.coerce.boolean().optional(),
   isActive: z.coerce.boolean().optional(),
   kind: z.enum(["SELLABLE", "COMPONENT_ONLY"]).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 const createSchema = z.object({
@@ -97,8 +97,7 @@ export async function GET(request: NextRequest) {
     prisma.product.findMany({
       where,
       orderBy: { name: "asc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...pageArgs({ page, pageSize }),
       include: {
         category: { select: { id: true, name: true } },
         images: { orderBy: { sortOrder: "asc" }, take: 1 },

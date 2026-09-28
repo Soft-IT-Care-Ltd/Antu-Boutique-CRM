@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { scopedWhere } from "@/lib/auth/scope";
+import { pageArgs, paginationQuery } from "@/lib/list/pagination";
 import { ORDER_EDIT_REQUEST_STATUS_VALUES } from "@/lib/orders/constants";
 
 // Inbox for the same permission that lets someone bypass the edit window
@@ -13,6 +14,7 @@ import { ORDER_EDIT_REQUEST_STATUS_VALUES } from "@/lib/orders/constants";
 // here, same scoping rule as everywhere else (CLAUDE.md rule 6).
 const querySchema = z.object({
   status: z.enum(ORDER_EDIT_REQUEST_STATUS_VALUES).default("PENDING"),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {
@@ -24,20 +26,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
 
-  const requests = await prisma.orderEditRequest.findMany({
-    where: {
-      status: parsed.data.status,
-      order: scopedWhere({ deletedAt: null }, guard.user),
-    },
+  const where = { status: parsed.data.status, order: scopedWhere({ deletedAt: null }, guard.user) };
+  const [total, requests] = await Promise.all([
+    prisma.orderEditRequest.count({ where }),
+    prisma.orderEditRequest.findMany({
+      where,
     include: {
       order: { select: { id: true, orderNo: true, status: true, customer: { select: { name: true, phone: true } } } },
       requestedBy: { select: { id: true, name: true } },
       reviewedBy: { select: { id: true, name: true } },
     },
-    orderBy: { createdAt: "asc" },
-  });
+    // Waiting requests oldest first; decided ones newest first.
+    orderBy: { createdAt: parsed.data.status === "PENDING" ? "asc" : "desc" },
+    ...pageArgs(parsed.data),
+    }),
+  ]);
 
   return NextResponse.json({
+    total,
     items: requests.map((r) => ({
       id: r.id,
       status: r.status,

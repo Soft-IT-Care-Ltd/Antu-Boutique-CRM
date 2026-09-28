@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { Repeat2, Search, Store } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +15,7 @@ import { CounterExchangeDialog } from "@/components/returns/counter-exchange-dia
 import { ExchangeReportView } from "@/components/returns/exchange-report";
 import { ChannelSelect, type ChannelFilterValue } from "@/components/orders/channel-select";
 import { ReturnCaseCard, type CaseActions } from "@/components/returns/return-case-card";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { ReturnCaseTypeValue } from "@/lib/returns/constants";
 import type { ReturnCaseView } from "@/lib/returns/types";
@@ -26,8 +30,6 @@ const TABS: { key: Tab; label: string; empty: string }[] = [
   { key: "closed", label: "Rejected / cancelled", empty: "Nothing rejected or cancelled." },
 ];
 
-const PAGE_SIZE = 20;
-
 // PRD §4.11 — every return and exchange the viewer's scope reaches, by
 // where it stands, plus the exchange report. Approve/reject/cancel inline.
 export function ReturnsWorkspace({
@@ -41,9 +43,11 @@ export function ReturnsWorkspace({
   const [view, setView] = useState<Tab | "report">(initial.view ?? (permissions.canApproveReturn || permissions.canApproveExchange ? "requested" : "approved"));
   const [type, setType] = useState<ReturnCaseTypeValue | "ALL">(initial.type ?? "ALL");
   const [channel, setChannel] = useState<ChannelFilterValue>("all");
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
+  const pager = usePager("returns");
+  const { page, pageSize, setPage, reset } = pager;
   const [data, setData] = useState<ListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -52,17 +56,18 @@ export function ReturnsWorkspace({
   useEffect(() => {
     const t = setTimeout(() => {
       setQuery(q.trim());
-      setPage(1);
+      reset();
     }, 300);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, reset]);
 
   useEffect(() => {
     if (view === "report") return;
-    const params = new URLSearchParams({ tab: view, page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ tab: view, page: String(page), pageSize: String(pageSize) });
     if (type !== "ALL") params.set("type", type);
     if (channel !== "all") params.set("channel", channel);
     if (query) params.set("q", query);
+    for (const [k, v] of Object.entries(dateRangeQuery(range))) params.set(k, v);
     let live = true;
     fetchJson<ListResponse>(`/api/returns?${params}`)
       .then((d) => {
@@ -74,7 +79,7 @@ export function ReturnsWorkspace({
     return () => {
       live = false;
     };
-  }, [view, type, channel, query, page, reloadKey]);
+  }, [view, type, channel, range, query, page, pageSize, reloadKey]);
 
   const actions: CaseActions = {
     canApprove: (c) => (c.type === "EXCHANGE" ? permissions.canApproveExchange : permissions.canApproveReturn),
@@ -83,10 +88,9 @@ export function ReturnsWorkspace({
   const show = (next: Tab | "report") => {
     if (next === view) return;
     setData(null);
-    setPage(1);
+    pager.reset();
     setView(next);
   };
-  const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
   const current = TABS.find((t) => t.key === view);
 
   return (
@@ -125,7 +129,7 @@ export function ReturnsWorkspace({
                 value={type}
                 onValueChange={(v) => {
                   setType(v as ReturnCaseTypeValue | "ALL");
-                  setPage(1);
+                  pager.reset();
                 }}
               >
                 <SelectTrigger className="w-40">
@@ -142,7 +146,14 @@ export function ReturnsWorkspace({
               value={channel}
               onChange={(v) => {
                 setChannel(v);
-                setPage(1);
+                pager.reset();
+              }}
+            />
+            <DateRangeFilter
+              value={range}
+              onChange={(v) => {
+                setRange(v);
+                pager.reset();
               }}
             />
           </div>
@@ -168,21 +179,7 @@ export function ReturnsWorkspace({
             </div>
           )}
 
-          {data && data.total > PAGE_SIZE ? (
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">
-                Page {page} of {pages} · {data.total} in all
-              </span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  Previous
-                </Button>
-                <Button size="sm" variant="outline" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
-                  Next
-                </Button>
-              </div>
-            </div>
-          ) : null}
+          {data && data.total > 0 ? <ListPagination page={page} pageSize={pageSize} total={data.total} onPageChange={setPage} onPageSizeChange={pager.setPageSize} /> : null}
         </>
       )}
 

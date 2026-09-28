@@ -9,6 +9,7 @@ import { stripCostFieldsForUser } from "@/lib/auth/strip-cost-fields";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 import { createPurchase, PurchaseError } from "@/lib/inventory/purchases";
 import { PURCHASE_VIEW_PERMISSIONS, getPurchaseDetail, listPurchases } from "@/lib/inventory/queries";
+import { paginationQuery } from "@/lib/list/pagination";
 
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Dates must be YYYY-MM-DD");
 // Money is rounded to the paisa by lib/inventory/costing.ts's toPaisa.
@@ -20,8 +21,7 @@ const querySchema = z.object({
   due: z.enum(["true", "false"]).optional(),
   from: dateString.optional(),
   to: dateString.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 const createSchema = z.object({
@@ -44,7 +44,6 @@ const createSchema = z.object({
     .min(1, "Add at least one item")
     .max(200),
 });
-
 
 export async function GET(request: NextRequest) {
   const guard = await requirePermission(PURCHASE_VIEW_PERMISSIONS, "all");

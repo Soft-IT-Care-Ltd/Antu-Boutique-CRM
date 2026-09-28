@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Ban, ChevronLeft, ScrollText } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatDhakaDate } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
@@ -29,9 +30,9 @@ type Statement = {
 };
 
 /** PRD §4.10 — a wallet statement for a date range, with the running balance after each line. */
-export function WalletStatementView({ walletId, initialFrom, initialTo, canVoid }: { walletId: string; initialFrom: string; initialTo: string; canVoid: boolean }) {
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
+export function WalletStatementView({ walletId, initialRange, canVoid }: { walletId: string; initialRange: DateRangeValue; canVoid: boolean }) {
+  const [range, setRange] = useState(initialRange);
+  const { from, to } = dateRangeQuery(range, { bounded: true });
   const [data, setData] = useState<Statement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiding, setVoiding] = useState<Row | null>(null);
@@ -85,20 +86,7 @@ export function WalletStatementView({ walletId, initialFrom, initialTo, canVoid 
             <Skeleton className="h-7 w-48" />
           )}
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="st-from" className="text-xs">
-              From
-            </Label>
-            <Input id="st-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="st-to" className="text-xs">
-              To
-            </Label>
-            <Input id="st-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </div>
-        </div>
+        <DateRangeFilter value={range} onChange={setRange} />
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}

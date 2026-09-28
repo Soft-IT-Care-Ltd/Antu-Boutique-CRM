@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { Download, FileText } from "lucide-react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import type { ReportDef, ReportFilterKey } from "@/lib/reports/catalog";
+import { dateRangeFromDays } from "@/lib/date-range";
 import type { FilterOptions, ReportFilters } from "@/lib/reports/filters";
+import { cn } from "@/lib/utils";
 
-// P4.4 — the date range and the report's own filters, as a plain GET form
+// P4.4 — the date range (the shared filter, CORRECTIONS.md item 16) and the report's own filters, as a plain GET form
 // (works without JavaScript, and the URL is the report — shareable and the
 // same query the export links use). Server component.
 
@@ -46,11 +48,8 @@ export function ReportFilterBar({ def, filters, options, exportQuery }: { def: R
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
       <form method="get" className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 lg:items-end">
-        <Field label="From" htmlFor="r-from">
-          <Input id="r-from" type="date" name="from" defaultValue={filters.fromDay} />
-        </Field>
-        <Field label="To" htmlFor="r-to">
-          <Input id="r-to" type="date" name="to" defaultValue={filters.toDay} />
+        <Field label="Dates" htmlFor="r-range" className="col-span-2">
+          <DateRangeFilter id="r-range" defaultValue={filters.rangePreset ? { preset: filters.rangePreset } : dateRangeFromDays(filters.fromDay, filters.toDay)} inForm />
         </Field>
         {shown.map((k) => (
           <Field key={k} label={LABELS[k]} htmlFor={`r-${k}`}>
@@ -88,9 +87,9 @@ export function ReportFilterBar({ def, filters, options, exportQuery }: { def: R
   );
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, className, children }: { label: string; htmlFor: string; className?: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className={cn("flex min-w-0 flex-col gap-1", className)}>
       <label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>

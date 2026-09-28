@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Search, Trash2 } from "lucide-react";
+import { Search, Trash2 } from "lucide-react";
 
+import { UrlListPagination } from "@/components/list/url-list-pagination";
 import { TrashRestoreButton } from "@/components/trash/trash-restore-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { guardPage } from "@/lib/auth/guard-page";
 import { getEffectivePermissions } from "@/lib/auth/permissions";
 import { formatDhakaDate, formatDhakaDateTime } from "@/lib/inventory/constants";
+import { readPageParams } from "@/lib/list/pagination";
+import { getListPageSize } from "@/lib/list/prefs";
 import { prisma } from "@/lib/prisma";
 import { TRASH_KIND_LABELS, TRASH_RETENTION_DAYS, type TrashKind } from "@/lib/trash/policy";
 import { listTrash, trashQuerySchema, visibleTrashKinds, type TrashQuery } from "@/lib/trash/queries";
@@ -20,18 +23,17 @@ export const dynamic = "force-dynamic";
 // 30 days before the nightly purge. Each tab needs that module's delete
 // permission and is scoped like its own list (lib/trash/queries.ts).
 
-function href(kind: TrashKind, q: string | undefined, page = 1): string {
-  const p = new URLSearchParams({ kind });
-  if (q) p.set("q", q);
-  if (page > 1) p.set("page", String(page));
-  return `/trash?${p}`;
+function href(kind: TrashKind): string {
+  return `/trash?${new URLSearchParams({ kind })}`;
 }
 
 export default async function TrashPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await guardPage("/trash");
-  const raw = Object.fromEntries(Object.entries(await searchParams).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v));
-  const parsed = trashQuerySchema.safeParse(raw);
-  const query: TrashQuery = parsed.success ? parsed.data : { page: 1 };
+  const params = await searchParams;
+  const raw = Object.fromEntries(Object.entries(params).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v));
+  const { page, pageSize } = readPageParams(params, await getListPageSize(prisma, user.id, "trash"));
+  const parsed = trashQuerySchema.safeParse({ ...raw, page, pageSize });
+  const query: TrashQuery = parsed.success ? parsed.data : { page: 1, pageSize };
   const kinds = visibleTrashKinds(await getEffectivePermissions(user.id));
   const trash = await listTrash(prisma, user, kinds, query);
 
@@ -56,7 +58,7 @@ export default async function TrashPage({ searchParams }: { searchParams: Promis
             {kinds.map((k) => (
               <Link
                 key={k}
-                href={href(k, undefined)}
+                href={href(k)}
                 aria-current={k === trash.kind ? "page" : undefined}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -114,25 +116,7 @@ export default async function TrashPage({ searchParams }: { searchParams: Promis
             </ul>
           )}
 
-          {trash.total > trash.pageSize ? (
-            <div className="flex items-center justify-between gap-2">
-              <Button variant="outline" size="sm" disabled={trash.page <= 1} render={trash.page > 1 ? <Link href={href(trash.kind, query.q, trash.page - 1)} /> : undefined} nativeButton={trash.page <= 1}>
-                <ChevronLeft /> Newer
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {trash.page} of {Math.ceil(trash.total / trash.pageSize)}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={trash.page * trash.pageSize >= trash.total}
-                render={trash.page * trash.pageSize < trash.total ? <Link href={href(trash.kind, query.q, trash.page + 1)} /> : undefined}
-                nativeButton={trash.page * trash.pageSize >= trash.total}
-              >
-                Older <ChevronRight />
-              </Button>
-            </div>
-          ) : null}
+          {trash.total > 0 ? <UrlListPagination listKey="trash" page={trash.page} pageSize={trash.pageSize} total={trash.total} noun={TRASH_KIND_LABELS[trash.kind].many.toLowerCase()} /> : null}
         </>
       )}
     </div>

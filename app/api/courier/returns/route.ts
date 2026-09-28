@@ -4,13 +4,13 @@ import { z } from "zod";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { listCourierReturns } from "@/lib/courier/queries";
 import { zodError } from "@/lib/courier/route-errors";
+import { paginationQuery } from "@/lib/list/pagination";
 
 // Returns waiting for kept-items marking / a Packing condition check (open),
 // or already checked (completed). No money in these rows.
 const querySchema = z.object({
   status: z.enum(["open", "completed"]).default("open"),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationQuery,
 });
 
 export async function GET(request: NextRequest) {

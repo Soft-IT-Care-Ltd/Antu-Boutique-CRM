@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, PackageCheck, Search } from "lucide-react";
+import { PackageCheck, Search } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PackingQueueCard } from "@/components/packing/packing-queue-card";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { PACKING_VIEW_LABELS, PACKING_VIEWS, type PackingQueueItem, type PackingView } from "@/lib/packing/types";
-
-const PAGE_SIZE = 12;
 
 const EMPTY: Record<PackingView, { title: string; body: string }> = {
   queue: { title: "Queue is empty", body: "No confirmed orders are waiting to be packed." },
@@ -24,7 +24,8 @@ const EMPTY: Record<PackingView, { title: string; body: string }> = {
 export function PackingQueue({ view = "queue" }: { view?: PackingView }) {
   const [items, setItems] = useState<PackingQueueItem[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const pager = usePager("packing");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function PackingQueue({ view = "queue" }: { view?: PackingView }) {
     if (debouncedQ) params.set("q", debouncedQ);
     params.set("view", view);
     params.set("page", String(page));
-    params.set("pageSize", String(PAGE_SIZE));
+    params.set("pageSize", String(pageSize));
 
     fetchJson<{ items: PackingQueueItem[]; total: number }>(`/api/packing/queue?${params.toString()}`)
       .then((data) => {
@@ -48,9 +49,7 @@ export function PackingQueue({ view = "queue" }: { view?: PackingView }) {
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the packing queue."));
-  }, [debouncedQ, page, view]);
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  }, [debouncedQ, page, pageSize, view]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -68,7 +67,7 @@ export function PackingQueue({ view = "queue" }: { view?: PackingView }) {
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
-            setPage(1);
+            pager.reset();
           }}
           className="pl-8"
         />
@@ -97,19 +96,7 @@ export function PackingQueue({ view = "queue" }: { view?: PackingView }) {
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {total} orders
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={total} noun="orders" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
     </div>
   );

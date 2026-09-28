@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, FileUp, HandCoins, Loader2, RotateCw, Scale } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileUp, HandCoins, Loader2, RotateCw, Scale } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +34,6 @@ import type { BadgeTone } from "@/lib/ui/status-tone";
 import type { WalletOption } from "@/lib/wallets/constants";
 
 type View = "awaiting" | "statements" | "discrepancies";
-const PAGE_SIZE = 20;
 const VIEW_LABELS: Record<View, string> = { awaiting: "Awaiting payout", statements: "Statements", discrepancies: "Discrepancies" };
 
 type ListResponse = { view: View; items: (AwaitingPayoutRow | StatementRow | StatementLineView)[]; total: number; summary: CodSummary };
@@ -52,7 +53,8 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdu
   const [view, setView] = useState<View>("awaiting");
   // Awaiting payout, narrowed to parcels delivered over COD_OVERDUE_DAYS ago.
   const [overdueOnly, setOverdueOnly] = useState(initialOverdueOnly);
-  const [page, setPage] = useState(1);
+  const pager = usePager("cod");
+  const { page, pageSize, setPage } = pager;
   const [data, setData] = useState<ListResponse | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -63,18 +65,17 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdu
   const [resolving, setResolving] = useState<StatementLineView | null>(null);
 
   useEffect(() => {
-    fetchJson<ListResponse>(`/api/courier/cod?view=${view}&page=${page}&pageSize=${PAGE_SIZE}${view === "awaiting" && overdueOnly ? "&overdue=1" : ""}`)
+    fetchJson<ListResponse>(`/api/courier/cod?view=${view}&page=${page}&pageSize=${pageSize}${view === "awaiting" && overdueOnly ? "&overdue=1" : ""}`)
       .then((res) => {
         setData(res);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load COD data."));
-  }, [view, page, reloadKey, overdueOnly]);
+  }, [view, page, pageSize, reloadKey, overdueOnly]);
 
   const reload = () => setReloadKey((k) => k + 1);
   const items = data?.view === view ? data.items : null;
   const summary = data?.summary;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   async function syncPayouts() {
     setSyncing(true);
@@ -121,7 +122,7 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdu
               variant={v === view ? "default" : "outline"}
               onClick={() => {
                 setView(v);
-                setPage(1);
+                pager.reset();
               }}
             >
               {VIEW_LABELS[v]}
@@ -134,7 +135,7 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdu
               aria-pressed={overdueOnly}
               onClick={() => {
                 setOverdueOnly((o) => !o);
-                setPage(1);
+                pager.reset();
               }}
             >
               <AlertTriangle />
@@ -187,19 +188,7 @@ export function CodReconciliation({ canSyncPayouts, payoutWallets, initialOverdu
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {data?.total ?? 0}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={data?.total ?? 0} onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
 
       {importOpen ? (

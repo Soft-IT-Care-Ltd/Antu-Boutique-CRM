@@ -10,6 +10,8 @@ import { LEAD_STATUS_VALUES, OPEN_LEAD_STATUSES, type LeadFollowUpFilter, type L
 import { dhakaDayStartOf } from "@/lib/leads/dates";
 import { LEAD_DETAIL_INCLUDE, LEAD_LIST_INCLUDE, serializeLeadDetail, serializeLeadListItem } from "@/lib/leads/serialize";
 import type { DueFollowUp, LeadDetail, LeadListItem, LeadPerson, LeadStatusCounts } from "@/lib/leads/types";
+import { pageArgs } from "@/lib/list/pagination";
+import { dhakaDayStartUtc } from "@/lib/inventory/constants";
 
 // Scoped reads for the leads screens. The scope clause is always AND-ed in
 // last (lib/auth/scope.ts), so no filter a client sends can widen it.
@@ -22,6 +24,9 @@ export type LeadListFilters = {
   ownerId?: string;
   followUp?: LeadFollowUpFilter;
   campaign?: string;
+  /** Inclusive Dhaka days the lead was added on (CORRECTIONS.md item 16). */
+  from?: string;
+  to?: string;
 };
 
 const OPEN_FOLLOW_UP = { completedAt: null } satisfies Prisma.LeadFollowUpWhereInput;
@@ -49,6 +54,9 @@ function baseConditions(filters: LeadListFilters, now: Date): Prisma.LeadWhereIn
   if (filters.ownerId) and.push({ createdById: filters.ownerId });
   if (filters.campaign) and.push({ campaign: { equals: filters.campaign, mode: "insensitive" } });
   if (filters.followUp) and.push(followUpWhere(filters.followUp, now));
+  if (filters.from || filters.to) {
+    and.push({ createdAt: { ...(filters.from ? { gte: dhakaDayStartUtc(filters.from) } : {}), ...(filters.to ? { lt: dhakaDayStartUtc(filters.to, 1) } : {}) } });
+  }
   const q = filters.q?.trim();
   if (q) {
     const digits = q.replace(/[\s-]/g, "");
@@ -84,8 +92,7 @@ export async function listLeads(
     db.lead.findMany({
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      skip: (page.page - 1) * page.pageSize,
-      take: page.pageSize,
+      ...pageArgs(page),
       include: LEAD_LIST_INCLUDE,
     }),
     db.lead.groupBy({ by: ["status"], where: scopedWhere({ AND: base }, user) as Prisma.LeadWhereInput, _count: { _all: true } }),

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -15,6 +15,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { DateRangeFilter } from "@/components/list/date-range-filter";
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -32,12 +35,11 @@ import {
   type AdAllocationMethod,
   type AdPlatformValue,
 } from "@/lib/expenses/constants";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatDhakaDate, todayInDhaka } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { WalletOption } from "@/lib/wallets/constants";
-
-const PAGE_SIZE = 20;
 
 type AdSpendItem = { id: string; spendDate: string; platform: AdPlatformValue; amount: string; walletId: string; walletName: string; note: string | null; createdByName: string | null };
 type Allocation = { day: string; method: AdAllocationMethod; spend: string; unallocated: string; orders: { id: string; orderNo: string; total: string; allocated: string }[] };
@@ -62,7 +64,9 @@ export function AdSpendView({
   canSetAllocation: boolean;
 }) {
   const [data, setData] = useState<{ items: AdSpendItem[]; total: number; totalAmount: string } | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("ad_spend");
+  const { page, pageSize, setPage } = pager;
+  const [range, setRange] = useState<DateRangeValue>({ preset: "all" });
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AdSpendItem | "new" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -71,13 +75,14 @@ export function AdSpendView({
   const [savingMethod, setSavingMethod] = useState(false);
 
   const load = useCallback(() => {
-    fetchJson<{ items: AdSpendItem[]; total: number; totalAmount: string }>(`/api/expenses/ad-spend?page=${page}&pageSize=${PAGE_SIZE}`)
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), ...dateRangeQuery(range) });
+    fetchJson<{ items: AdSpendItem[]; total: number; totalAmount: string }>(`/api/expenses/ad-spend?${params.toString()}`)
       .then((r) => {
         setData(r);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load ad spend."));
-  }, [page]);
+  }, [page, pageSize, range]);
   useEffect(() => {
     load();
   }, [load, reloadKey]);
@@ -111,12 +116,18 @@ export function AdSpendView({
   }
 
   const items = data?.items ?? null;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <DateRangeFilter
+            value={range}
+            onChange={(v) => {
+              setRange(v);
+              pager.reset();
+            }}
+          />
           <p className="text-sm text-muted-foreground">Each row is also posted as an &ldquo;Ad cost&rdquo; expense from its wallet.</p>
           {canCreate ? (
             <Button onClick={() => setEditing("new")}>
@@ -195,19 +206,10 @@ export function AdSpendView({
           </Table>
         )}
         {items && items.length > 0 ? (
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Page {page} of {totalPages} · {formatBDT(data!.totalAmount)} in total
-            </span>
-            <div className="flex gap-1">
-              <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
-                <ChevronLeft />
-              </Button>
-              <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
-                <ChevronRight />
-              </Button>
-            </div>
-          </div>
+          <ListPagination page={page} pageSize={pageSize} total={data!.total} noun="entries" onPageChange={setPage} onPageSizeChange={pager.setPageSize}>
+            {" "}
+            · {formatBDT(data!.totalAmount)} in total
+          </ListPagination>
         ) : null}
       </div>
 

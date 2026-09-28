@@ -488,10 +488,10 @@ describe("8. every dashboard number is the list it opens", () => {
       const accounts = await getAccountsNumbers(prisma, user, { cod: true, wallets: false, expenses: true });
       const today = accounts.ranges.todayRange;
       const collection = await getJson(collectionGET, `/api/reports/collection?from=${today.from}&to=${today.to}`);
-      expect(toPaisa(accounts.collectedToday.amount), `${phone} collected today`).toBe(toPaisa(collection.report.totals.collected));
-      expect(accounts.collectedToday.count).toBe(collection.report.totals.paymentCount);
+      expect(toPaisa(accounts.collected.amount), `${phone} collected today`).toBe(toPaisa(collection.report.totals.collected));
+      expect(accounts.collected.count).toBe(collection.report.totals.paymentCount);
       const exp = await getJson(expensesGET, expensesHref(today).replace("/expenses", "/api/expenses"));
-      expect([accounts.expensesToday.count, toPaisa(accounts.expensesToday.amount)], `${phone} expenses today`).toEqual([exp.total, toPaisa(exp.totalAmount)]);
+      expect([accounts.expenses.count, toPaisa(accounts.expenses.amount)], `${phone} expenses today`).toEqual([exp.total, toPaisa(exp.totalAmount)]);
       const payments = await getJson(paymentsGET, "/api/payments?view=unverified&pageSize=1");
       expect(accounts.unverified.count).toBe(payments.total);
       const cod = await getJson(codGET, codHref().replace("/courier?tab=cod", "/api/courier/cod?view=awaiting&pageSize=1"));
@@ -505,7 +505,7 @@ describe("8. every dashboard number is the list it opens", () => {
     const n = await getOwnerNumbers(prisma, admin);
     for (const [row, range] of [
       [n.today, n.ranges.todayRange],
-      [n.mtd, n.ranges.mtdRange],
+      [n.inPeriod, n.ranges.mtdRange],
     ] as const) {
       const collection = await getJson(collectionGET, collectionHref(range).replace("/payments/collection", "/api/reports/collection"));
       expect(toPaisa(row.collected)).toBe(toPaisa(collection.report.totals.collected));
@@ -535,7 +535,7 @@ describe("8. every dashboard number is the list it opens", () => {
       const user = await sessionUserFor(phone);
       asSession(user);
       const n = await getSalesNumbers(prisma, user);
-      for (const s of n.closedThisMonth) expect((await orderList(ordersHref({ status: s.status, range: n.ranges.mtdRange }))).total, `${phone} ${s.status}`).toBe(s.count);
+      for (const s of n.closedInPeriod) expect((await orderList(ordersHref({ status: s.status, range: n.ranges.mtdRange }))).total, `${phone} ${s.status}`).toBe(s.count);
       const today = await orderList(ordersHref({ preset: "sales", range: n.ranges.todayRange }));
       expect([today.total, today.value]).toEqual([n.today.orders, toPaisa(n.today.value)]);
       const approvals = await getPendingApprovals(prisma, user);
@@ -611,7 +611,7 @@ describe("10. a cancelled or returned order stops counting towards targets and t
         const [stats, board, dash] = await Promise.all([statsByUser(tx, month, [se.id]), getLeaderboard(tx, admin, "all", month, "value"), getSalesNumbers(tx, se)]);
         const s = stats.get(se.id)!;
         const row = board.rows.find((r) => r.userId === se.id)!;
-        return { value: s.salesPaisa, orders: s.orderCount, returned: s.returned, boardValue: toPaisa(row.stats.salesValue), boardOrders: row.stats.orderCount, dashValue: toPaisa(dash.month.value) };
+        return { value: s.salesPaisa, orders: s.orderCount, returned: s.returned, boardValue: toPaisa(row.stats.salesValue), boardOrders: row.stats.orderCount, dashValue: toPaisa(dash.inPeriod.value) };
       };
       const base = await snap();
 

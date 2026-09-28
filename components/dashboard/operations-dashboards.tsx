@@ -8,7 +8,7 @@ import type { SessionUser } from "@/lib/auth/types";
 import { codHref, collectionHref, expensesHref, ordersHref, packingHref } from "@/lib/dashboard/links";
 import { COD_OVERDUE_DAYS, getAccountsNumbers, getLowStockSummary, getPackingNumbers } from "@/lib/dashboard/operations";
 import type { DashboardPanels } from "@/lib/dashboard/panels";
-import { dashboardRanges } from "@/lib/dashboard/ranges";
+import type { DashboardPeriod } from "@/lib/dashboard/ranges";
 import { SALES_WHERE } from "@/lib/orders/list-where";
 import { scopedWhere } from "@/lib/auth/scope";
 import { dhakaDayStartUtc } from "@/lib/inventory/constants";
@@ -65,15 +65,15 @@ export async function PackingDashboard({ panels }: { panels: DashboardPanels }) 
   );
 }
 
-export async function AccountsDashboard({ user, panels }: { user: SessionUser; panels: DashboardPanels }) {
-  const n = await getAccountsNumbers(prisma, user, { cod: panels.can.cod, wallets: panels.can.wallets, expenses: panels.can.expenses });
-  const today = n.ranges.todayRange;
+export async function AccountsDashboard({ user, panels, period }: { user: SessionUser; panels: DashboardPanels; period: DashboardPeriod }) {
+  const n = await getAccountsNumbers(prisma, user, { cod: panels.can.cod, wallets: panels.can.wallets, expenses: panels.can.expenses }, new Date(), period);
+  const range = period.range;
   return (
     <section className="flex flex-col gap-3">
-      <SectionTitle title="Accounts" description="Money waiting to be checked, and where it stands today." />
+      <SectionTitle title="Accounts" description={`Money waiting to be checked, and what came in and went out · ${period.label}.`} />
       <TileGrid className="xl:grid-cols-4">
         <StatTile label="Unverified payments" value={n.unverified.count} href="/payments" sub={formatBDT(n.unverified.amount)} icon={ShieldCheck} tone={n.unverified.count > 0 ? "warning" : undefined} />
-        <StatTile label="Today's collection" value={formatBDT(n.collectedToday.amount)} href={collectionHref(today)} sub={`${n.collectedToday.count} payment${n.collectedToday.count === 1 ? "" : "s"}`} icon={Wallet} />
+        <StatTile label="Collection" value={formatBDT(n.collected.amount)} href={collectionHref(range)} sub={`${n.collected.count} payment${n.collected.count === 1 ? "" : "s"} · ${period.label}`} icon={Wallet} />
         {n.cod ? (
           <StatTile
             label="COD pending"
@@ -84,7 +84,9 @@ export async function AccountsDashboard({ user, panels }: { user: SessionUser; p
             tone={n.cod.overdueCount > 0 ? "danger" : undefined}
           />
         ) : null}
-        {panels.can.expenses ? <StatTile label="Today's expenses" value={formatBDT(n.expensesToday.amount)} href={expensesHref(today)} sub={`${n.expensesToday.count} entr${n.expensesToday.count === 1 ? "y" : "ies"}`} icon={Receipt} /> : null}
+        {panels.can.expenses ? (
+          <StatTile label="Expenses" value={formatBDT(n.expenses.amount)} href={expensesHref(range)} sub={`${n.expenses.count} entr${n.expenses.count === 1 ? "y" : "ies"} · ${period.label}`} icon={Receipt} />
+        ) : null}
       </TileGrid>
       {n.wallets ? (
         <Card>
@@ -128,16 +130,16 @@ export async function AccountsDashboard({ user, panels }: { user: SessionUser; p
   );
 }
 
-/** The showroom till's own sales today — scoped to the operator (rule 6). */
-export async function CounterDashboard({ user }: { user: SessionUser }) {
-  const ranges = dashboardRanges();
-  const where = scopedWhere({ AND: [{ deletedAt: null }, SALES_WHERE, { createdAt: { gte: dhakaDayStartUtc(ranges.today), lt: dhakaDayStartUtc(ranges.today, 1) } }] }, user) as Prisma.OrderWhereInput;
-  const today = await prisma.order.aggregate({ where, _sum: { total: true }, _count: { _all: true } });
+/** The showroom till's own sales in the period — scoped to the operator (rule 6). */
+export async function CounterDashboard({ user, period }: { user: SessionUser; period: DashboardPeriod }) {
+  const { range } = period;
+  const where = scopedWhere({ AND: [{ deletedAt: null }, SALES_WHERE, { createdAt: { gte: dhakaDayStartUtc(range.from), lt: dhakaDayStartUtc(range.to, 1) } }] }, user) as Prisma.OrderWhereInput;
+  const sales = await prisma.order.aggregate({ where, _sum: { total: true }, _count: { _all: true } });
   return (
     <section className="flex flex-col gap-3">
       <SectionTitle title="At the counter" />
       <TileGrid className="xl:grid-cols-4">
-        <StatTile label="My sales today" value={formatBDT(today._sum.total ?? 0)} href={ordersHref({ preset: "sales", range: ranges.todayRange })} sub={`${today._count._all} sale${today._count._all === 1 ? "" : "s"}`} icon={Banknote} />
+        <StatTile label="My sales" value={formatBDT(sales._sum.total ?? 0)} href={ordersHref({ preset: "sales", range })} sub={`${sales._count._all} sale${sales._count._all === 1 ? "" : "s"} · ${period.label}`} icon={Banknote} />
       </TileGrid>
     </section>
   );

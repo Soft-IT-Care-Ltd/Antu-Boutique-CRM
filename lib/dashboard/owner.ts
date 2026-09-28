@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 
 import { scopedWhere } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/types";
-import { dashboardRanges, type DashboardRanges } from "@/lib/dashboard/ranges";
+import { dashboardPeriod, dashboardRanges, type DashboardPeriod, type DashboardRanges } from "@/lib/dashboard/ranges";
 import type { ChannelSplit, OwnerDayPoint } from "@/lib/dashboard/types";
 import type { Db } from "@/lib/db/tx";
 import { dhakaDayKey, getProfitReport, netPaisa, sumDays, type ProfitTotals } from "@/lib/finance/profit";
@@ -17,8 +17,10 @@ import type { OrderStatusValue } from "@/lib/orders/constants";
 import { getPackingSlaHours } from "@/lib/settings/get";
 import { shortDay, shiftDay } from "@/lib/dashboard/links";
 
-// P4.3 (PRD §4.16) — the owner's 10-second view: today, month to date,
-// the live operations funnel, the 30-day charts and the stuck-order alert.
+// P4.3 (PRD §4.16) — the owner's 10-second view: today, the chosen period
+// (the dashboard's date filter, CORRECTIONS.md item 16 — This Month by
+// default), the live operations funnel, the daily charts and the
+// stuck-order alert.
 // Whole-shop numbers, still run through the shared scope helper (it adds
 // nothing for Admin/Manager — a per-user grant can never widen it).
 // Profit and cost live here: the page renders this only for
@@ -39,8 +41,10 @@ export type PeriodRow = {
 
 export type OwnerNumbers = {
   ranges: DashboardRanges;
+  period: DashboardPeriod;
   today: PeriodRow;
-  mtd: PeriodRow;
+  /** The period the dashboard's date filter picked. */
+  inPeriod: PeriodRow;
   funnel: { leadsOpen: number; confirmed: number; packed: number; inTransit: number; deliveredToday: number };
   days: OwnerDayPoint[];
   channel: ChannelSplit;
@@ -75,12 +79,16 @@ function periodRow(b: Bucket, p: ProfitTotals): PeriodRow {
 
 const count = (map: Map<string, number>, day: string) => map.set(day, (map.get(day) ?? 0) + 1);
 
-export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date()): Promise<OwnerNumbers> {
+export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date(), period = dashboardPeriod({ preset: "this_month" }, undefined, now)): Promise<OwnerNumbers> {
   const ranges = dashboardRanges(now);
-  const { today, monthStart, windowFrom, chartFrom } = ranges;
+  const { today } = ranges;
+  const { from: chartFrom, to: chartTo } = period.chartRange;
+  // One fetch covers today, the period and the charts.
+  const windowFrom = [today, period.range.from, chartFrom].sort()[0];
   const from = dhakaDayStartUtc(windowFrom);
   const to = dhakaDayStartUtc(today, 1);
   const chartStart = dhakaDayStartUtc(chartFrom);
+  const chartEnd = dhakaDayStartUtc(chartTo, 1);
   const orderScope = (where: Prisma.OrderWhereInput) => scopedWhere({ AND: [{ deletedAt: null }, where] }, user) as Prisma.OrderWhereInput;
   const slaHours = await getPackingSlaHours();
 
@@ -93,13 +101,13 @@ export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date(
     db.order.groupBy({ by: ["status"], where: orderScope({ status: { in: ["CONFIRMED", "PACKED", ...IN_TRANSIT_STATUSES] } }), _count: { _all: true } }),
     db.order.count({ where: orderScope({ statusHistory: { some: { toStatus: { in: DELIVERY_STATUSES }, createdAt: { gte: dhakaDayStartUtc(today), lt: to } } } }) }),
     // Return / exchange rate: of what reached a customer, how much came back.
-    db.orderStatusHistory.findMany({ where: { toStatus: { in: DELIVERY_STATUSES }, createdAt: { gte: chartStart, lt: to }, order: orderScope({}) }, select: { orderId: true, createdAt: true } }),
-    db.order.findMany({ where: orderScope({ channel: "WALK_IN", status: { not: "CANCELLED" }, createdAt: { gte: chartStart, lt: to } }), select: { createdAt: true } }),
+    db.orderStatusHistory.findMany({ where: { toStatus: { in: DELIVERY_STATUSES }, createdAt: { gte: chartStart, lt: chartEnd }, order: orderScope({}) }, select: { orderId: true, createdAt: true } }),
+    db.order.findMany({ where: orderScope({ channel: "WALK_IN", status: { not: "CANCELLED" }, createdAt: { gte: chartStart, lt: chartEnd } }), select: { createdAt: true } }),
     db.orderStatusHistory.findMany({
-      where: { toStatus: "RETURNED", fromStatus: { in: IN_TRANSIT_STATUSES }, createdAt: { gte: chartStart, lt: to }, order: orderScope({}) },
+      where: { toStatus: "RETURNED", fromStatus: { in: IN_TRANSIT_STATUSES }, createdAt: { gte: chartStart, lt: chartEnd }, order: orderScope({}) },
       select: { createdAt: true },
     }),
-    db.returnCase.findMany({ where: { status: { notIn: ["REJECTED", "CANCELLED"] }, createdAt: { gte: chartStart, lt: to }, order: orderScope({}) }, select: { type: true, createdAt: true } }),
+    db.returnCase.findMany({ where: { status: { notIn: ["REJECTED", "CANCELLED"] }, createdAt: { gte: chartStart, lt: chartEnd }, order: orderScope({}) }, select: { type: true, createdAt: true } }),
     db.order.groupBy({ by: ["status"], where: orderScope(stuckWhere(slaHours, now)), _count: { _all: true } }),
   ]);
 
@@ -140,7 +148,7 @@ export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date(
   for (const c of cases) count(c.type === "EXCHANGE" ? exchangesByDay : returnsByDay, dhakaDayKey(c.createdAt));
 
   const days: OwnerDayPoint[] = [];
-  for (let day = chartFrom; day <= today; day = shiftDay(day, 1)) {
+  for (let day = chartFrom; day <= chartTo; day = shiftDay(day, 1)) {
     const b = byDay.get(day) ?? emptyBucket();
     const p = profit.byDay.get(day);
     days.push({
@@ -155,15 +163,16 @@ export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date(
     });
   }
 
-  const window = sumBuckets(byDay, chartFrom, today);
+  const inPeriod = sumBuckets(byDay, period.range.from, period.range.to);
   const comeBack = courierReturns.length + cases.length;
   const reached = [...reachedByDay.values()].reduce((a, n) => a + n, 0) + courierReturns.length;
   const funnel = new Map(funnelCounts.map((r) => [r.status, r._count._all]));
 
   return {
     ranges,
+    period,
     today: periodRow(sumBuckets(byDay, today, today), sumDays(profit.byDay, today, today)),
-    mtd: periodRow(sumBuckets(byDay, monthStart, today), sumDays(profit.byDay, monthStart, today)),
+    inPeriod: periodRow(inPeriod, sumDays(profit.byDay, period.range.from, period.range.to)),
     funnel: {
       leadsOpen,
       confirmed: funnel.get("CONFIRMED") ?? 0,
@@ -172,7 +181,7 @@ export async function getOwnerNumbers(db: Db, user: SessionUser, now = new Date(
       deliveredToday,
     },
     days,
-    channel: { online: window.online / 100, walkIn: window.walkIn / 100, onlineOrders: window.onlineOrders, walkInOrders: window.walkInOrders },
+    channel: { online: inPeriod.online / 100, walkIn: inPeriod.walkIn / 100, onlineOrders: inPeriod.onlineOrders, walkInOrders: inPeriod.walkInOrders },
     returnRate: { comeBack, reached, rate: reached > 0 ? comeBack / reached : null },
     stuck: STUCK_STATUSES.map((status) => ({ status, count: stuckRows.find((r) => r.status === status)?._count._all ?? 0, hours: stuckAfterHours(status, slaHours)! })).filter((s) => s.count > 0),
   };

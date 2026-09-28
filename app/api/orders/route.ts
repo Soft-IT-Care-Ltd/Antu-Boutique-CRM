@@ -19,12 +19,10 @@ import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { ORDER_LIST_INCLUDE, serializeOrderListItem } from "@/lib/orders/serialize";
 import { reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals } from "@/lib/orders/totals";
-import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES, PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
+import { PAYMENT_METHOD_VALUES } from "@/lib/orders/constants";
 import { transactionIdSchema } from "@/lib/orders/payment-validation";
-import { ORDER_DATE_BASES, ORDER_LIST_PRESETS } from "@/lib/orders/list-presets";
-import { dateBasisWhere, dhakaDaysRange, presetWhere } from "@/lib/orders/list-where";
-import { dayString } from "@/lib/finance/http";
-import { getPackingSlaHours } from "@/lib/settings/get";
+import { orderListQuerySchema, orderListWhere } from "@/lib/orders/list-query";
+import { pageArgs } from "@/lib/list/pagination";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
 import { SetError } from "@/lib/sets/service";
@@ -35,51 +33,16 @@ import { resolvePaymentWalletId, WalletError } from "@/lib/wallets/service";
 
 const VIEW_PERMISSIONS: PermissionKey[] = ["order.view_own", "order.view_team", "order.view_all"];
 
-const querySchema = z.object({
-  q: z.string().trim().optional(),
-  status: z.enum(ORDER_STATUS_VALUES).optional(),
-  channel: z.enum(ORDER_CHANNEL_VALUES).optional(),
-  createdById: z.string().cuid().optional(),
-  // Dhaka calendar days, inclusive, read against `dateBy` (default: placed).
-  from: dayString.optional(),
-  to: dayString.optional(),
-  dateBy: z.enum(ORDER_DATE_BASES).default("placed"),
-  // P4.3 — the named slices the dashboards link to (lib/orders/list-presets.ts).
-  preset: z.enum(ORDER_LIST_PRESETS).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
-});
-
 export async function GET(request: NextRequest) {
   const guard = await requirePermission(VIEW_PERMISSIONS);
   if (!guard.ok) return guard.response;
 
-  const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+  const parsed = orderListQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
-  const { q, status, channel, createdById, from, to, dateBy, preset, page, pageSize } = parsed.data;
-
-  const andConditions: Prisma.OrderWhereInput[] = [{ deletedAt: null }];
-  if (preset) andConditions.push(presetWhere(preset, { packingSlaHours: preset === "stuck" ? await getPackingSlaHours() : 0, now: new Date() }));
-  if (status) andConditions.push({ status });
-  if (channel) andConditions.push({ channel });
-  // Client-sent createdById is safe here: scopedWhere() ANDs the mandatory
-  // scope clause in afterward, so an SE sending someone else's id just gets
-  // zero rows back, never a wider result (CLAUDE.md rule 6).
-  if (createdById) andConditions.push({ createdById });
-  if (from || to) andConditions.push(dateBasisWhere(dateBy, dhakaDaysRange(from, to)));
-  if (q) {
-    andConditions.push({
-      OR: [
-        { orderNo: { contains: q, mode: "insensitive" } },
-        { customer: { name: { contains: q, mode: "insensitive" } } },
-        { customer: { phone: { contains: q.replace(/[\s-]/g, "") } } },
-      ],
-    });
-  }
-
-  const where: Prisma.OrderWhereInput = scopedWhere({ AND: andConditions }, guard.user);
+  const { page, pageSize } = parsed.data;
+  const where = await orderListWhere(parsed.data, guard.user);
 
   const [total, sums, orders] = await Promise.all([
     prisma.order.count({ where }),
@@ -88,8 +51,7 @@ export async function GET(request: NextRequest) {
     prisma.order.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...pageArgs({ page, pageSize }),
       include: ORDER_LIST_INCLUDE,
     }),
   ]);

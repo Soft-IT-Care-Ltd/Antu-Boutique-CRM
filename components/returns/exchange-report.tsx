@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 
+import { DateRangeFilter } from "@/components/list/date-range-filter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { dateRangeQuery, type DateRangeValue } from "@/lib/date-range";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ORDER_CHANNEL_LABELS, type OrderChannelValue } from "@/lib/orders/constants";
@@ -19,16 +20,13 @@ import type { ExchangeReport } from "@/lib/returns/types";
 // is a sizing or photo problem." The courier charge we bore is shown only
 // to roles that see cost (the API strips it otherwise).
 export function ExchangeReportView() {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [range, setRange] = useState<DateRangeValue>({ preset: "this_month" });
   const [channel, setChannel] = useState<OrderChannelValue | "ALL">("ALL");
   const [data, setData] = useState<{ report: ExchangeReport; fromDay: string; toDay: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    const params = new URLSearchParams(dateRangeQuery(range, { bounded: true }));
     if (channel !== "ALL") params.set("channel", channel);
     let live = true;
     fetchJson<{ report: ExchangeReport; fromDay: string; toDay: string }>(`/api/returns/report?${params}`)
@@ -36,26 +34,20 @@ export function ExchangeReportView() {
         if (!live) return;
         setData(d);
         setError(null);
-        if (!from) setFrom(d.fromDay);
-        if (!to) setTo(d.toDay);
       })
       .catch((err) => live && setError(err instanceof ApiError ? err.message : "Could not load the report."));
     return () => {
       live = false;
     };
-  }, [from, to, channel]);
+  }, [range, channel]);
 
   const r = data?.report;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="xr-from">From</Label>
-          <Input id="xr-from" type="date" className="w-40" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="xr-to">To</Label>
-          <Input id="xr-to" type="date" className="w-40" value={to} onChange={(e) => setTo(e.target.value)} />
+          <Label htmlFor="xr-range">Dates</Label>
+          <DateRangeFilter id="xr-range" value={range} onChange={setRange} />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label>Channel</Label>

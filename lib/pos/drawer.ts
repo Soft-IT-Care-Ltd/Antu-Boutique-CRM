@@ -12,6 +12,8 @@ import { CASH_OVER_SHORT_CATEGORY_ID, DEFAULT_POS_CASH_WALLET_ID, POS_CASH_WALLE
 import type { DrawerFlowRow, DrawerHistoryItem, DrawerState, DrawerSummary } from "@/lib/pos/types";
 import { getWalletBalances } from "@/lib/wallets/ledger";
 import { createManualEntry, createTransfer } from "@/lib/wallets/service";
+import { dhakaDaysRange } from "@/lib/date-range";
+import { pageArgs } from "@/lib/list/pagination";
 
 // PRD §4.7 — the daily showroom cash drawer.
 //
@@ -223,10 +225,15 @@ export async function getDrawerSummary(db: Db, drawerId: string): Promise<Drawer
   return drawer ? summarize(db, drawer) : null;
 }
 
-export async function listDrawers(db: Db, walletId: string, page: number, pageSize: number): Promise<{ items: DrawerHistoryItem[]; total: number }> {
+export async function listDrawers(
+  db: Db,
+  walletId: string,
+  opts: { page: number; pageSize: number; from?: string; to?: string },
+): Promise<{ items: DrawerHistoryItem[]; total: number }> {
+  const where = { walletId, ...(opts.from || opts.to ? { businessDay: dhakaDaysRange(opts.from, opts.to) } : {}) };
   const [total, rows] = await Promise.all([
-    db.cashDrawer.count({ where: { walletId } }),
-    db.cashDrawer.findMany({ where: { walletId }, include: drawerInclude, orderBy: { businessDay: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+    db.cashDrawer.count({ where }),
+    db.cashDrawer.findMany({ where, include: drawerInclude, orderBy: { businessDay: "desc" }, ...pageArgs(opts) }),
   ]);
   const items = await Promise.all(
     rows.map(async (d) => ({

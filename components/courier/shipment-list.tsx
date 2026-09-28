@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, Loader2, PackageCheck, RefreshCw, Search, Send, Truck } from "lucide-react";
+import { AlertTriangle, ExternalLink, Loader2, PackageCheck, RefreshCw, Search, Send, Truck } from "lucide-react";
 
+import { ListPagination } from "@/components/list/list-pagination";
+import { usePager } from "@/components/list/list-prefs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,8 +19,6 @@ import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { formatBDT } from "@/lib/money";
 import { ApiError, fetchJson } from "@/lib/orders/client";
 import { ORDER_STATUS_LABELS } from "@/lib/orders/constants";
-
-const PAGE_SIZE = 20;
 
 const TAB_LABELS: Record<CourierShipmentTab, string> = {
   ready: "Ready to ship",
@@ -41,7 +41,8 @@ type ListResponse = { tab: CourierShipmentTab; items: (ReadyToShipRow | Shipment
 export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: boolean; canSync: boolean; canReconcile: boolean }) {
   const [tab, setTab] = useState<CourierShipmentTab>("ready");
   const [data, setData] = useState<ListResponse | null>(null);
-  const [page, setPage] = useState(1);
+  const pager = usePager("shipments");
+  const { page, pageSize, setPage } = pager;
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -57,7 +58,7 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
   }, [q]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ tab, page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ tab, page: String(page), pageSize: String(pageSize) });
     if (debouncedQ) params.set("q", debouncedQ);
     fetchJson<ListResponse>(`/api/courier/shipments?${params}`)
       .then((res) => {
@@ -65,7 +66,7 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load shipments."));
-  }, [tab, page, debouncedQ, reloadKey]);
+  }, [tab, page, pageSize, debouncedQ, reloadKey]);
 
   const reload = useCallback(() => {
     setSelected(new Set());
@@ -74,7 +75,7 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
 
   function switchTab(next: CourierShipmentTab) {
     setTab(next);
-    setPage(1);
+    pager.reset();
     setSelected(new Set());
     setMessage(null);
   }
@@ -109,7 +110,6 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
   }
 
   const items = data?.tab === tab ? data.items : null;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
   const readyRows = tab === "ready" ? ((items ?? []) as ReadyToShipRow[]) : [];
   const selectableIds = readyRows.filter((r) => !r.bookingInProgress).map((r) => r.orderId);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
@@ -133,7 +133,7 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
-              setPage(1);
+              pager.reset();
             }}
             className="pl-8"
           />
@@ -327,19 +327,7 @@ export function ShipmentList({ canSend, canSync, canReconcile }: { canSend: bool
       )}
 
       {items && items.length > 0 ? (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Page {page} of {totalPages} · {data?.total ?? 0}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="icon-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-            </Button>
-            <Button variant="outline" size="icon-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <ListPagination page={page} pageSize={pageSize} total={data?.total ?? 0} noun="parcels" onPageChange={setPage} onPageSizeChange={pager.setPageSize} />
       ) : null}
 
       <SendToSteadfastDialog orderIds={sendIds} onOpenChange={(open) => !open && setSendIds(null)} onDone={reload} />
