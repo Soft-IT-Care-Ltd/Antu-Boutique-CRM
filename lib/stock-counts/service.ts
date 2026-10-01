@@ -15,15 +15,28 @@ import type { StockCountListItem, StockCountScopeValue, StockCountStatusValue, S
 
 // C4 — CORRECTIONS.md item 2, stock count by scan. A location's incharge
 // (stock.count) opens a count and scans everything on the shelves; each
-// scan adds one to that variant's counted figure. The screen shows counted
-// vs expected (the location's stock right now) per variant. Posting — a
+// scan adds one to that variant's counted figure. Posting — a
 // Manager/Admin decision (inventory.adjust, the "Stock shortage" rules) —
 // books every difference as a stock adjustment at that location, pointing
 // back at the count, with its "Stock shortage" expense at cost.
 //
+// WHAT a line is compared with (PRD §4.3): a scan says what was on the
+// shelf at the moment it was scanned, so each line is compared with the
+// location's stock AT ITS LAST SCAN — read under the variant's lock and
+// kept on the line (stockAtScan). That equals today's stock minus every
+// movement the location's ledger made for the variant after the scan, so a
+// POS sale or a transfer received between scanning and posting is never
+// booked as found or short. Posting adds (counted − stock at scan) to
+// today's stock.
+//
 //   SPOT count: only what was scanned is compared (a shelf, a rack).
-//   FULL count: the whole location — anything it shows that wasn't
-//               scanned counts as 0 and is taken off.
+//   FULL count: the whole location. An item it shows that nobody scanned
+//               was not found and is taken off — but only if nothing moved
+//               it at the location since the count opened (openedAtSeq).
+//               If it was sold, received or transferred during the count,
+//               nobody can tell whether the counter passed it before or
+//               after, so it is left as it is and reported as "moved during
+//               the count — scan it". Never a guessed expense.
 
 export class StockCountError extends Error {
   constructor(
@@ -36,11 +49,11 @@ export class StockCountError extends Error {
 
 export { ScanError };
 
-type CountRow = { id: string; countNo: string; status: StockCountStatusValue; locationId: string; scope: StockCountScopeValue };
+type CountRow = { id: string; countNo: string; status: StockCountStatusValue; locationId: string; scope: StockCountScopeValue; openedAtSeq: bigint };
 
 async function lockCount(tx: Prisma.TransactionClient, id: string): Promise<CountRow> {
   const rows = await tx.$queryRaw<CountRow[]>`
-    SELECT "id", "countNo", "status"::text AS "status", "locationId", "scope"::text AS "scope"
+    SELECT "id", "countNo", "status"::text AS "status", "locationId", "scope"::text AS "scope", "openedAtSeq"
     FROM "stock_counts" WHERE "id" = ${id} FOR UPDATE
   `;
   if (!rows[0]) throw new StockCountError("Stock count not found.", 404);
@@ -66,9 +79,33 @@ export async function createStockCount(tx: Prisma.TransactionClient, user: Sessi
   if (!location.isActive) throw new StockCountError(`${location.name} is switched off.`);
   const countNo = await nextDocumentNumber(tx, "SC");
   return tx.stockCount.create({
-    data: { countNo, locationId: input.locationId, scope: input.scope, note: input.note?.trim() || null, createdById: user.id },
+    data: { countNo, locationId: input.locationId, scope: input.scope, note: input.note?.trim() || null, createdById: user.id, openedAtSeq: await lastLedgerSeq(tx) },
     select: { id: true, countNo: true },
   });
+}
+
+/** The newest stock_movements.seq — everything up to it happened before now. */
+async function lastLedgerSeq(tx: Prisma.TransactionClient): Promise<bigint> {
+  const rows = await tx.$queryRaw<{ seq: bigint | null }[]>`SELECT MAX("seq") AS "seq" FROM "stock_movements"`;
+  return rows[0]?.seq ?? BigInt(0);
+}
+
+/**
+ * The location's stock for the variant right now, under the variant's lock
+ * — every stock writer takes that lock first, so nothing can move it
+ * between this read and the scan being saved.
+ */
+async function stockNowLocked(tx: Prisma.TransactionClient, variantId: string, locationId: string): Promise<number> {
+  const locked = await lockVariantAt(tx, variantId, locationId);
+  if (!locked) throw new StockCountError("That item doesn't exist.", 404);
+  return locked.locationQty;
+}
+
+/** Of these variants, the ones whose stock at the location moved after ledger row `seq`. */
+async function movedSince(db: Db, locationId: string, variantIds: string[], seq: bigint): Promise<Set<string>> {
+  if (variantIds.length === 0) return new Set();
+  const rows = await db.stockMovement.findMany({ where: { locationId, variantId: { in: variantIds }, seq: { gt: seq } }, distinct: ["variantId"], select: { variantId: true } });
+  return new Set(rows.map((r) => r.variantId));
 }
 
 export async function scanCountUnit(tx: Prisma.TransactionClient, user: SessionUser, countId: string, raw: string) {
@@ -76,10 +113,11 @@ export async function scanCountUnit(tx: Prisma.TransactionClient, user: SessionU
   requireOpen(c);
   await assertCounter(tx, user, c.locationId);
   const variant = await findVariantByScan(tx, raw);
+  const stockAtScan = await stockNowLocked(tx, variant.id, c.locationId);
   const line = await tx.stockCountLine.upsert({
     where: { countId_variantId: { countId, variantId: variant.id } },
-    create: { countId, variantId: variant.id, countedQty: 1 },
-    update: { countedQty: { increment: 1 } },
+    create: { countId, variantId: variant.id, countedQty: 1, stockAtScan },
+    update: { countedQty: { increment: 1 }, stockAtScan },
     select: { countedQty: true },
   });
   return { item: scannedItem(variant), count: line.countedQty, of: null, message: `${variant.sku} · ${line.countedQty} counted` };
@@ -90,14 +128,14 @@ export async function setCountLineQty(tx: Prisma.TransactionClient, user: Sessio
   const c = await lockCount(tx, countId);
   requireOpen(c);
   await assertCounter(tx, user, c.locationId);
-  const variant = await tx.productVariant.findUnique({ where: { id: variantId }, select: { id: true } });
-  if (!variant) throw new StockCountError("That item doesn't exist.", 404);
   // A FULL count keeps a 0 line (counted: none); a SPOT count drops it (not counted).
   if (qty === 0 && c.scope === "SPOT") {
     await tx.stockCountLine.deleteMany({ where: { countId, variantId } });
     return;
   }
-  await tx.stockCountLine.upsert({ where: { countId_variantId: { countId, variantId } }, create: { countId, variantId, countedQty: qty }, update: { countedQty: qty } });
+  // Typing a figure in is counting the shelf now — same as a scan.
+  const stockAtScan = await stockNowLocked(tx, variantId, c.locationId);
+  await tx.stockCountLine.upsert({ where: { countId_variantId: { countId, variantId } }, create: { countId, variantId, countedQty: qty, stockAtScan }, update: { countedQty: qty, stockAtScan } });
 }
 
 export async function cancelStockCount(tx: Prisma.TransactionClient, user: SessionUser, countId: string): Promise<void> {
@@ -108,9 +146,10 @@ export async function cancelStockCount(tx: Prisma.TransactionClient, user: Sessi
 }
 
 /**
- * Books the count: for every variant compared, locks it, reads the
- * location's stock NOW (what moved during the count is already in it) and
- * posts counted − expected as an adjustment (+ found / − short).
+ * Books the count. Each line is compared with the location's stock at its
+ * last scan and the difference is added to today's stock — so it ends at
+ * what was on the shelf at the scan plus everything that moved since. A
+ * FULL count also takes off unscanned items that didn't move during it.
  */
 export async function postStockCount(tx: Prisma.TransactionClient, user: SessionUser, countId: string, meta: { request?: Request } = {}) {
   const c = await lockCount(tx, countId);
@@ -118,25 +157,42 @@ export async function postStockCount(tx: Prisma.TransactionClient, user: Session
   if (!(await can(user, "inventory.adjust"))) throw new StockCountError("Posting a count changes stock — a Manager or Admin posts it.", 403);
   if (!canActAt(await getLocationAccess(tx, user), c.locationId)) throw new StockCountError("You don't act for that location.", 403);
 
-  const lines = await tx.stockCountLine.findMany({ where: { countId }, select: { id: true, variantId: true, countedQty: true } });
+  type Line = { id: string | null; variantId: string; countedQty: number; stockAtScan: number | null };
+  const lines: Line[] = await tx.stockCountLine.findMany({ where: { countId }, select: { id: true, variantId: true, countedQty: true, stockAtScan: true } });
   if (c.scope === "FULL") {
-    // Everything the location shows that nobody scanned was counted as none.
+    // Everything the location shows that nobody scanned: counted as none.
     const unscanned = await tx.variantStock.findMany({ where: { locationId: c.locationId, qty: { not: 0 }, variantId: { notIn: lines.map((l) => l.variantId) } }, select: { variantId: true } });
-    for (const u of unscanned) lines.push(await tx.stockCountLine.create({ data: { countId, variantId: u.variantId, countedQty: 0 }, select: { id: true, variantId: true, countedQty: true } }));
+    for (const u of unscanned) lines.push({ id: null, variantId: u.variantId, countedQty: 0, stockAtScan: null });
   }
   if (lines.length === 0) throw new StockCountError("Nothing has been counted yet.");
+  // One lock order (variant id) for every multi-variant stock writer.
   lines.sort((a, b) => a.variantId.localeCompare(b.variantId));
 
   const differences: { sku: string; expected: number; counted: number }[] = [];
+  const movedDuringCount: string[] = [];
+  let compared = 0;
   for (const line of lines) {
     const locked = await lockVariantAt(tx, line.variantId, c.locationId);
     if (!locked) throw new StockCountError("One of the counted items is no longer in the catalog.");
-    const expected = locked.locationQty;
+    let expected: number;
+    if (line.id === null) {
+      // Unscanned in a FULL count — taken off only if it sat still the whole count.
+      if ((await movedSince(tx, c.locationId, [line.variantId], c.openedAtSeq)).size > 0) {
+        movedDuringCount.push((await tx.productVariant.findUniqueOrThrow({ where: { id: line.variantId }, select: { sku: true } })).sku);
+        continue;
+      }
+      expected = locked.locationQty;
+      line.id = (await tx.stockCountLine.create({ data: { countId, variantId: line.variantId, countedQty: 0, stockAtScan: expected }, select: { id: true } })).id;
+    } else {
+      // A line scanned before stockAtScan existed: compared with now, as it was then.
+      expected = line.stockAtScan ?? locked.locationQty;
+    }
+    compared++;
     await tx.stockCountLine.update({ where: { id: line.id }, data: { expectedQty: expected } });
     const diff = line.countedQty - expected;
     if (diff === 0) continue;
     const { sku } = await tx.productVariant.findUniqueOrThrow({ where: { id: line.variantId }, select: { sku: true } });
-    await adjustStock(tx, { variantId: line.variantId, locationId: c.locationId, qty: diff, reason: `Stock count ${c.countNo}: counted ${line.countedQty}, system showed ${expected}` }, user.id, {
+    await adjustStock(tx, { variantId: line.variantId, locationId: c.locationId, qty: diff, reason: `Stock count ${c.countNo}: counted ${line.countedQty}, system showed ${expected} when scanned` }, user.id, {
       referenceType: "STOCK_COUNT",
       referenceId: countId,
     });
@@ -150,10 +206,10 @@ export async function postStockCount(tx: Prisma.TransactionClient, user: Session
     entityType: "stock_count",
     entityId: countId,
     before: { status: "OPEN" },
-    after: { status: "POSTED", countNo: c.countNo, scope: c.scope, itemsCompared: lines.length, differences },
+    after: { status: "POSTED", countNo: c.countNo, scope: c.scope, itemsCompared: compared, differences, movedDuringCount },
     request: meta.request,
   });
-  return { compared: lines.length, differences: differences.length };
+  return { compared, differences: differences.length, movedDuringCount: movedDuringCount.length };
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────
@@ -166,13 +222,14 @@ export async function getStockCountView(db: Db, user: SessionUser, countId: stri
       location: { select: { id: true, name: true } },
       createdBy: { select: { name: true } },
       postedBy: { select: { name: true } },
-      lines: { select: { variantId: true, countedQty: true, expectedQty: true } },
+      lines: { select: { variantId: true, countedQty: true, stockAtScan: true, expectedQty: true } },
     },
   });
   if (!c) return null;
 
-  // While open, "expected" is the location's stock right now; for a FULL
-  // count that includes everything there that hasn't been scanned yet.
+  // While open, a scanned line is compared with the stock at its last scan
+  // (what posting will use); a FULL count's unscanned items with the stock
+  // now — unless they moved during the count, which posting leaves alone.
   const open = c.status === "OPEN";
   const liveStock = open
     ? await db.variantStock.findMany({
@@ -182,6 +239,15 @@ export async function getStockCountView(db: Db, user: SessionUser, countId: stri
     : [];
   const liveQty = new Map(liveStock.map((s) => [s.variantId, s.qty]));
   const counted = new Map(c.lines.map((l) => [l.variantId, l]));
+  const moved =
+    open && c.scope === "FULL"
+      ? await movedSince(
+          db,
+          c.locationId,
+          [...liveQty.keys()].filter((id) => !counted.has(id)),
+          c.openedAtSeq,
+        )
+      : new Set<string>();
   const variantIds = [...new Set([...counted.keys(), ...liveQty.keys()])];
   const variants = await db.productVariant.findMany({
     where: { id: { in: variantIds } },
@@ -192,7 +258,8 @@ export async function getStockCountView(db: Db, user: SessionUser, countId: stri
     .map((v) => {
       const line = counted.get(v.id);
       const countedQty = line?.countedQty ?? 0;
-      const expected = open ? (liveQty.get(v.id) ?? 0) : (line?.expectedQty ?? 0);
+      const movedDuringCount = moved.has(v.id);
+      const expected = open ? (line?.stockAtScan ?? liveQty.get(v.id) ?? 0) : (line?.expectedQty ?? 0);
       return {
         variantId: v.id,
         sku: v.sku,
@@ -202,9 +269,10 @@ export async function getStockCountView(db: Db, user: SessionUser, countId: stri
         colorHex: v.color.hexCode,
         thumbPath: v.product.images[0]?.thumbPath ?? null,
         scanned: line !== undefined,
+        movedDuringCount,
         counted: countedQty,
         expected,
-        difference: countedQty - expected,
+        difference: movedDuringCount ? 0 : countedQty - expected,
       };
     })
     .filter((l) => !open || c.scope === "FULL" || l.scanned)

@@ -14,7 +14,7 @@ export type StockCountScopeValue = (typeof STOCK_COUNT_SCOPES)[number];
 
 export const STOCK_COUNT_SCOPE_LABELS: Record<StockCountScopeValue, { label: string; hint: string }> = {
   SPOT: { label: "Spot count", hint: "A shelf or a rack — only what you scan is compared." },
-  FULL: { label: "Full count", hint: "The whole location — anything not scanned counts as none and is taken off." },
+  FULL: { label: "Full count", hint: "The whole location — anything not scanned counts as none and is taken off (unless it was sold or moved during the count)." },
 };
 
 /** One variant on a count. Never carries cost. */
@@ -27,10 +27,12 @@ export type StockCountLineView = {
   colorHex: string;
   thumbPath: string | null;
   scanned: boolean;
+  /** FULL count, not scanned, and its stock moved during the count: posting leaves it alone. */
+  movedDuringCount: boolean;
   counted: number;
-  /** The location's stock: live while counting, frozen at posting. */
+  /** The location's stock when the line was last scanned (unscanned: now); frozen at posting. */
   expected: number;
-  /** counted − expected: + extra found, − short. */
+  /** counted − expected: + extra found, − short. 0 when movedDuringCount. */
   difference: number;
 };
 

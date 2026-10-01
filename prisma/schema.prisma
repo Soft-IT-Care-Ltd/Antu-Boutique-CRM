@@ -1022,9 +1022,15 @@ model StockMovement {
 
   expense Expense?
 
+  // C4 fix — the ledger's order. Strictly increasing, so "what moved after
+  // X" never depends on two clocks agreeing (a stock count asks which
+  // movements came after it opened).
+  seq BigInt @unique @default(autoincrement())
+
   createdAt DateTime @default(now())
 
   @@index([variantId, createdAt])
+  @@index([locationId, variantId, seq])
   @@index([locationId, variantId])
   @@index([referenceType, referenceId])
   @@index([type])
@@ -1226,13 +1232,16 @@ enum StockCountScope {
 // line with the location's stock at that moment and books every
 // difference as a stock adjustment ("Stock shortage" rules, PRD §4.3).
 model StockCount {
-  id         String           @id @default(cuid())
-  countNo    String           @unique
-  locationId String
-  location   Location         @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  scope      StockCountScope  @default(SPOT)
-  status     StockCountStatus @default(OPEN)
-  note       String?
+  id          String           @id @default(cuid())
+  countNo     String           @unique
+  locationId  String
+  location    Location         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  scope       StockCountScope  @default(SPOT)
+  status      StockCountStatus @default(OPEN)
+  note        String?
+  // The last stock_movements.seq when the count opened: a FULL count only
+  // takes off an unscanned item that hasn't moved at the location since.
+  openedAtSeq BigInt           @default(0)
 
   createdById String?
   createdBy   User?     @relation("StockCountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -1258,7 +1267,11 @@ model StockCountLine {
   variantId   String
   variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
   countedQty  Int            @default(0)
-  // The location's stock when the count was posted (null while open).
+  // The location's stock at the moment this line was last scanned or typed
+  // in (read under the variant's lock) — what the count is compared with.
+  // Anything that moved after the scan is already in the shelf it left.
+  stockAtScan Int?
+  // What the count was compared with when posted (null while open).
   expectedQty Int?
 
   @@unique([countId, variantId])

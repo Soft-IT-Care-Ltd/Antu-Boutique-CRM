@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { SHORTAGE_EXPENSE_CATEGORY } from "@/lib/inventory/constants";
 import { findStockLedgerDivergences, recordStockMovement, StockMovementError } from "@/lib/inventory/ledger";
 import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
-import { createStockCount, postStockCount, scanCountUnit, setCountLineQty, StockCountError } from "@/lib/stock-counts/service";
+import { createPosSale } from "@/lib/pos/sale";
+import { createStockCount, getStockCountView, postStockCount, scanCountUnit, setCountLineQty, StockCountError } from "@/lib/stock-counts/service";
 import { testProductCode, testSku } from "@/lib/test/catalog-codes";
 import { PHONES, userFor } from "@/lib/test/returns-fixtures";
 import { checkDeferredConstraintsNow, inRolledBackTransaction } from "@/lib/test/rollback";
@@ -284,7 +285,7 @@ describe("stock count by scan (item 2)", () => {
         await expect(scanCountUnit(tx, packer, spot.id, "NOSUCH1")).rejects.toThrow(ScanError);
         // Posting is an adjustment: the packer can't, the manager can.
         await expect(postStockCount(tx, packer, spot.id)).rejects.toThrow(StockCountError);
-        expect(await postStockCount(tx, manager, spot.id)).toEqual({ compared: 2, differences: 2 });
+        expect(await postStockCount(tx, manager, spot.id)).toEqual({ compared: 2, differences: 2, movedDuringCount: 0 });
         expect(await snapshot(tx, a.id)).toMatchObject({ hub: 3, total: 3 });
         expect(await snapshot(tx, b.id)).toMatchObject({ hub: 4, total: 4 });
         // c wasn't in a spot count — untouched.
@@ -302,6 +303,171 @@ describe("stock count by scan (item 2)", () => {
         await postStockCount(tx, manager, full.id);
         expect(await snapshot(tx, a.id)).toMatchObject({ corner: 1, hub: 3 });
         expect(await snapshot(tx, c.id)).toMatchObject({ corner: 0, hub: 3 });
+        expect(await findStockLedgerDivergences(tx)).toEqual([]);
+      });
+    },
+    TIMEOUT,
+  );
+});
+
+// The rule (PRD §4.3): a scan records the shelf at the moment it was
+// scanned, so each line is compared with the location's stock at its last
+// scan — never at posting. Every case below checks that afterwards the
+// system equals the physical shelf and that no shortage/found expense was
+// booked unless something really was missing.
+describe("stock count — compared with the stock when scanned", () => {
+  type User = Awaited<ReturnType<typeof userFor>>;
+
+  async function sellAtShowroom(tx: Tx, pos: User, variantId: string) {
+    const cashWallet = await tx.wallet.findFirstOrThrow({ where: { type: "CASH" } });
+    await createPosSale(tx, { user: pos, cashWalletId: cashWallet.id, hasCostAccess: false, canCreateCustomer: true }, { items: [{ variantId, qty: 1, unitPrice: 1500, lineDiscount: 0 }], cartDiscount: 0, tenders: [{ method: "CARD", amount: 1500 }] });
+  }
+
+  async function countAdjustments(tx: Tx, countId: string) {
+    const rows = await tx.stockMovement.findMany({ where: { referenceType: "STOCK_COUNT", referenceId: countId }, include: { expense: true } });
+    return rows.map((m) => ({ variantId: m.variantId, qty: m.qty, expense: m.expense?.amount.toString() ?? null }));
+  }
+
+  async function setup(tx: Tx) {
+    const [pos, packer, manager] = await Promise.all([userFor(tx, PHONES.POS), userFor(tx, PHONES.PACKING), userFor(tx, PHONES.MANAGER)]);
+    // 5 on the showroom shelf, 2 more at the hub.
+    const v = await scratchVariant(tx, [
+      { locationId: SHOWROOM, qty: 5 },
+      { locationId: HUB, qty: 2 },
+    ]);
+    return { pos, packer, manager, v };
+  }
+
+  it(
+    "(a) scan all 5, one sells at the POS, post → no difference; system 4 = shelf 4",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { pos, manager, v } = await setup(tx);
+        const count = await createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT" });
+        for (let i = 0; i < 5; i++) await scanCountUnit(tx, pos, count.id, v.sku);
+        await sellAtShowroom(tx, pos, v.id);
+        expect(await qtyAt(tx, v.id, SHOWROOM)).toBe(4);
+
+        expect(await postStockCount(tx, manager, count.id)).toMatchObject({ compared: 1, differences: 0 });
+        expect(await snapshot(tx, v.id)).toMatchObject({ showroom: 4, hub: 2 });
+        expect(await countAdjustments(tx, count.id)).toEqual([]);
+        expect((await tx.stockCountLine.findFirstOrThrow({ where: { countId: count.id } })).expectedQty).toBe(5);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "(b) scan all 5, a transfer of 2 arrives, post → no shortage; system 7 = shelf 7",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { pos, packer, manager, v } = await setup(tx);
+        const count = await createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT" });
+        for (let i = 0; i < 5; i++) await scanCountUnit(tx, pos, count.id, v.sku);
+
+        const t = await createTransfer(tx, packer, { fromLocationId: HUB, toLocationId: SHOWROOM });
+        await scan(tx, packer, t.id, "send", v.sku, 2);
+        await sendTransfer(tx, packer, t.id);
+        await scan(tx, pos, t.id, "receive", v.sku, 2);
+        expect(await receiveTransfer(tx, pos, t.id)).toMatchObject({ missing: 0 });
+        expect(await qtyAt(tx, v.id, SHOWROOM)).toBe(7);
+
+        expect(await postStockCount(tx, manager, count.id)).toMatchObject({ compared: 1, differences: 0 });
+        expect(await snapshot(tx, v.id)).toMatchObject({ showroom: 7, hub: 0, inTransit: 0, total: 7 });
+        expect(await countAdjustments(tx, count.id)).toEqual([]);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "(c) one sells BEFORE scanning, the 4 left are scanned, post → no difference; system 4 = shelf 4",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { pos, manager, v } = await setup(tx);
+        const count = await createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT" });
+        await sellAtShowroom(tx, pos, v.id);
+        for (let i = 0; i < 4; i++) await scanCountUnit(tx, pos, count.id, v.sku);
+
+        expect(await postStockCount(tx, manager, count.id)).toMatchObject({ compared: 1, differences: 0 });
+        expect(await snapshot(tx, v.id)).toMatchObject({ showroom: 4 });
+        expect(await countAdjustments(tx, count.id)).toEqual([]);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "(d) one unit really missing: shelf 4 of 5 scanned, then one sells → 1 short at cost; system 3 = shelf 3",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { pos, manager, v } = await setup(tx);
+        const count = await createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT" });
+        for (let i = 0; i < 4; i++) await scanCountUnit(tx, pos, count.id, v.sku);
+        // A sale after the scan doesn't change what the scan found missing.
+        await sellAtShowroom(tx, pos, v.id);
+
+        expect(await postStockCount(tx, manager, count.id)).toMatchObject({ compared: 1, differences: 1 });
+        expect(await snapshot(tx, v.id)).toMatchObject({ showroom: 3, hub: 2 });
+        // Exactly one unit short, its expense at the 500 cost.
+        expect(await countAdjustments(tx, count.id)).toEqual([{ variantId: v.id, qty: -1, expense: "500" }]);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "a typed-in figure is compared with the stock when it was typed",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const { pos, manager, v } = await setup(tx);
+        const count = await createStockCount(tx, pos, { locationId: SHOWROOM, scope: "SPOT" });
+        await setCountLineQty(tx, pos, count.id, v.id, 5);
+        await sellAtShowroom(tx, pos, v.id);
+        expect(await postStockCount(tx, manager, count.id)).toMatchObject({ differences: 0 });
+        expect(await snapshot(tx, v.id)).toMatchObject({ showroom: 4 });
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "FULL count, unscanned items: taken off only if they sat still during the count; ones that moved are left alone",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const manager = await userFor(tx, PHONES.MANAGER);
+        // The corner holds seeded stock too; a FULL count there takes it all
+        // off (nobody scans it) — that's fine inside the rolled-back test.
+        const still = await scratchVariant(tx, [{ locationId: CORNER, qty: 2 }]); // gone from the shelf, nobody touched it
+        const sold = await scratchVariant(tx, [{ locationId: CORNER, qty: 2 }]); // one sold during the count, none scanned
+        const arrived = await scratchVariant(tx, [{ locationId: HUB, qty: 3 }]); // 2 delivered during the count, not scanned
+        const scanned = await scratchVariant(tx, [{ locationId: CORNER, qty: 3 }]); // scanned 3, then one goes out
+
+        const count = await createStockCount(tx, manager, { locationId: CORNER, scope: "FULL" });
+        for (let i = 0; i < 3; i++) await scanCountUnit(tx, manager, count.id, scanned.sku);
+        // Movements during the count: sales at the corner and a delivery.
+        await recordStockMovement(tx, { variantId: sold.id, locationId: CORNER, type: "SALE_OUT", qty: -1, unitCost: 500, referenceType: "OPENING_BALANCE", actorId: null });
+        await recordStockMovement(tx, { variantId: scanned.id, locationId: CORNER, type: "SALE_OUT", qty: -1, unitCost: 500, referenceType: "OPENING_BALANCE", actorId: null });
+        await recordStockMovement(tx, { variantId: arrived.id, locationId: CORNER, type: "PURCHASE_IN", qty: 2, unitCost: 500, referenceType: "OPENING_BALANCE", actorId: null });
+
+        // The screen shows what posting will do.
+        const view = (await getStockCountView(tx, manager, count.id))!;
+        const line = (id: string) => view.lines.find((l) => l.variantId === id);
+        expect(line(still.id)).toMatchObject({ scanned: false, movedDuringCount: false, expected: 2, difference: -2 });
+        expect(line(sold.id)).toMatchObject({ scanned: false, movedDuringCount: true, difference: 0 });
+        expect(line(arrived.id)).toMatchObject({ scanned: false, movedDuringCount: true, difference: 0 });
+        expect(line(scanned.id)).toMatchObject({ scanned: true, counted: 3, expected: 3, difference: 0 });
+
+        const result = await postStockCount(tx, manager, count.id);
+        expect(result.movedDuringCount).toBe(2);
+        expect(await snapshot(tx, still.id)).toMatchObject({ corner: 0 }); // really gone: taken off
+        expect(await snapshot(tx, sold.id)).toMatchObject({ corner: 1 }); // left for a recount, no guess
+        expect(await snapshot(tx, arrived.id)).toMatchObject({ corner: 2, hub: 3 }); // not taken off as "missing"
+        expect(await snapshot(tx, scanned.id)).toMatchObject({ corner: 2 }); // 3 on the shelf at the scan, 1 out since
+        const adj = await countAdjustments(tx, count.id);
+        expect(adj.filter((a) => [still.id, sold.id, arrived.id, scanned.id].includes(a.variantId))).toEqual([{ variantId: still.id, qty: -2, expense: "1000" }]);
+        const audit = await tx.auditLog.findFirstOrThrow({ where: { entityType: "stock_count", entityId: count.id, action: "stock_count.post" } });
+        expect((audit.after as { movedDuringCount: string[] }).movedDuringCount.sort()).toEqual([sold.sku, arrived.sku].sort());
         expect(await findStockLedgerDivergences(tx)).toEqual([]);
       });
     },

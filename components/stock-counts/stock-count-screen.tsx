@@ -65,7 +65,7 @@ export function StockCountScreen({ initial }: { initial: StockCountView }) {
   );
 
   const open = c.status === "OPEN";
-  const lines = onlyDiff ? c.lines.filter((l) => l.difference !== 0) : c.lines;
+  const lines = onlyDiff ? c.lines.filter((l) => l.difference !== 0 || l.movedDuringCount) : c.lines;
 
   return (
     <div className="flex flex-col gap-4">
@@ -158,7 +158,7 @@ export function StockCountScreen({ initial }: { initial: StockCountView }) {
             <DialogTitle>{confirm === "post" ? "Post this count?" : "Cancel this count?"}</DialogTitle>
             <DialogDescription>
               {confirm === "post"
-                ? `${c.location.name}'s stock is set to what was counted: ${c.totals.short} unit(s) taken off, ${c.totals.extra} added — each at cost under "Stock shortage". ${c.scope === "FULL" ? "Anything there that wasn't scanned is taken off. " : ""}Stock that moved during the count is taken into account.`
+                ? `${c.location.name}'s stock is set to what was counted: ${c.totals.short} unit(s) taken off, ${c.totals.extra} added — each at cost under "Stock shortage". ${c.scope === "FULL" ? "Anything there that wasn't scanned is taken off, unless it moved during the count. " : ""}Each item is compared with the stock when it was scanned, so sales and transfers since then are allowed for.`
                 : "Nothing changes — the scans are thrown away."}
             </DialogDescription>
           </DialogHeader>
@@ -206,15 +206,19 @@ function CountLineRow({ line: l, editable, busy, onSetQty }: { line: StockCountL
             <span className="size-3 shrink-0 rounded-full border" style={{ backgroundColor: l.colorHex }} />
             <b className="text-foreground">{l.sizeName}</b> · {l.colorName} · <span className="font-mono text-xs">{l.sku}</span>
           </p>
-          {!l.scanned ? <p className="text-xs text-amber-700 dark:text-amber-400">Not scanned — counts as none</p> : null}
+          {l.movedDuringCount ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">Not scanned, and it moved during the count — left as it is. Scan it to count it.</p>
+          ) : !l.scanned ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">Not scanned — counts as none</p>
+          ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end justify-center text-right">
           <span className="text-2xl font-semibold tabular-nums">
             {l.counted}
             <span className="text-base font-normal text-muted-foreground">/{l.expected}</span>
           </span>
-          <span className={cn("text-xs font-medium", l.difference < 0 ? "text-destructive" : l.difference > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-600")}>
-            {l.difference === 0 ? "matches" : l.difference < 0 ? `${-l.difference} short` : `${l.difference} extra`}
+          <span className={cn("text-xs font-medium", l.difference < 0 ? "text-destructive" : l.difference > 0 || l.movedDuringCount ? "text-amber-700 dark:text-amber-400" : "text-emerald-600")}>
+            {l.movedDuringCount ? "not changed" : l.difference === 0 ? "matches" : l.difference < 0 ? `${-l.difference} short` : `${l.difference} extra`}
           </span>
         </div>
       </div>
