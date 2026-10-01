@@ -92,7 +92,15 @@ describe("every number is the list it links to", () => {
   it("an executive's dashboard is their own orders only, with nothing cost-shaped in it", async () => {
     const se = await sessionUserFor(SE);
     asSession(se);
-    const n = await getSalesNumbers(prisma, se);
+    // Seeded orders are dated from when antu_test was seeded, so early in a
+    // month "this month" can be empty. Look at the month of the
+    // executive's latest sale instead — the check must never pass on nothing.
+    const latest = await prisma.order.findFirstOrThrow({
+      where: { createdById: se.id, deletedAt: null, exchangedFromOrderId: null, status: { notIn: ["LEAD", "CANCELLED", "RETURNED", "REFUNDED"] } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    const n = await getSalesNumbers(prisma, se, latest.createdAt);
     const list = await listFor(ordersHref({ preset: "sales", range: n.ranges.mtdRange }));
     expect([list.total, list.totalValue]).toEqual([n.inPeriod.orders, Number(n.inPeriod.value)]);
 

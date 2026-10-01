@@ -568,15 +568,18 @@ describe("9. the Online / Walk-in split adds up to the totals", () => {
     const admin = await sessionUserFor(PHONES.ADMIN);
     asSession(admin);
     const n = await getOwnerNumbers(prisma, admin);
-    const range = n.ranges.chartRange;
+    // The split follows the dashboard's period (This Month); the daily
+    // chart its chart range (widened to 30 days early in a month — C2).
+    const range = n.period.range;
     const all = await orderList(ordersHref({ preset: "sales", range }));
     const online = await orderList(ordersHref({ preset: "sales", channel: "ONLINE", range }));
     const walkIn = await orderList(ordersHref({ preset: "sales", channel: "WALK_IN", range }));
     expect([n.channel.onlineOrders, toPaisa(n.channel.online)]).toEqual([online.total, online.value]);
     expect([n.channel.walkInOrders, toPaisa(n.channel.walkIn)]).toEqual([walkIn.total, walkIn.value]);
     expect([online.total + walkIn.total, online.value + walkIn.value]).toEqual([all.total, all.value]);
-    expect(n.days.reduce((a, d) => a + d.orders, 0)).toBe(all.total);
-    expect(toPaisa(n.days.reduce((a, d) => a + d.online + d.walkIn, 0).toFixed(2))).toBe(all.value);
+    const chart = await orderList(ordersHref({ preset: "sales", range: n.period.chartRange }));
+    expect(n.days.reduce((a, d) => a + d.orders, 0)).toBe(chart.total);
+    expect(toPaisa(n.days.reduce((a, d) => a + d.online + d.walkIn, 0).toFixed(2))).toBe(chart.value);
 
     const ytd = { from: `${todayInDhaka().slice(0, 4)}-01-01`, to: todayInDhaka() };
     for (const phone of [PHONES.ADMIN, PHONES.MANAGER, PHONES.TL, PHONES.SE]) {
@@ -614,9 +617,17 @@ describe("10. a cancelled or returned order stops counting towards targets and t
       const se = await userFor(tx, PHONES.SE);
       const snap = async () => {
         const [stats, board, dash] = await Promise.all([statsByUser(tx, month, [se.id]), getLeaderboard(tx, admin, "all", month, "value"), getSalesNumbers(tx, se)]);
-        const s = stats.get(se.id)!;
-        const row = board.rows.find((r) => r.userId === se.id)!;
-        return { value: s.salesPaisa, orders: s.orderCount, returned: s.returned, boardValue: toPaisa(row.stats.salesValue), boardOrders: row.stats.orderCount, dashValue: toPaisa(dash.inPeriod.value) };
+        // Early in a month the executive may have no orders yet: no row means zero.
+        const s = stats.get(se.id);
+        const row = board.rows.find((r) => r.userId === se.id);
+        return {
+          value: s?.salesPaisa ?? 0,
+          orders: s?.orderCount ?? 0,
+          returned: s?.returned ?? 0,
+          boardValue: row ? toPaisa(row.stats.salesValue) : 0,
+          boardOrders: row?.stats.orderCount ?? 0,
+          dashValue: toPaisa(dash.inPeriod.value),
+        };
       };
       const base = await snap();
 
