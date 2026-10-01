@@ -102,3 +102,4 @@ Permissions are granular strings grouped into role templates, with per-user over
 - After each phase, run the phase's **verification prompt** and fix what it finds before moving on.
 - Keep commits scoped to one feature with a clear message.
 - Never commit `.env`, `/uploads` contents, or real customer data.
+- **Never run `git stash`, `git checkout -- <file>`, `git reset`, a branch switch, or anything else that changes tracked files while tests, a build, or other work is running.** A running test suite or dev server reads the working tree mid-run; swapping files under it produces results for code that doesn't exist. Wait for it to finish (or stop it) first, and report results only from a run with nothing else touching the tree.
