@@ -233,16 +233,19 @@ describe("expenses and ad spend", () => {
     await inRolledBackTransaction(async (tx) => {
       const admin = await sessionUserFor(ADMIN);
       const wallet = await freshWallet(tx);
-      const day = "2026-06-15";
+      // A Dhaka day a year ahead: the seed only ever dates its orders in the
+      // past, so no seeded order can be confirmed on it whenever the seed ran.
+      const dhakaDay = (offsetDays: number) => new Date(Date.now() + offsetDays * 86_400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Dhaka" });
+      const day = dhakaDay(400);
       const noon = new Date(`${day}T12:00:00+06:00`);
       const a = await makeOrder(tx, 1000, noon);
       const b = await makeOrder(tx, 3000, noon);
       const cancelled = await makeOrder(tx, 5000, noon);
       await tx.order.update({ where: { id: cancelled.id }, data: { status: "CANCELLED" } });
-      await makeOrder(tx, 9000, new Date("2026-06-16T00:30:00+06:00")); // just past midnight: the next Dhaka day
+      await makeOrder(tx, 9000, new Date(`${dhakaDay(401)}T00:30:00+06:00`)); // just past midnight: the next Dhaka day
       await createAdSpend(tx, { spendDate: dhakaDayStartUtc(day), platform: "FACEBOOK", amount: 1000, walletId: wallet.id }, admin.id);
 
-      // Other seeded orders can't be confirmed on this day, so only ours count.
+      // No other order is confirmed on this day, so only ours count.
       const equal = await getDayAllocation(tx, day, "EQUAL");
       expect(equal.orders.map((o) => [o.id, o.allocated])).toEqual([
         [a.id, "500.00"],
@@ -251,7 +254,7 @@ describe("expenses and ad spend", () => {
       const byValue = await getDayAllocation(tx, day, "BY_VALUE");
       expect(Object.fromEntries(byValue.orders.map((o) => [o.id, o.allocated]))).toEqual({ [a.id]: "250.00", [b.id]: "750.00" });
 
-      const empty = await getDayAllocation(tx, "2026-06-14", "EQUAL");
+      const empty = await getDayAllocation(tx, dhakaDay(399), "EQUAL");
       expect(empty.orders).toHaveLength(0);
     });
   }, 60_000);

@@ -44,6 +44,9 @@ describe("product import", () => {
         expect(Object.fromEntries(preview.summary.map((s) => [s.label, s.value]))).toMatchObject({ "New products": "1", "New variants": "3", "Opening stock": "10 units" });
         expect(await tx.product.count({ where: { code } })).toBe(0);
 
+        // Counted before and after, not "in the last minute": a freshly seeded
+        // test database holds the seed's own stock-shortage expenses from moments ago.
+        const shortagesBefore = await tx.expense.count({ where: { category: { kind: "STOCK_SHORTAGE" } } });
         const result = await runImport(tx, "products", csv, actorId, { commit: true });
         expect(result.committed).toBe(true);
 
@@ -68,7 +71,7 @@ describe("product import", () => {
         expect(await findStockLedgerDivergences(tx)).toEqual([]);
 
         // No expense for an opening balance (PRD §4.12), one audit row for the product.
-        expect(await tx.expense.count({ where: { createdAt: { gte: new Date(Date.now() - 60_000) }, category: { kind: "STOCK_SHORTAGE" } } })).toBe(0);
+        expect(await tx.expense.count({ where: { category: { kind: "STOCK_SHORTAGE" } } })).toBe(shortagesBefore);
         expect(await tx.auditLog.count({ where: { entityId: product.id, action: "import.product_create" } })).toBe(1);
 
         // Importing again: the variants now have history, so no second opening balance.

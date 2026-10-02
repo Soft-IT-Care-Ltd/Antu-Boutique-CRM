@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:neon": "node scripts/test-neon.mjs",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:seed:base": "SEED_MODE=base tsx --conditions=react-server prisma/seed.ts",
     "check:ios": "node scripts/check-ios-bundles.mjs .next/static/chunks"

@@ -54,7 +54,8 @@ Copy `.env.example` to `.env` and fill in:
 DATABASE_URL="postgresql://...pooler..."
 DIRECT_URL="postgresql://...direct..."
 SHADOW_DATABASE_URL="postgresql://...direct.../antu_shadow"   # throwaway DB — Prisma WIPES it; never the real one
-TEST_DATABASE_URL="postgresql://...direct.../antu_test"       # integration tests only — never the real one
+TEST_DATABASE_URL="postgresql://antu_test:antu_test@localhost:5433/antu_test"   # integration tests only — local Postgres 18 (below)
+NEON_TEST_DATABASE_URL="postgresql://...direct.../antu_test"  # `npm run test:neon` only — Neon's antu_test
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="..."
 COURIER_ENCRYPTION_KEY="..."
@@ -67,7 +68,55 @@ MAX_UPLOAD_MB="5"
 
 `SHADOW_DATABASE_URL` points at a separate, throwaway database on the same Neon server (`CREATE DATABASE antu_shadow`). Prisma empties it every time a migration is generated, so it must **never** be the same database as `DATABASE_URL` / `DIRECT_URL` (CLAUDE.md rule 11).
 
-`TEST_DATABASE_URL` points at a second throwaway database on the same server (`CREATE DATABASE antu_test`). `npm test` runs every `*.integration.test.ts` file against it, one file at a time, and never touches the dev database: it refuses to start unless the database name ends in `_test` and differs from `DATABASE_URL` / `DIRECT_URL` / `SHADOW_DATABASE_URL`. Before the tests run it applies pending migrations (`migrate deploy`) and re-runs the seed whenever the schema, migrations or seed changed. If it reports that an applied migration no longer matches its file (a migration edited after the tests applied it), rebuild the test database — **with the owner's OK** (CLAUDE.md rule 11): `DROP DATABASE antu_test; CREATE DATABASE antu_test;`, then run `npm test`.
+### Test database — a local PostgreSQL 18
+
+`npm test` runs every `*.integration.test.ts` file against `TEST_DATABASE_URL`, one file at a time. That database lives on **this Mac**, not on Neon: round-trips to Neon (Singapore) made the full suite take far longer than the code needs. Dev and production stay on Neon. It is PostgreSQL **18** — the same major version Neon runs — on port **5433**, so it never clashes with another Postgres on the default 5432.
+
+One-time setup. Homebrew has no PostgreSQL 18 bottle for every Mac (it tried to compile from source on the owner's), so this uses EDB's prebuilt macOS binaries — one folder, nothing installed system-wide:
+
+```bash
+# 1. Server binaries (universal: Intel and Apple silicon) into ~/.local/pgsql-18
+curl -L -o /tmp/pg18.zip https://get.enterprisedb.com/postgresql/postgresql-18.6-1-osx-binaries.zip
+mkdir -p ~/.local && cd ~/.local
+unzip -q /tmp/pg18.zip "pgsql/bin/*" "pgsql/lib/*" "pgsql/share/*" "pgsql/include/*" "pgsql/*.txt" && mv pgsql pgsql-18
+
+# 2. Its own data folder, on port 5433, localhost only
+echo postgres > /tmp/pgpw && ~/.local/pgsql-18/bin/initdb -D ~/.local/pgsql-18-data -U postgres --auth=scram-sha-256 --pwfile=/tmp/pgpw -E UTF8 --locale=en_US.UTF-8 && rm /tmp/pgpw
+# UTC like Neon — initdb copies the Mac's own zone (Asia/Dhaka), which shifts every SQL date by 6 hours
+sed -i '' "s/^#port = 5432.*/port = 5433/; s/^#listen_addresses = 'localhost'.*/listen_addresses = 'localhost'/; s/^timezone = .*/timezone = 'UTC'/; s/^log_timezone = .*/log_timezone = 'UTC'/" ~/.local/pgsql-18-data/postgresql.conf
+```
+
+3. Start it at every login with a LaunchAgent, `~/Library/LaunchAgents/local.antu.postgres18.plist` (replace `YOU` with your macOS user name):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>local.antu.postgres18</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/YOU/.local/pgsql-18/bin/postgres</string><string>-D</string><string>/Users/YOU/.local/pgsql-18-data</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/Users/YOU/.local/pgsql-18-data/server.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/local.antu.postgres18.plist
+~/.local/pgsql-18/bin/pg_isready -h localhost -p 5433        # → accepting connections
+
+# 4. The test role and database
+PGPASSWORD=postgres ~/.local/pgsql-18/bin/psql -h localhost -p 5433 -U postgres -d postgres \
+  -c "CREATE ROLE antu_test LOGIN PASSWORD 'antu_test' CREATEDB;" -c "CREATE DATABASE antu_test OWNER antu_test;"
+```
+
+To stop it: `launchctl unload ~/Library/LaunchAgents/local.antu.postgres18.plist`. The first `npm test` after a fresh database applies every migration and seeds it (a few minutes).
+
+The tests refuse to start unless the database name ends in `_test` and differs from `DATABASE_URL` / `DIRECT_URL` / `SHADOW_DATABASE_URL`. Before they run they apply pending migrations (`migrate deploy`) and re-run the seed whenever the schema, migrations or seed changed. If they report that an applied migration no longer matches its file (a migration edited after the tests applied it), rebuild the test database — **with the owner's OK** (CLAUDE.md rule 11), and only ever on port 5433 (`psql -h localhost -p 5433 -U postgres -d postgres`): `DROP DATABASE antu_test; CREATE DATABASE antu_test OWNER antu_test;`, then run `npm test`.
+
+**Before every deploy: `npm run test:neon`.** It runs the same full suite against `NEON_TEST_DATABASE_URL` — a throwaway `antu_test` database on the Neon server (`CREATE DATABASE antu_test`, direct connection string) — so the code is proven on Neon itself, not just locally. Same guards, same `_test` rule. Expect it to be several times slower than `npm test`.
 
 Leave `STEADFAST_LIVE_API` **unset** on every development machine. Until it is `enabled`, the app refuses to book real Steadfast parcels.
 

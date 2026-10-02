@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { toNumber } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
 import { createPaymentSchema, updatePaymentSchema } from "@/lib/orders/payment-validation";
-import { recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { COUNTED_PAYMENTS_WHERE, recomputeOrderDueAmount } from "@/lib/orders/totals";
 
 // Requires `npm run db:seed` to have run against DATABASE_URL first — same
 // style as lib/orders/__tests__/orders-invariants.integration.test.ts.
@@ -29,9 +29,13 @@ describe("a client-sent due_amount can never reach a payment write (CLAUDE.md ru
 
 describe("recomputeOrderDueAmount is the only writer of order.due_amount (CLAUDE.md rule 1)", () => {
   it("overwrites any value already stored on the order with total - sum(payments)", async () => {
-    const order = await prisma.order.findUniqueOrThrow({
-      where: { orderNo: "AB-2609-0002" },
-      include: { payments: { select: { amount: true } } },
+    // A seeded online order with money on it, found by what it is (its number
+    // depends on the month the seed ran in). Only payments that count toward
+    // due are summed — a pending refund doesn't (lib/orders/totals.ts).
+    const order = await prisma.order.findFirstOrThrow({
+      where: { channel: "ONLINE", deletedAt: null, payments: { some: {} } },
+      orderBy: { createdAt: "asc" },
+      include: { payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } } },
     });
     const total = toNumber(order.total);
     const paidBefore = order.payments.reduce((sum, p) => sum + toNumber(p.amount), 0);
@@ -65,9 +69,13 @@ describe("recomputeOrderDueAmount is the only writer of order.due_amount (CLAUDE
   });
 
   it("recomputes back down when a payment is deleted", async () => {
-    const order = await prisma.order.findUniqueOrThrow({
-      where: { orderNo: "AB-2609-0002" },
-      include: { payments: { select: { amount: true } } },
+    // A seeded online order with money on it, found by what it is (its number
+    // depends on the month the seed ran in). Only payments that count toward
+    // due are summed — a pending refund doesn't (lib/orders/totals.ts).
+    const order = await prisma.order.findFirstOrThrow({
+      where: { channel: "ONLINE", deletedAt: null, payments: { some: {} } },
+      orderBy: { createdAt: "asc" },
+      include: { payments: { where: COUNTED_PAYMENTS_WHERE, select: { amount: true } } },
     });
     const total = toNumber(order.total);
     const paidBefore = order.payments.reduce((sum, p) => sum + toNumber(p.amount), 0);

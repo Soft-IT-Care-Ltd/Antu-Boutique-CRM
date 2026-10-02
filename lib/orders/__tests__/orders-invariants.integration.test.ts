@@ -79,11 +79,13 @@ describe("order query scoping (CLAUDE.md rule 6)", () => {
 
 describe("order.create reserves stock at CONFIRMED (CLAUDE.md rule 10)", () => {
   it("the seeded confirmed order's variant shows a reservedQty covering its line qty", async () => {
-    const order = await prisma.order.findUniqueOrThrow({
-      where: { orderNo: "AB-2609-0001" },
+    // The seed's first demo order (confirmed, advance taken). Found by what it
+    // is, not by number: its number depends on the month the seed ran in.
+    const order = await prisma.order.findFirstOrThrow({
+      where: { status: "CONFIRMED", channel: "ONLINE", deletedAt: null, customer: { phone: "01911223344" } },
+      orderBy: { createdAt: "asc" },
       include: { items: true },
     });
-    expect(order.status).toBe("CONFIRMED");
     expect(order.items.length).toBeGreaterThan(0);
 
     const item = order.items[0];
@@ -94,9 +96,9 @@ describe("order.create reserves stock at CONFIRMED (CLAUDE.md rule 10)", () => {
 
 describe("order detail never leaks cost to a SALES_EXECUTIVE", () => {
   it("strips unitCostSnapshot and weightedAvgCost-shaped fields from the serialized response", async () => {
-    const order = await prisma.order.findUniqueOrThrow({ where: { orderNo: "AB-2609-0001" } });
+    const order = await prisma.order.findFirstOrThrow({ where: { status: "CONFIRMED", channel: "ONLINE", deletedAt: null, customer: { phone: "01911223344" } }, orderBy: { createdAt: "asc" } });
     const loaded = await loadOrderDetail(order.id);
-    if (!loaded) throw new Error("seed order AB-2609-0001 not found — run npm run db:seed");
+    if (!loaded) throw new Error("seed's first demo order not found — run npm run db:seed");
     const serialized = serializeOrderDetail(loaded);
 
     const seUser = await sessionUserFor("01711000004");
