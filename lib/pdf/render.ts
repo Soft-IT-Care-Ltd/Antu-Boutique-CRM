@@ -95,7 +95,10 @@ export function formatPdfDate(iso: string): string {
 /**
  * Renders a complete HTML document (fonts already inlined) to a PDF buffer —
  * A4 unless a page size is given (P3.1 price tags: one label per page, at
- * the label's exact size, so a label printer prints it 1:1).
+ * the label's exact size, so a label printer prints it 1:1). With a page
+ * size, the document's own @page size wins: from the width/height options
+ * Chrome made a 60 mm label 60.37 mm wide and shifted its content by a
+ * fraction of a printer dot, taking the barcode off the dot grid (C5).
  */
 export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number; heightMm: number }, opts: { landscape?: boolean; marginMm?: number } = {}): Promise<Uint8Array> {
   const browser = await getPdfBrowser();
@@ -111,7 +114,7 @@ export async function renderHtmlToPdf(html: string, pageSize?: { widthMm: number
     // P4.4 reports run to many pages: a margin on every page (not just body
     // padding, which only pads the first and last).
     const m = `${opts.marginMm ?? 0}mm`;
-    return await page.pdf({ ...size, landscape: opts.landscape ?? false, printBackground: true, margin: { top: m, bottom: m, left: m, right: m } });
+    return await page.pdf({ ...size, landscape: opts.landscape ?? false, printBackground: true, margin: { top: m, bottom: m, left: m, right: m }, preferCSSPageSize: Boolean(pageSize) });
   } finally {
     await page.close();
   }

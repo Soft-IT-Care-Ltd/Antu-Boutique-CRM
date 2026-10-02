@@ -92,7 +92,39 @@ function esc(input: string): string {
   return input.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const snap = (mm: number, dotMm: number) => Math.round(mm / dotMm) * dotMm;
+/** CSS px per mm: Chrome lays the page out in CSS px (96 per inch). */
+const PX_PER_MM = 96 / 25.4;
+
+/**
+ * The barcode as an <svg> whose bars land exactly on the printer's dot grid.
+ *
+ * Chrome snaps a replaced element's box (an <svg>) to whole CSS pixels when
+ * it lays the page out — 1 px is 2.1 dots at 203 dpi — so a box placed at a
+ * dot boundary moved by up to a dot, and every bar edge fell part-way into a
+ * dot (measured C5: 0.65 dot off on a 38 mm label; a 203 dpi raster then
+ * printed bars a dot wide and spaces a dot narrow). The box therefore starts
+ * and ends on whole CSS pixels of the PAGE — snapping it changes nothing —
+ * and the bars sit inside it, in px, at their dot-grid positions.
+ */
+export function barcodeSvgHtml(
+  code: string,
+  fit: BarcodeFit,
+  dpi: number,
+  at: { origin: { x: number; y: number }; centreMm: number; topMm: number; heightMm: number; className: string },
+): string {
+  const { bars } = code128Bars(code);
+  const dotPx = 96 / dpi;
+  // The first bar's page position, in whole printer dots.
+  const startDot = Math.round(((at.origin.x + at.centreMm - fit.widthMm / 2) * dpi) / 25.4);
+  const startPx = startDot * dotPx;
+  const modulePx = fit.dots * dotPx;
+  const boxLeft = Math.floor(startPx + 1e-6);
+  const boxWidth = Math.ceil(startPx + fit.modules * modulePx - 1e-6) - boxLeft;
+  const px = (n: number) => Number(n.toFixed(5));
+  const rects = bars.map((b) => `<rect x="${px(startPx - boxLeft + b.x * modulePx)}" y="0" width="${px(b.width * modulePx)}" height="1"/>`).join("");
+  const style = `top:${at.topMm.toFixed(2)}mm;left:${px(boxLeft - at.origin.x * PX_PER_MM)}px;width:${boxWidth}px;height:${at.heightMm.toFixed(2)}mm`;
+  return `<svg class="${at.className}" style="${style}" viewBox="0 0 ${boxWidth} 1" preserveAspectRatio="none" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">${rects}</svg>`;
+}
 
 /**
  * One tag's inner HTML, positioned absolutely inside a box of the label's
@@ -100,7 +132,6 @@ const snap = (mm: number, dotMm: number) => Math.round(mm / dotMm) * dotMm;
  * barcode can be snapped to the page's dot grid, not just the tag's.
  */
 export function renderTagHtml(tag: TagData, stock: LabelStock, dpi: number, origin: { x: number; y: number } = { x: 0, y: 0 }): string {
-  const dotMm = 25.4 / dpi;
   const h = stock.height;
   // Type scales with the label: a 25 mm tag gets ~7 pt text, a 40 mm one more.
   const k = Math.min(1.35, Math.max(0.85, h / 25));
@@ -113,17 +144,9 @@ export function renderTagHtml(tag: TagData, stock: LabelStock, dpi: number, orig
 
   const barTop = pad + nameSize * 1.25 + priceSize * 1.25 + 0.4;
 
-  let barcode = "";
-  if (isBarcodeSafeSku(tag.sku)) {
-    const fit = fitBarcode(tag.sku, stock, dpi);
-    const { bars } = code128Bars(tag.sku);
-    // Snap the barcode's absolute page position to the dot grid, so every
-    // bar edge lands exactly on a printer dot boundary.
-    const left = snap(origin.x + (stock.width - fit.widthMm) / 2, dotMm) - origin.x;
-    const rects = bars.map((b) => `<rect x="${b.x}" y="0" width="${b.width}" height="1"/>`).join("");
-    const style = `top:${barTop.toFixed(2)}mm;left:${left.toFixed(4)}mm;width:${fit.widthMm.toFixed(4)}mm;height:${barHeight.toFixed(2)}mm`;
-    barcode = `<svg class="bc" style="${style}" viewBox="0 0 ${fit.modules} 1" preserveAspectRatio="none" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">${rects}</svg>`;
-  }
+  const barcode = isBarcodeSafeSku(tag.sku)
+    ? barcodeSvgHtml(tag.sku, fitBarcode(tag.sku, stock, dpi), dpi, { origin, centreMm: stock.width / 2, topMm: barTop, heightMm: barHeight, className: "bc" })
+    : "";
 
   return `
     <div class="name" style="top:${pad}mm;left:${pad}mm;right:${pad}mm;font-size:${nameSize}mm;line-height:1.2">${esc(tag.productName)}</div>

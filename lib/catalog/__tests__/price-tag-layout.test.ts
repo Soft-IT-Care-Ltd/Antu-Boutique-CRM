@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeCode128Widths } from "@/lib/barcode/__tests__/decode";
+import { decodeCode128Widths, drawnBarcode } from "@/lib/barcode/__tests__/decode";
 import { code128Widths } from "@/lib/barcode/code128";
 import { findLabelStock, fitBarcode, placeTags, renderTagHtml, type TagData } from "@/lib/catalog/price-tag-layout";
 
@@ -27,21 +27,30 @@ describe("price tag barcode fit", () => {
 });
 
 describe("price tag HTML", () => {
-  it("draws exactly the bars of the SKU and escapes the text", () => {
+  it("draws exactly the bars of the SKU, on whole printer dots, and escapes the text", () => {
     const sku = "K12MMRN";
-    const html = renderTagHtml(tag(sku), findLabelStock("roll-50x25")!, 203);
+    const stock = findLabelStock("roll-50x25")!;
+    const html = renderTagHtml(tag(sku), stock, 203);
     expect(html).toContain(`>${sku}<`);
     expect(html).toContain("Cotton Kurti &lt;b&gt;");
     expect(html).toContain("৳ 1,450");
-    // Rebuild the widths from the drawn rects and decode them.
-    const rects = [...html.matchAll(/<rect x="(\d+)" y="0" width="(\d+)"/g)].map((m) => ({ x: Number(m[1]), w: Number(m[2]) }));
-    const widths: number[] = [];
-    rects.forEach((r, i) => {
-      widths.push(r.w);
-      if (i < rects.length - 1) widths.push(rects[i + 1].x - r.x - r.w);
-    });
-    expect(widths).toEqual(code128Widths(sku));
-    expect(decodeCode128Widths(widths)).toBe(sku);
+    const drawn = drawnBarcode(html, fitBarcode(sku, stock, 203).dots, 203);
+    expect(drawn.widths).toEqual(code128Widths(sku));
+    expect(decodeCode128Widths(drawn.widths)).toBe(sku);
+    // Chrome snaps an <svg> box to whole CSS px; the box is already there, and unscaled.
+    expect(drawn.boxLeftPx).toBe(Math.round(drawn.boxLeftPx));
+    expect(drawn.viewBoxWidth).toBe(drawn.boxWidthPx);
+    expect(drawn.firstBarDots).toBeCloseTo(Math.round(drawn.firstBarDots), 3);
+  });
+
+  it("keeps the bars on the page's dot grid for a label in the middle of an A4 sheet", () => {
+    const sheet = findLabelStock("a4-24")!;
+    const origin = { x: 70, y: 37.125 };
+    const html = renderTagHtml(tag("K12MMRN"), sheet, 600, origin);
+    const drawn = drawnBarcode(html, fitBarcode("K12MMRN", sheet, 600).dots, 600, origin.x);
+    expect(drawn.boxLeftPx).toBeCloseTo(Math.round(drawn.boxLeftPx), 3);
+    expect(drawn.firstBarDots).toBeCloseTo(Math.round(drawn.firstBarDots), 3);
+    expect(decodeCode128Widths(drawn.widths)).toBe("K12MMRN");
   });
 });
 
