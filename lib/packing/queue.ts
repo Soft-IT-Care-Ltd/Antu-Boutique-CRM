@@ -9,6 +9,8 @@ import type { PackingOrderDetail, PackingQueueItem, PackingView } from "@/lib/pa
 import { dhakaDayStartUtc, todayInDhaka } from "@/lib/inventory/constants";
 import { onlineOrderCustomer } from "@/lib/orders/customer";
 import { packagingForDisplay, type PackagingNeed } from "@/lib/packaging/consume";
+import type { ShelfSpotsValue } from "@/lib/shelves/constants";
+import { shelfWhereabouts } from "@/lib/shelves/service";
 
 // PRD §4.8 "must not see customer money data": this include is the money
 // boundary, not just serializePacking*'s output shape — subtotal, total,
@@ -47,7 +49,25 @@ const packingOrderInclude = {
   },
 } satisfies Prisma.OrderInclude;
 
-type PackingOrderRow = Prisma.OrderGetPayload<{ include: typeof packingOrderInclude }>;
+// C4b — where each dress sits at the hub, attached by the loaders while the order is still to be packed.
+type PackingOrderRow = Prisma.OrderGetPayload<{ include: typeof packingOrderInclude }> & { hubShelves?: Map<string, ShelfSpotsValue> };
+
+/**
+ * C4b (CORRECTIONS.md item 20A) — for each variant, its shelves and
+ * Unassigned at the packing hub, when the hub uses shelves. The packer
+ * walks to the fullest shelf first.
+ */
+async function hubShelvesFor(db: Prisma.TransactionClient | typeof prisma, variantIds: string[]): Promise<Map<string, ShelfSpotsValue>> {
+  const out = new Map<string, ShelfSpotsValue>();
+  if (variantIds.length === 0) return out;
+  const hub = await db.location.findFirst({ where: { isPackingHub: true, isActive: true, usesShelves: true }, select: { id: true } });
+  if (!hub) return out;
+  for (const [variantId, list] of await shelfWhereabouts(db, [...new Set(variantIds)], [hub.id])) {
+    const w = list[0];
+    if (w) out.set(variantId, { shelves: w.shelves.map((s) => ({ code: s.code, qty: s.qty })), unassigned: w.unassigned, notOnShelf: w.notOnShelf });
+  }
+  return out;
+}
 
 function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueueItem {
   return {
@@ -64,6 +84,7 @@ function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueue
       colorHex: item.variant.color.hexCode,
       qty: item.qty,
       set: item.setLine ? { id: item.setLine.id, name: item.setLine.name, qty: item.setLine.qty } : null,
+      shelves: order.hubShelves?.get(item.variantId) ?? null,
     })),
     images: order.images.map((image) => ({
       id: image.id,
@@ -157,7 +178,10 @@ export async function loadPackingQueuePage(params: PackingQueuePageParams, slaHo
     }),
   ]);
 
-  return { total, orders };
+  // C4b — shelves only matter for what's still to be packed.
+  const toPack = orders.filter((o) => o.status === "CONFIRMED");
+  const shelves = await hubShelvesFor(prisma, toPack.flatMap((o) => o.items.map((i) => i.variantId)));
+  return { total, orders: orders.map((o): PackingOrderRow => (o.status === "CONFIRMED" ? { ...o, hubShelves: shelves } : o)) };
 }
 
 /**
@@ -171,5 +195,6 @@ export async function loadPackingOrder(orderId: string, db: Prisma.TransactionCl
     include: packingOrderInclude,
   });
   if (!order) return null;
-  return { ...order, packaging: await packagingForDisplay(db, order.id, order.channel === "WALK_IN" ? "POS_SALE" : "ONLINE_PARCEL") };
+  const hubShelves = order.status === "CONFIRMED" ? await hubShelvesFor(db, order.items.map((i) => i.variantId)) : undefined;
+  return { ...order, hubShelves, packaging: await packagingForDisplay(db, order.id, order.channel === "WALK_IN" ? "POS_SALE" : "ONLINE_PARCEL") };
 }

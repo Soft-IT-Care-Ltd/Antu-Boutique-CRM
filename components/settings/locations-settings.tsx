@@ -23,6 +23,7 @@ type Row = {
   address: string | null;
   isPackingHub: boolean;
   hasPos: boolean;
+  usesShelves: boolean;
   isActive: boolean;
   units: number;
   managers: Person[];
@@ -33,6 +34,7 @@ type Draft = {
   address: string;
   isPackingHub: boolean;
   hasPos: boolean;
+  usesShelves: boolean;
   isActive: boolean;
   userIds: string[];
 };
@@ -43,6 +45,7 @@ const toDraft = (r: Row | null): Draft => ({
   address: r?.address ?? "",
   isPackingHub: r?.isPackingHub ?? false,
   hasPos: r?.hasPos ?? false,
+  usesShelves: r?.usesShelves ?? false,
   isActive: r?.isActive ?? true,
   userIds: r?.managers.map((m) => m.id) ?? [],
 });
@@ -135,6 +138,7 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
             {row.name}
             {row.isPackingHub ? <Badge>Packing hub</Badge> : null}
             {row.hasPos ? <Badge variant="secondary">POS</Badge> : null}
+            {row.usesShelves ? <Badge variant="secondary">Shelves</Badge> : null}
             {!row.isActive ? <Badge variant="outline">Switched off</Badge> : null}
           </CardTitle>
           <CardDescription>
@@ -194,7 +198,7 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
           <Label htmlFor={`loc-address-${row?.id ?? "new"}`}>Address</Label>
           <Input id={`loc-address-${row?.id ?? "new"}`} value={draft.address} onChange={(e) => set({ address: e.target.value })} />
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           <label className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
             <span>
               Packing hub
@@ -208,6 +212,13 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
               <span className="block text-xs text-muted-foreground">The showroom counter sells from here</span>
             </span>
             <Switch checked={draft.hasPos} onCheckedChange={(v) => set({ hasPos: v })} />
+          </label>
+          <label className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
+            <span>
+              Uses shelves
+              <span className="block text-xs text-muted-foreground">Racks and boxes with labels; stock not on one shows as Unassigned</span>
+            </span>
+            <Switch checked={draft.usesShelves} onCheckedChange={(v) => set({ usesShelves: v })} />
           </label>
           <label className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
             <span>Active</span>

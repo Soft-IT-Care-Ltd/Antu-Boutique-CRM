@@ -453,7 +453,15 @@ describe("the database refuses to let them diverge", () => {
   it(
     "rejects a location's stock change with no ledger row, even when the total is kept right",
     async () => {
-      const variant = await prisma.productVariant.findFirstOrThrow({ where: { locationStocks: { some: { locationId: HUB } } } });
+      // C4b: a hub unit that isn't on a shelf — taking a shelved one off by
+      // hand would trip the shelf rule first (also refused, but not what this tests).
+      const [{ variantId }] = await prisma.$queryRaw<{ variantId: string }[]>`
+        SELECT s."variantId" FROM "variant_stocks" s
+        WHERE s."locationId" = ${HUB}
+          AND s."qty" > COALESCE((SELECT SUM(x."qty") FROM "shelf_stocks" x WHERE x."variantId" = s."variantId" AND x."locationId" = s."locationId"), 0)
+                      + COALESCE((SELECT SUM(m."qty") FROM "shelf_misses" m WHERE m."variantId" = s."variantId" AND m."locationId" = s."locationId" AND m."closedAt" IS NULL), 0)
+        LIMIT 1`;
+      const variant = { id: variantId };
       await expect(
         inRolledBackTransaction(async (tx) => {
           // Moving a unit hub → showroom by hand: the total is unchanged, but

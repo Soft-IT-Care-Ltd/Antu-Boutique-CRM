@@ -243,6 +243,11 @@ model User {
   transfersReceived         StockTransfer[]          @relation("TransferReceivedBy")
   stockCountsCreated        StockCount[]             @relation("StockCountCreatedBy")
   stockCountsPosted         StockCount[]             @relation("StockCountPostedBy")
+  // C4b — shelves inside a location.
+  shelfMovements            ShelfMovement[]          @relation("ShelfMovementActor")
+  shelfCountsCreated        ShelfCount[]             @relation("ShelfCountCreatedBy")
+  shelfCountsFinished       ShelfCount[]             @relation("ShelfCountFinishedBy")
+  shelfMissesClosed         ShelfMiss[]              @relation("ShelfMissClosedBy")
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
@@ -407,18 +412,20 @@ model ProductVariant {
   weightGrams       Int?
   isActive          Boolean  @default(true)
 
-  orderItems     OrderItem[]
-  stockMovements StockMovement[]
+  orderItems      OrderItem[]
+  stockMovements  StockMovement[]
   // C3 — stock per location; stockQty is their sum (kept so by the ledger).
-  locationStocks VariantStock[]
+  locationStocks  VariantStock[]
   // C4 — transfers and stock counts this variant is on.
-  transferLines  StockTransferLine[]
-  countLines     StockCountLine[]
+  transferLines   StockTransferLine[]
+  countLines      StockCountLine[]
+  // C4b — shelf counts this variant is on.
+  shelfCountLines ShelfCountLine[]
   // P3.3 — where this variant (of a COMPONENT_ONLY product) is used as packaging.
-  packagingUses  PackagingComponent[] @relation("PackagingMaterial")
-  purchaseItems  PurchaseItem[]
+  packagingUses   PackagingComponent[] @relation("PackagingMaterial")
+  purchaseItems   PurchaseItem[]
   // P3.2 — exchange lines that swap an item for this variant.
-  exchangeLines  ReturnCaseLine[]
+  exchangeLines   ReturnCaseLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1063,8 +1070,12 @@ model Location {
   hasPos       Boolean      @default(false)
   isActive     Boolean      @default(true)
   sortOrder    Int          @default(0)
+  // C4b (CORRECTIONS.md item 20A) — the location is divided into shelves.
+  // Off (the Shyamoli showroom): no shelf screens, no "Unassigned".
+  usesShelves  Boolean      @default(false)
 
   stocks        VariantStock[]
+  shelves       Shelf[]
   movements     StockMovement[]
   purchaseItems PurchaseItem[]
   users         UserLocation[]
@@ -1104,6 +1115,10 @@ model VariantStock {
   location   Location       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   qty        Int            @default(0)
   updatedAt  DateTime       @updatedAt
+
+  // C4b — which shelves hold it, and units missing from their shelf.
+  shelfStocks ShelfStock[]
+  shelfMisses ShelfMiss[]
 
   @@id([variantId, locationId])
   @@index([locationId])
@@ -1196,6 +1211,9 @@ model StockTransferLine {
   // missing unit costs. Cost: never leaves the API for a role without
   // product.cost.view.
   unitCost      Decimal? @db.Decimal(12, 2)
+  // C4b — of qtySent, how many were scanned off which shelf ({ shelfId: qty });
+  // Send takes those units from those shelves (lib/shelves/engine.ts).
+  shelfPicks    Json?
 
   @@unique([transferId, variantId])
   @@index([variantId])
@@ -1277,6 +1295,186 @@ model StockCountLine {
   @@unique([countId, variantId])
   @@index([variantId])
   @@map("stock_count_lines")
+}
+
+// ── C4b — shelves inside a location (CORRECTIONS.md item 20A) ─────────────
+//
+// A "where is it" layer inside a location: never part of the stock ledger,
+// never part of accounting. For each (variant, location):
+//
+//   Unassigned = variant_stocks.qty − sum(shelf_stocks.qty)       (derived, never stored)
+//   not on its shelf (open shelf_misses) is a labelled part of Unassigned
+//
+// held by the database: shelf_stocks.qty >= 0, and
+// sum(shelf_stocks) + sum(open shelf_misses) <= GREATEST(variant_stocks.qty, 0)
+// (deferred constraint triggers, migration 20261006090000_shelves).
+// lib/shelves/engine.ts is the only writer of these tables.
+
+model Shelf {
+  id            String    @id @default(cuid())
+  locationId    String
+  location      Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  // A-2-3 = rack A, shelf 2, box 3. Always has a hyphen, so a shelf label
+  // can never read as a dress tag's SKU (capital letters and digits only).
+  code          String
+  note          String?
+  isActive      Boolean   @default(true)
+  lastCountedAt DateTime?
+
+  stocks    ShelfStock[]
+  misses    ShelfMiss[]
+  counts    ShelfCount[]
+  movesFrom ShelfMovement[] @relation("ShelfMoveFrom")
+  movesTo   ShelfMovement[] @relation("ShelfMoveTo")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([locationId, code])
+  // Target of the (shelfId, locationId) keys below: a shelf's stock is
+  // always at the shelf's own location.
+  @@unique([id, locationId])
+  @@map("shelves")
+}
+
+model ShelfStock {
+  shelfId    String
+  locationId String
+  shelf      Shelf        @relation(fields: [shelfId, locationId], references: [id, locationId], onDelete: Restrict)
+  variantId  String
+  stock      VariantStock @relation(fields: [variantId, locationId], references: [variantId, locationId], onDelete: Restrict)
+  qty        Int
+  updatedAt  DateTime     @updatedAt
+
+  @@id([shelfId, variantId])
+  @@index([variantId, locationId])
+  @@map("shelf_stocks")
+}
+
+// "Not on its shelf": a shelf count (or, in C5, a packer's "Not found")
+// didn't find units the shelf should hold. They stay in the location's
+// stock — the dress may be on another shelf — until found (put away), they
+// leave the location, a location count settles them, or a manager writes
+// them off (the only paths that post an expense).
+model ShelfMiss {
+  id           String       @id @default(cuid())
+  locationId   String
+  variantId    String
+  stock        VariantStock @relation(fields: [variantId, locationId], references: [variantId, locationId], onDelete: Restrict)
+  shelfId      String
+  shelf        Shelf        @relation(fields: [shelfId, locationId], references: [id, locationId], onDelete: Restrict)
+  shelfCountId String?
+  shelfCount   ShelfCount?  @relation(fields: [shelfCountId], references: [id], onDelete: Restrict)
+  // Still not found (0 once closed).
+  qty          Int
+  originalQty  Int
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?        @relation("ShelfMissClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  // FOUND · LEFT_LOCATION · WRITTEN_OFF · LOCATION_COUNT · SHELVES_OFF (lib/shelves/constants.ts)
+  closeReason  String?
+  createdAt    DateTime     @default(now())
+
+  @@index([locationId, closedAt])
+  @@index([variantId, locationId])
+  @@map("shelf_misses")
+}
+
+enum ShelfMovementKind {
+  PUT_AWAY // Unassigned → shelf
+  MOVE // shelf → shelf
+  OUT // shelf → out of the location (sold, packed, sent, written off)
+  MISSING // shelf → not on its shelf (a shelf count)
+  FOUND // not on its shelf → shelf
+  MISS_CLOSED // not on its shelf → out of the location, or settled by a location count
+}
+
+// Where a unit went inside the location — history only, not a ledger:
+// stock itself is moved by stock_movements alone.
+model ShelfMovement {
+  id              String            @id @default(cuid())
+  // Strictly increasing: "did this shelf move after the shelf count opened?"
+  seq             BigInt            @unique @default(autoincrement())
+  locationId      String
+  variantId       String
+  kind            ShelfMovementKind
+  qty             Int
+  fromShelfId     String?
+  fromShelf       Shelf?            @relation("ShelfMoveFrom", fields: [fromShelfId], references: [id], onDelete: Restrict)
+  toShelfId       String?
+  toShelf         Shelf?            @relation("ShelfMoveTo", fields: [toShelfId], references: [id], onDelete: Restrict)
+  missId          String?
+  stockMovementId String?
+  shelfCountId    String?
+  actorId         String?
+  actor           User?             @relation("ShelfMovementActor", fields: [actorId], references: [id], onDelete: Restrict)
+  note            String?
+  createdAt       DateTime          @default(now())
+
+  @@index([variantId, locationId, seq])
+  @@index([fromShelfId, seq])
+  @@index([toShelfId, seq])
+  @@map("shelf_movements")
+}
+
+enum ShelfCountStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+// Counting one shelf: scan the shelf, scan everything on it. Finishing it
+// moves units between the shelf and Unassigned / "not on its shelf" — it
+// never changes stock (a location count does that).
+model ShelfCount {
+  id          String           @id @default(cuid())
+  shelfId     String
+  locationId  String
+  shelf       Shelf            @relation(fields: [shelfId, locationId], references: [id, locationId], onDelete: Restrict)
+  status      ShelfCountStatus @default(OPEN)
+  // The last shelf_movements.seq when the count opened: an unscanned item
+  // is taken off the shelf only if the shelf's figure for it hasn't moved since.
+  openedAtSeq BigInt           @default(0)
+
+  createdById  String?
+  createdBy    User?     @relation("ShelfCountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  finishedById String?
+  finishedBy   User?     @relation("ShelfCountFinishedBy", fields: [finishedById], references: [id], onDelete: Restrict)
+  finishedAt   DateTime?
+  cancelledAt  DateTime?
+
+  lines  ShelfCountLine[]
+  misses ShelfMiss[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shelfId, status])
+  @@index([locationId, createdAt])
+  @@map("shelf_counts")
+}
+
+model ShelfCountLine {
+  id             String         @id @default(cuid())
+  countId        String
+  count          ShelfCount     @relation(fields: [countId], references: [id], onDelete: Cascade)
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  countedQty     Int            @default(0)
+  // The shelf's figure at this line's last scan (read under the variant's
+  // lock) — what the line is compared with, same rule as a location count.
+  shelfQtyAtScan Int?
+  // Set when finished: what it was compared with, and what happened.
+  expectedQty    Int?
+  missingQty     Int?
+  placedQty      Int?
+  // Counted on the shelf but beyond what the location's stock shows —
+  // only a location count can add stock.
+  unplacedQty    Int?
+
+  @@unique([countId, variantId])
+  @@index([variantId])
+  @@map("shelf_count_lines")
 }
 
 // PRD §4.12 — only the columns P2.1 needs to post a damage write-off at

@@ -362,7 +362,8 @@ Report findings, fix them, merge and push.
 - The CSV import takes the prefix (SKU generated) or an existing SKU (for items that already carry tags).
 - Replaces the P3.1 short format — see "Changes to existing rules" point 5.
 
-### 20. Finding dresses inside a warehouse — [OPEN]
+### 20. Finding dresses inside a warehouse — [OPEN] — part A [DONE] (C4b), part B is C5
+> C4b: shelves per location where the location **uses shelves** (Settings → Locations; on for Mohammadpur, off for Shyamoli); codes like `A-2-3` (a hyphen always, so a shelf label never reads as a SKU), added singly or a whole rack at once, with printable Code 128 **shelf labels**; **put-away and move by scan** (`/inventory/shelves/put-away`: dresses then shelf; a shelf label first to move from it); **Unassigned = location stock − shelves**, derived, never stored; the DB refuses a shelf below zero or shelves holding more than the location (deferred triggers); stock leaving a location leaves its shelves in the same transaction (picked shelf → Unassigned → fullest shelf); **count one shelf at a time** with the stock-at-scan rule (no false difference from a sale or a move during the count); missing units go **"not on its shelf"** — no expense until a location count settles them or a manager writes them off; shelf shown on stock lookup, the order screen and the packing queue/screen/slip. New permissions `shelf.manage` / `shelf.putaway`. Commit: "feat(stock): shelves inside a location — put-away, shelf counts, shelf labels (C4b)".
 **The problem (owner, 28 Sep 2026):** with so many dresses, the packing team can't find where a dress is in the warehouse. Stock exists in the system, they don't find it, and the order doesn't go out.
 
 Two causes, two fixes: nobody knows *where on the shelf* a dress is, and nobody notices when an order is quietly left unpacked.

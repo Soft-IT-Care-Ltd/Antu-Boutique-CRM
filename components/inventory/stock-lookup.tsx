@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, PackageSearch, ScanBarcode, Warehouse } from "lucide-react";
 
+import { ShelfSpots } from "@/components/shelves/shelf-spots";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { looksLikeBanglaKeyboard } from "@/lib/barcode/scan";
@@ -118,14 +119,17 @@ export function StockLookup() {
 
               <ul className="flex flex-col divide-y rounded-lg border text-sm">
                 {item.locations.map((loc) => (
-                  <li key={loc.locationId} className="flex items-center justify-between gap-2 px-2.5 py-2">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <Warehouse className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{loc.name}</span>
-                      {loc.isPackingHub ? <Badge variant="outline">Packing hub</Badge> : null}
-                      {loc.hasPos ? <Badge variant="outline">POS</Badge> : null}
-                    </span>
-                    <span className={`shrink-0 text-base font-semibold tabular-nums ${loc.qty < 0 ? "text-destructive" : loc.qty === 0 ? "text-muted-foreground" : ""}`}>{loc.qty}</span>
+                  <li key={loc.locationId} className="flex flex-col gap-1 px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Warehouse className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{loc.name}</span>
+                        {loc.isPackingHub ? <Badge variant="outline">Packing hub</Badge> : null}
+                        {loc.hasPos ? <Badge variant="outline">POS</Badge> : null}
+                      </span>
+                      <span className={`shrink-0 text-base font-semibold tabular-nums ${loc.qty < 0 ? "text-destructive" : loc.qty === 0 ? "text-muted-foreground" : ""}`}>{loc.qty}</span>
+                    </div>
+                    {loc.shelves ? <ShelfSpots value={{ shelves: loc.shelves, unassigned: loc.unassigned, notOnShelf: loc.notOnShelf }} className="pl-5" /> : null}
                   </li>
                 ))}
               </ul>

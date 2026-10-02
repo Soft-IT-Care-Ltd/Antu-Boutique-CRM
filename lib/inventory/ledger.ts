@@ -1,5 +1,7 @@
 import { Prisma, type StockMovement, type StockMovementType, type StockReferenceType } from "@prisma/client";
 
+import { takeOffShelves, type ShelfPick } from "../shelves/engine";
+
 // PRD §4.3 + CLAUDE.md rule 2: the ONLY function in the codebase allowed to
 // change product_variants.stockQty or variant_stocks.qty. It writes the
 // stock change and its stock_movements row through the caller's transaction
@@ -19,6 +21,12 @@ import { Prisma, type StockMovement, type StockMovementType, type StockReference
 // sending and receiving — counted in the total, at no location. Those rows
 // have locationId null and move product_variants.inTransitQty instead of a
 // variant_stocks row. Only the three transfer types may do that.
+//
+// C4b (CORRECTIONS.md item 20A): units leaving a location also leave its
+// shelves, in the same transaction (lib/shelves/engine.ts takeOffShelves):
+// the picked shelf if known, else Unassigned first, then the fullest shelf.
+// Arriving units land in Unassigned — nothing to write. The database
+// refuses a commit where a location's shelves hold more than its stock.
 //
 // Deliberately free of "server-only" and of the prisma singleton: it only
 // ever acts through the `tx` it is handed, which lets prisma/seed.ts post
@@ -74,6 +82,12 @@ export type RecordStockMovementInput = {
    * at PACKED, where a CONFIRMED reservation turns into a real deduction.
    */
   releaseReserved?: number;
+  /**
+   * C4b — stock leaving a location: the shelves these units were picked
+   * from (a scanned shelf label, a pick-list line). Units not covered come
+   * out of Unassigned first, then the shelf holding the most.
+   */
+  fromShelves?: ShelfPick[];
 };
 
 export async function recordStockMovement(tx: Prisma.TransactionClient, input: RecordStockMovementInput): Promise<StockMovement> {
@@ -112,7 +126,7 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
         })
       ).qty;
 
-  return tx.stockMovement.create({
+  const movement = await tx.stockMovement.create({
     data: {
       variantId,
       locationId: input.locationId,
@@ -127,6 +141,10 @@ export async function recordStockMovement(tx: Prisma.TransactionClient, input: R
       note: input.note?.trim() || null,
     },
   });
+  if (!inTransit && qty < 0) {
+    await takeOffShelves(tx, { variantId, locationId: input.locationId!, qty: -qty, stockAfter: sideAfter, picks: input.fromShelves, actorId: input.actorId, stockMovementId: movement.id });
+  }
+  return movement;
 }
 
 export type LockedVariant = { id: string; stockQty: number; inTransitQty: number; reservedQty: number; weightedAvgCost: Prisma.Decimal };

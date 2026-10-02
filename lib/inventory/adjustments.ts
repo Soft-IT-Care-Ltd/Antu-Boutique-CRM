@@ -3,6 +3,7 @@ import type { Expense, Prisma, StockMovement, StockReferenceType } from "@prisma
 import { fromPaisa, toPaisa } from "./costing";
 import { SHORTAGE_EXPENSE_CATEGORY, SHORTAGE_EXPENSE_CATEGORY_ID, WRITE_OFF_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY_ID } from "./constants";
 import { lockVariantAt, recordStockMovement, StockMovementError } from "./ledger";
+import type { ShelfPick } from "../shelves/engine";
 
 // PRD §4.3: manual adjustment (reason required, Admin/Manager only — the
 // route gates on inventory.adjust) and damage write-off (DAMAGE_OUT). Both
@@ -60,7 +61,7 @@ export async function adjustStock(
   input: StockChangeRequest,
   actorId: string,
   /** C4 — a stock count posts its differences as adjustments pointing back at the count. */
-  options: { referenceType?: StockReferenceType; referenceId?: string | null } = {},
+  options: { referenceType?: StockReferenceType; referenceId?: string | null; fromShelves?: ShelfPick[] } = {},
 ) {
   const reason = input.reason.trim();
   if (!reason) throw new StockMovementError("A reason is required for a stock adjustment");
@@ -81,6 +82,7 @@ export async function adjustStock(
     referenceId: options.referenceId ?? null,
     actorId,
     note: reason,
+    fromShelves: options.fromShelves,
   });
 
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
@@ -98,6 +100,8 @@ export type WriteOffOptions = {
   unitCost?: Prisma.Decimal;
   referenceType?: StockReferenceType;
   referenceId?: string | null;
+  /** C4b — the shelf the damaged units were taken off, when known. */
+  fromShelves?: ShelfPick[];
 };
 
 /** Takes `qty` (positive) damaged units off the shelf and books their cost as an expense, atomically. */
@@ -123,6 +127,7 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
     referenceId: options.referenceId ?? null,
     actorId,
     note: reason,
+    fromShelves: options.fromShelves,
   });
 
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });

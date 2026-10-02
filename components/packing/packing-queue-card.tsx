@@ -10,6 +10,7 @@ import { ImageLightbox } from "@/components/packing/image-lightbox";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { packingUploadUrl } from "@/lib/packing/types";
 import type { PackingQueueItem } from "@/lib/packing/types";
+import { ShelfSpots } from "@/components/shelves/shelf-spots";
 
 // PRD §4.8: "each queue card shows the order's reference-image thumbnails
 // at the top, then items with size and colour in bold, qty, and the
@@ -72,6 +73,7 @@ export function PackingQueueCard({ order }: { order: PackingQueueItem }) {
                   ) : null}
                   {item.set ? "↳ " : ""}
                   {item.productName} — <strong>{item.sizeName}</strong> / <strong>{item.colorName}</strong> · Qty {item.qty}
+                  {item.shelves ? <ShelfSpots value={item.shelves} className="mt-0.5" /> : null}
                 </li>
               ))}
             </ul>

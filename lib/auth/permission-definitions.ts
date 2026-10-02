@@ -79,6 +79,10 @@ export const PERMISSIONS = [
   { key: "transfer.receive", group: "Inventory", label: "Receive stock transfers (scan in) at own locations" },
   { key: "transfer.resolve", group: "Inventory", label: "Resolve units missing in transit (found / write off)" },
   { key: "stock.count", group: "Inventory", label: "Count stock by scan at own locations (posting needs Manual stock adjustment)" },
+  // C4b (CORRECTIONS.md item 20A): shelves inside a location. Counting one
+  // shelf is stock.count; writing off a unit not on its shelf is inventory.adjust.
+  { key: "shelf.manage", group: "Inventory", label: "Create shelves and print shelf labels" },
+  { key: "shelf.putaway", group: "Inventory", label: "Put stock away on shelves and move it between shelves at own locations" },
 
   // Packing
   { key: "packing.view_queue", group: "Packing", label: "View packing queue" },
@@ -239,6 +243,8 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "transfer.send",
     "transfer.receive",
     "stock.count",
+    // C4b: the hub's packers put away and move dresses between shelves.
+    "shelf.putaway",
     "courier.create_shipment",
     "courier.return_check",
     "attendance.view_own",
@@ -289,6 +295,8 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "transfer.send",
     "transfer.receive",
     "stock.count",
+    // C4b: only at a location that uses shelves (the showroom doesn't).
+    "shelf.putaway",
     "attendance.view_own",
     "attendance.mark",
   ],

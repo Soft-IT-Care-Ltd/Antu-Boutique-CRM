@@ -12,6 +12,7 @@ import { ORDER_STATUS_LABELS } from "@/lib/orders/constants";
 import { packingUploadUrl } from "@/lib/packing/types";
 import type { PackingOrderDetail as PackingOrderDetailData } from "@/lib/packing/types";
 import { ORDER_STATUS_TONE } from "@/lib/ui/status-tone";
+import { ShelfSpots } from "@/components/shelves/shelf-spots";
 
 export function PackingOrderDetail({ order: initialOrder, canPack }: { order: PackingOrderDetailData; canPack: boolean }) {
   const [order, setOrder] = useState(initialOrder);
@@ -106,6 +107,7 @@ export function PackingOrderDetail({ order: initialOrder, canPack }: { order: Pa
                     {item.productName}
                   </p>
                   <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
+                  {item.shelves ? <ShelfSpots value={item.shelves} prefix="Shelf:" className="mt-1" /> : null}
                 </div>
                 <div className="text-right">
                   <p>

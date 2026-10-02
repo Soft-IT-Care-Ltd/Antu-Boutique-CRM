@@ -148,14 +148,14 @@ export const TAG_CSS = `
   .tag .sku { left: 0; right: 0; text-align: center; letter-spacing: 0.02em; font-family: 'Invoice Sans', ui-monospace, monospace; }
 `;
 
-export type PlacedTag = { tag: TagData; page: number; x: number; y: number };
+export type PlacedTag<T = TagData> = { tag: T; page: number; x: number; y: number };
 
 /**
  * Where every tag goes: one per page on a roll; left-to-right, top-to-bottom
  * on sheets, starting at label `startAt` (1-based) so a half-used sheet can
  * be fed back in.
  */
-export function placeTags(tags: TagData[], stock: LabelStock, startAt = 1): { placed: PlacedTag[]; pages: number } {
+export function placeTags<T = TagData>(tags: T[], stock: LabelStock, startAt = 1): { placed: PlacedTag<T>[]; pages: number } {
   if (stock.kind === "ROLL") return { placed: tags.map((tag, page) => ({ tag, page, x: 0, y: 0 })), pages: tags.length };
   const perSheet = stock.cols * stock.rows;
   const skip = Math.min(Math.max(0, startAt - 1), perSheet - 1);

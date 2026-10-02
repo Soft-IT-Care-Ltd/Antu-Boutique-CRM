@@ -12,6 +12,7 @@ import { nextDocumentNumber } from "@/lib/inventory/document-number";
 import { lockVariantAt, recordStockMovement } from "@/lib/inventory/ledger";
 import { findVariantByScan, scannedItem, ScanError } from "@/lib/inventory/scan-lookup";
 import { canActAt, getLocationAccess, type LocationAccess } from "@/lib/locations/service";
+import { findShelfByScan } from "@/lib/shelves/scan";
 import type { TransferLineView, TransferListItem, TransferStatusValue, TransferTab, TransferView } from "@/lib/transfers/constants";
 
 // C4 — CORRECTIONS.md item 3: stock transfers between locations.
@@ -116,7 +117,34 @@ export async function createTransfer(tx: Prisma.TransactionClient, user: Session
 
 export type ScanSide = "send" | "receive";
 
-export type ScanOutcome = { item: ReturnType<typeof scannedItem>; count: number; of: number | null; message: string };
+export type ScanOutcome = {
+  item: ReturnType<typeof scannedItem> | null;
+  count: number;
+  of: number | null;
+  message: string;
+  /** C4b — a shelf label was scanned: the next dresses come off this shelf. */
+  shelf?: { id: string; code: string };
+};
+
+/** C4b — of a line's units sent, how many were scanned off which shelf. */
+type ShelfPicks = Record<string, number>;
+
+function readPicks(json: Prisma.JsonValue | null | undefined): ShelfPicks {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return {};
+  return Object.fromEntries(Object.entries(json).filter((e): e is [string, number] => typeof e[1] === "number" && e[1] > 0));
+}
+
+/** Keeps the picks within `qty` units (the last-scanned shelves give way first). */
+function trimPicks(picks: ShelfPicks, qty: number): ShelfPicks {
+  const out: ShelfPicks = {};
+  let left = qty;
+  for (const [shelfId, n] of Object.entries(picks)) {
+    const keep = Math.min(n, left);
+    if (keep > 0) out[shelfId] = keep;
+    left -= keep;
+  }
+  return out;
+}
 
 /**
  * One scan = one unit. Sending: adds the unit to the Draft (refused when the
@@ -124,8 +152,26 @@ export type ScanOutcome = { item: ReturnType<typeof scannedItem>; count: number;
  * sent (a tag that isn't on the transfer, or one scanned more times than
  * were sent, is refused).
  */
-export async function scanTransferUnit(tx: Prisma.TransactionClient, user: SessionUser, transferId: string, side: ScanSide, raw: string): Promise<ScanOutcome> {
+export async function scanTransferUnit(
+  tx: Prisma.TransactionClient,
+  user: SessionUser,
+  transferId: string,
+  side: ScanSide,
+  raw: string,
+  /** C4b — the shelf label scanned before this dress (send side). */
+  opts: { shelfId?: string | null } = {},
+): Promise<ScanOutcome> {
   const t = await lockTransfer(tx, transferId);
+
+  if (side === "send") {
+    // C4b — a shelf label: the dresses scanned next come off that shelf.
+    const shelf = await findShelfByScan(tx, raw, t.fromLocationId);
+    if (shelf) {
+      requireStatus(t, ["DRAFT"], "add items");
+      await assertActor(tx, user, "transfer.send", t.fromLocationId, "send stock from there");
+      return { item: null, shelf, count: 0, of: null, message: `Shelf ${shelf.code} — now scan the dresses you take off it` };
+    }
+  }
   const variant = await findVariantByScan(tx, raw);
   const item = scannedItem(variant);
 
@@ -133,7 +179,7 @@ export async function scanTransferUnit(tx: Prisma.TransactionClient, user: Sessi
     requireStatus(t, ["DRAFT"], "add items");
     await assertActor(tx, user, "transfer.send", t.fromLocationId, "send stock from there");
     const [line, atSource] = await Promise.all([
-      tx.stockTransferLine.findUnique({ where: { transferId_variantId: { transferId, variantId: variant.id } }, select: { qtySent: true, qtyRequested: true } }),
+      tx.stockTransferLine.findUnique({ where: { transferId_variantId: { transferId, variantId: variant.id } }, select: { qtySent: true, qtyRequested: true, shelfPicks: true } }),
       tx.variantStock.findUnique({ where: { variantId_locationId: { variantId: variant.id, locationId: t.fromLocationId } }, select: { qty: true } }),
     ]);
     const next = (line?.qtySent ?? 0) + 1;
@@ -141,13 +187,29 @@ export async function scanTransferUnit(tx: Prisma.TransactionClient, user: Sessi
     if (next > have) {
       throw new ScanError(`${variant.sku}: ${await locationName(tx, t.fromLocationId)} shows only ${Math.max(0, have)} — can't send ${next}. Count it first if the dress is really here.`, 409);
     }
+    // C4b — taken off the scanned shelf: that shelf must hold one more of it.
+    const picks = readPicks(line?.shelfPicks);
+    let shelfCode: string | null = null;
+    if (opts.shelfId) {
+      const onShelf = await tx.shelfStock.findFirst({ where: { shelfId: opts.shelfId, variantId: variant.id, locationId: t.fromLocationId }, select: { qty: true } });
+      const shelfRow = await tx.shelf.findFirst({ where: { id: opts.shelfId, locationId: t.fromLocationId }, select: { code: true } });
+      if (!shelfRow) throw new ScanError("That shelf isn't at this location — scan the shelf label again.", 409);
+      const pickedThere = (picks[opts.shelfId] ?? 0) + 1;
+      if (pickedThere > (onShelf?.qty ?? 0)) {
+        throw new ScanError(`${variant.sku}: shelf ${shelfRow.code} shows ${onShelf?.qty ?? 0}${pickedThere > 1 ? ` and ${pickedThere - 1} already scanned off it` : ""}. Scan the shelf it really came from, or scan the dress alone.`, 409);
+      }
+      picks[opts.shelfId] = pickedThere;
+      shelfCode = shelfRow.code;
+    }
+    const shelfPicks = Object.keys(picks).length ? picks : Prisma.DbNull;
     await tx.stockTransferLine.upsert({
       where: { transferId_variantId: { transferId, variantId: variant.id } },
-      create: { transferId, variantId: variant.id, qtySent: 1 },
-      update: { qtySent: { increment: 1 } },
+      create: { transferId, variantId: variant.id, qtySent: 1, shelfPicks },
+      update: { qtySent: { increment: 1 }, shelfPicks },
     });
     const of = line?.qtyRequested ? line.qtyRequested : null;
-    return { item, count: next, of, message: of && next > of ? `${variant.sku}: ${next} scanned — only ${of} asked for` : `${variant.sku} · ${next}${of ? ` of ${of}` : ""}` };
+    const from = shelfCode ? ` · off ${shelfCode}` : "";
+    return { item, count: next, of, message: of && next > of ? `${variant.sku}: ${next} scanned — only ${of} asked for${from}` : `${variant.sku} · ${next}${of ? ` of ${of}` : ""}${from}` };
   }
 
   requireStatus(t, ["IN_TRANSIT"], "scan items in");
@@ -163,7 +225,7 @@ export async function scanTransferUnit(tx: Prisma.TransactionClient, user: Sessi
 export async function setTransferLineQty(tx: Prisma.TransactionClient, user: SessionUser, transferId: string, side: ScanSide, variantId: string, qty: number): Promise<void> {
   if (!Number.isInteger(qty) || qty < 0) throw new TransferError("Quantity must be a whole number, 0 or more.");
   const t = await lockTransfer(tx, transferId);
-  const line = await tx.stockTransferLine.findUnique({ where: { transferId_variantId: { transferId, variantId } }, select: { id: true, qtyRequested: true, qtySent: true } });
+  const line = await tx.stockTransferLine.findUnique({ where: { transferId_variantId: { transferId, variantId } }, select: { id: true, qtyRequested: true, qtySent: true, shelfPicks: true } });
 
   if (side === "send") {
     requireStatus(t, ["DRAFT"], "change what's sent");
@@ -174,7 +236,10 @@ export async function setTransferLineQty(tx: Prisma.TransactionClient, user: Ses
       if (qty > (atSource?.qty ?? 0)) throw new TransferError(`${await locationName(tx, t.fromLocationId)} shows only ${Math.max(0, atSource?.qty ?? 0)} of it.`, 409);
     }
     if (qty === 0 && line.qtyRequested === 0) await tx.stockTransferLine.delete({ where: { id: line.id } });
-    else await tx.stockTransferLine.update({ where: { id: line.id }, data: { qtySent: qty } });
+    else {
+      const picks = trimPicks(readPicks(line.shelfPicks), qty);
+      await tx.stockTransferLine.update({ where: { id: line.id }, data: { qtySent: qty, shelfPicks: Object.keys(picks).length ? picks : Prisma.DbNull } });
+    }
     return;
   }
 
@@ -195,7 +260,7 @@ export async function sendTransfer(tx: Prisma.TransactionClient, user: SessionUs
   const to = await tx.location.findUniqueOrThrow({ where: { id: t.toLocationId }, select: { name: true, isActive: true } });
   if (!to.isActive) throw new TransferError(`${to.name} is switched off.`);
 
-  const lines = (await tx.stockTransferLine.findMany({ where: { transferId }, select: { id: true, variantId: true, qtySent: true, variant: { select: { sku: true } } } }))
+  const lines = (await tx.stockTransferLine.findMany({ where: { transferId }, select: { id: true, variantId: true, qtySent: true, shelfPicks: true, variant: { select: { sku: true } } } }))
     .filter((l) => l.qtySent > 0)
     .sort((a, b) => a.variantId.localeCompare(b.variantId));
   if (lines.length === 0) throw new TransferError("Scan at least one item before sending.");
@@ -215,7 +280,9 @@ export async function sendTransfer(tx: Prisma.TransactionClient, user: SessionUs
   for (const line of lines) {
     const unitCost = cost.get(line.variantId)!;
     const common = { variantId: line.variantId, type: "TRANSFER_SEND" as const, unitCost, referenceType: "TRANSFER" as const, referenceId: transferId, actorId: user.id, note: `${t.transferNo} → ${to.name}` };
-    await recordStockMovement(tx, { ...common, locationId: t.fromLocationId, qty: -line.qtySent });
+    // C4b — units scanned off a shelf leave that shelf; the rest, Unassigned first.
+    const fromShelves = Object.entries(trimPicks(readPicks(line.shelfPicks), line.qtySent)).map(([shelfId, qty]) => ({ shelfId, qty }));
+    await recordStockMovement(tx, { ...common, locationId: t.fromLocationId, qty: -line.qtySent, fromShelves });
     await recordStockMovement(tx, { ...common, locationId: null, qty: line.qtySent });
     await tx.stockTransferLine.update({ where: { id: line.id }, data: { unitCost } });
   }

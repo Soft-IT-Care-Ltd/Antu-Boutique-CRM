@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, Layers, Pencil, Printer, Send } from "lucide-react";
 
+import { ShelfSpots, type ShelfSpotsValue } from "@/components/shelves/shelf-spots";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,6 +53,7 @@ export function OrderDetail({
   canOverrideCourier,
   returnPermissions,
   canDelete = false,
+  itemShelves = {},
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -73,6 +75,8 @@ export function OrderDetail({
   returnPermissions: ReturnPermissions;
   /** order.delete — offered only while the order is a lead or cancelled (the server checks the rest). */
   canDelete?: boolean;
+  /** C4b — per variant, where it sits at each shelf-using location (to-be-packed orders only). */
+  itemShelves?: Record<string, { locationName: string; value: ShelfSpotsValue }[]>;
 }) {
   const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
@@ -264,6 +268,9 @@ export function OrderDetail({
                     <div className="text-xs text-muted-foreground">
                       {row.sizeName} / {row.colorName} · <span className="font-mono">{row.sku}</span>
                     </div>
+                    {(itemShelves[row.variantId] ?? []).map((w) => (
+                      <ShelfSpots key={w.locationName} value={w.value} prefix={`${w.locationName}:`} className="mt-1" />
+                    ))}
                     {row.stockOverride ? (
                       <Badge variant="destructive" className="mt-1 w-fit">
                         Stock override: {row.stockOverrideReason}

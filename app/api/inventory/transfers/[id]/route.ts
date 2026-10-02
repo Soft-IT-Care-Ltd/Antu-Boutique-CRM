@@ -18,7 +18,8 @@ const id = z.string().trim().min(1).max(50);
 
 const actionSchema = z.discriminatedUnion("action", [
   // What a scanner (or the camera) read, or a SKU typed by hand.
-  z.object({ action: z.literal("scan"), side, code: z.string().min(1, "Scan or type a tag").max(60) }),
+  // C4b — shelfId: the shelf label scanned before this dress (sending only).
+  z.object({ action: z.literal("scan"), side, code: z.string().min(1, "Scan or type a tag").max(60), shelfId: id.nullish() }),
   z.object({ action: z.literal("setQty"), side, variantId: id, qty: z.number().int("Whole numbers only").min(0).max(10_000) }),
   z.object({ action: z.literal("send") }),
   z.object({ action: z.literal("receive") }),
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       async (tx) => {
         switch (input.action) {
           case "scan":
-            scan = await scanTransferUnit(tx, user, transferId, input.side, input.code);
+            scan = await scanTransferUnit(tx, user, transferId, input.side, input.code, { shelfId: input.shelfId });
             break;
           case "setQty":
             await setTransferLineQty(tx, user, transferId, input.side, input.variantId, input.qty);

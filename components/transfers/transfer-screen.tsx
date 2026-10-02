@@ -20,7 +20,7 @@ import { ApiError, fetchJson } from "@/lib/orders/client";
 import type { TransferLineView, TransferView } from "@/lib/transfers/constants";
 import { cn } from "@/lib/utils";
 
-type ActionResponse = { transfer: TransferView | null; scan: { message: string } | null; result: unknown };
+type ActionResponse = { transfer: TransferView | null; scan: { message: string; shelf?: { id: string; code: string } } | null; result: unknown };
 
 /**
  * C4 — CORRECTIONS.md item 3. One screen for the whole life of a transfer:
@@ -37,6 +37,8 @@ export function TransferScreen({ initial }: { initial: TransferView }) {
   const [confirm, setConfirm] = useState<"send" | "receive" | "cancel" | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [resolving, setResolving] = useState<{ line: TransferLineView; resolution: "FOUND" | "WRITE_OFF" } | null>(null);
+  // C4b — a shelf label scanned while sending: the next dresses come off it.
+  const [fromShelf, setFromShelf] = useState<{ id: string; code: string } | null>(null);
 
   const side = t.status === "DRAFT" ? "send" : "receive";
   const scanning = t.can.editSend || t.can.receive;
@@ -62,14 +64,15 @@ export function TransferScreen({ initial }: { initial: TransferView }) {
   const onScan = useCallback(
     async (code: string): Promise<ScanResult> => {
       try {
-        const res = await fetchJson<ActionResponse>(`/api/inventory/transfers/${t.id}`, { method: "POST", body: JSON.stringify({ action: "scan", side, code }) });
+        const res = await fetchJson<ActionResponse>(`/api/inventory/transfers/${t.id}`, { method: "POST", body: JSON.stringify({ action: "scan", side, code, shelfId: side === "send" ? (fromShelf?.id ?? null) : null }) });
         if (res.transfer) setT(res.transfer);
+        if (res.scan?.shelf) setFromShelf(res.scan.shelf);
         return { ok: true, message: res.scan?.message ?? "Scanned" };
       } catch (err) {
         return { ok: false, message: err instanceof ApiError ? err.message : "That scan didn't go through — scan it again." };
       }
     },
-    [t.id, side],
+    [t.id, side, fromShelf],
   );
 
   const received = t.status === "RECEIVED" || t.status === "RECEIVED_WITH_DIFFERENCE";
@@ -164,8 +167,18 @@ export function TransferScreen({ initial }: { initial: TransferView }) {
         <ScanBox
           onScan={onScan}
           disabled={busy !== null}
-          hint={t.status === "DRAFT" ? `Scan each dress as it goes in the bag — one scan, one unit. It leaves ${t.from.name} when you press Send.` : `Scan each dress as you unpack it. Only what's scanned goes into ${t.to.name}'s stock.`}
+          hint={t.status === "DRAFT" ? `Scan each dress as it goes in the bag — one scan, one unit. It leaves ${t.from.name} when you press Send. Took it off a shelf? Scan the shelf label first.` : `Scan each dress as you unpack it. Only what's scanned goes into ${t.to.name}'s stock.`}
         />
+      ) : null}
+      {scanning && side === "send" && fromShelf ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
+          <span>
+            Taking off shelf <b className="font-mono">{fromShelf.code}</b>
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setFromShelf(null)}>
+            Not from a shelf
+          </Button>
+        </div>
       ) : null}
 
       {t.status === "RECEIVED_WITH_DIFFERENCE" && t.totals.missing > 0 ? (

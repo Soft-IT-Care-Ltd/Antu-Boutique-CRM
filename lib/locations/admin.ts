@@ -8,6 +8,7 @@ import type { Db } from "@/lib/db/tx";
 import { withTx } from "@/lib/db/tx";
 import { LOCATION_TYPES, type LocationTypeValue } from "@/lib/locations/constants";
 import { LocationError } from "@/lib/locations/service";
+import { clearLocationShelves } from "@/lib/shelves/engine";
 
 // CORRECTIONS.md item 2 — Settings → Locations (Admin, settings.manage):
 // name, type, address, packing hub (exactly one), has POS, active, and the
@@ -22,6 +23,8 @@ export const locationInputSchema = z.object({
   address: z.string().trim().max(300).nullish(),
   isPackingHub: z.boolean().default(false),
   hasPos: z.boolean().default(false),
+  // C4b — the location is divided into shelves (CORRECTIONS.md item 20A).
+  usesShelves: z.boolean().default(false),
   isActive: z.boolean().default(true),
   userIds: z.array(z.string().trim().min(1).max(50)).max(200).default([]),
 });
@@ -34,6 +37,7 @@ export type LocationSettingsRow = {
   address: string | null;
   isPackingHub: boolean;
   hasPos: boolean;
+  usesShelves: boolean;
   isActive: boolean;
   /** Units held there now (may be negative). */
   units: number;
@@ -58,6 +62,7 @@ export async function listLocationSettings(db: Db): Promise<{ locations: Locatio
       address: l.address,
       isPackingHub: l.isPackingHub,
       hasPos: l.hasPos,
+      usesShelves: l.usesShelves,
       isActive: l.isActive,
       units: unitsAt.get(l.id) ?? 0,
       managers: l.users.filter((u) => u.user.isActive).map((u) => ({ id: u.user.id, name: u.user.name, roleLabel: u.user.role.label })),
@@ -68,7 +73,7 @@ export async function listLocationSettings(db: Db): Promise<{ locations: Locatio
 
 async function snapshot(tx: Prisma.TransactionClient, id: string) {
   const l = await tx.location.findUniqueOrThrow({ where: { id }, include: { users: { select: { userId: true } } } });
-  return { name: l.name, type: l.type, address: l.address, isPackingHub: l.isPackingHub, hasPos: l.hasPos, isActive: l.isActive, userIds: l.users.map((u) => u.userId).sort() };
+  return { name: l.name, type: l.type, address: l.address, isPackingHub: l.isPackingHub, hasPos: l.hasPos, usesShelves: l.usesShelves, isActive: l.isActive, userIds: l.users.map((u) => u.userId).sort() };
 }
 
 /** Creates (id null) or updates a location, its hub/POS flags and its managers, in one audited transaction. */
@@ -83,13 +88,16 @@ export async function saveLocation(db: Db, id: string | null, input: LocationInp
       const held = await tx.variantStock.count({ where: { locationId: id, qty: { not: 0 } } });
       if (held > 0) throw new LocationError(`It still holds stock (${held} size/colour(s) not at zero) — count or move it first.`);
     }
+    // C4b — switching shelves off drops every shelf figure there (stock
+    // itself doesn't move); what was dropped goes in the audit row below.
+    const shelvesCleared = id && before?.usesShelves && !input.usesShelves ? await clearLocationShelves(tx, id, actorId) : null;
     const users = input.userIds.length ? await tx.user.count({ where: { id: { in: input.userIds }, isActive: true } }) : 0;
     if (users !== new Set(input.userIds).size) throw new LocationError("One of the people picked is not an active user.");
 
     // Moving the hub: the old one stops being it in the same transaction.
     if (input.isPackingHub) await tx.location.updateMany({ where: { isPackingHub: true, ...(id ? { id: { not: id } } : {}) }, data: { isPackingHub: false } });
 
-    const data = { name: input.name, type: input.type, address: input.address?.trim() || null, isPackingHub: input.isPackingHub, hasPos: input.hasPos, isActive: input.isActive };
+    const data = { name: input.name, type: input.type, address: input.address?.trim() || null, isPackingHub: input.isPackingHub, hasPos: input.hasPos, usesShelves: input.usesShelves, isActive: input.isActive };
     let locationId = id;
     try {
       if (locationId) await tx.location.update({ where: { id: locationId }, data });
@@ -108,7 +116,7 @@ export async function saveLocation(db: Db, id: string | null, input: LocationInp
       entityType: "location",
       entityId: locationId,
       before: before ?? undefined,
-      after: await snapshot(tx, locationId),
+      after: { ...(await snapshot(tx, locationId)), ...(shelvesCleared ? { shelvesCleared } : {}) },
       request,
     });
     return { id: locationId };

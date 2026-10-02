@@ -5,6 +5,7 @@ import { can } from "@/lib/auth/permissions";
 import type { SessionUser } from "@/lib/auth/types";
 import type { InventoryNavLink } from "@/lib/inventory/types";
 import { LEDGER_VIEW_PERMISSIONS, PURCHASE_VIEW_PERMISSIONS } from "@/lib/inventory/queries";
+import { prisma } from "@/lib/prisma";
 import { TRANSFER_VIEW_PERMISSIONS } from "@/lib/transfers/constants";
 
 export type InventoryAccess = {
@@ -18,13 +19,15 @@ export type InventoryAccess = {
   canViewTransfers: boolean;
   canSendTransfers: boolean;
   canCount: boolean;
+  /** C4b — shelves inside a location (only when some location uses them). */
+  canUseShelves: boolean;
   navLinks: InventoryNavLink[];
 };
 
 /** Every /inventory/* page starts here: the nav-level inventory.view gate, plus what else this user may see. */
 export async function getInventoryAccess(): Promise<InventoryAccess> {
   const user = await guardPage("/inventory");
-  const [hasCostAccess, canAdjust, canViewLedger, canViewPurchases, canViewCatalog, canViewTransfers, canSendTransfers, canCount] = await Promise.all([
+  const [hasCostAccess, canAdjust, canViewLedger, canViewPurchases, canViewCatalog, canViewTransfers, canSendTransfers, canCount, shelfPermission, shelfLocations] = await Promise.all([
     can(user, "product.cost.view"),
     can(user, "inventory.adjust"),
     can(user, LEDGER_VIEW_PERMISSIONS),
@@ -33,7 +36,10 @@ export async function getInventoryAccess(): Promise<InventoryAccess> {
     can(user, TRANSFER_VIEW_PERMISSIONS),
     can(user, "transfer.send"),
     can(user, ["stock.count", "inventory.adjust"]),
+    can(user, ["shelf.manage", "shelf.putaway", "stock.count", "inventory.adjust"]),
+    prisma.location.count({ where: { usesShelves: true, isActive: true } }),
   ]);
+  const canUseShelves = shelfPermission && shelfLocations > 0;
 
   const navLinks: InventoryNavLink[] = [
     { href: "/inventory", label: "Stock" },
@@ -45,6 +51,7 @@ export async function getInventoryAccess(): Promise<InventoryAccess> {
   // C4 (CORRECTIONS.md items 2, 3).
   if (canViewTransfers) navLinks.push({ href: "/inventory/transfers", label: "Transfers" });
   if (canSendTransfers) navLinks.push({ href: "/inventory/hub-needs", label: "Needed at hub" });
+  if (canUseShelves) navLinks.push({ href: "/inventory/shelves", label: "Shelves" });
   if (canCount) navLinks.push({ href: "/inventory/counts", label: "Stock counts" });
   if (canViewLedger) navLinks.push({ href: "/inventory/movements", label: "Ledger" });
   if (canViewPurchases) {
@@ -52,5 +59,5 @@ export async function getInventoryAccess(): Promise<InventoryAccess> {
     navLinks.push({ href: "/inventory/suppliers", label: "Suppliers" });
   }
 
-  return { user, hasCostAccess, canAdjust, canViewLedger, canViewPurchases, canViewCatalog, canViewTransfers, canSendTransfers, canCount, navLinks };
+  return { user, hasCostAccess, canAdjust, canViewLedger, canViewPurchases, canViewCatalog, canViewTransfers, canSendTransfers, canCount, canUseShelves, navLinks };
 }

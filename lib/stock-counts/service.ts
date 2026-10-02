@@ -11,6 +11,7 @@ import { nextDocumentNumber } from "@/lib/inventory/document-number";
 import { lockVariantAt } from "@/lib/inventory/ledger";
 import { findVariantByScan, scannedItem, ScanError } from "@/lib/inventory/scan-lookup";
 import { canActAt, getLocationAccess } from "@/lib/locations/service";
+import { closeMisses } from "@/lib/shelves/engine";
 import type { StockCountListItem, StockCountScopeValue, StockCountStatusValue, StockCountView } from "@/lib/stock-counts/constants";
 
 // C4 — CORRECTIONS.md item 2, stock count by scan. A location's incharge
@@ -190,13 +191,18 @@ export async function postStockCount(tx: Prisma.TransactionClient, user: Session
     compared++;
     await tx.stockCountLine.update({ where: { id: line.id }, data: { expectedQty: expected } });
     const diff = line.countedQty - expected;
-    if (diff === 0) continue;
-    const { sku } = await tx.productVariant.findUniqueOrThrow({ where: { id: line.variantId }, select: { sku: true } });
-    await adjustStock(tx, { variantId: line.variantId, locationId: c.locationId, qty: diff, reason: `Stock count ${c.countNo}: counted ${line.countedQty}, system showed ${expected} when scanned` }, user.id, {
-      referenceType: "STOCK_COUNT",
-      referenceId: countId,
-    });
-    differences.push({ sku, expected, counted: line.countedQty });
+    if (diff !== 0) {
+      const { sku } = await tx.productVariant.findUniqueOrThrow({ where: { id: line.variantId }, select: { sku: true } });
+      await adjustStock(tx, { variantId: line.variantId, locationId: c.locationId, qty: diff, reason: `Stock count ${c.countNo}: counted ${line.countedQty}, system showed ${expected} when scanned` }, user.id, {
+        referenceType: "STOCK_COUNT",
+        referenceId: countId,
+      });
+      differences.push({ sku, expected, counted: line.countedQty });
+    }
+    // C4b — the count has settled how many are in the building: units a
+    // shelf count marked "not on its shelf" are either in that figure
+    // (Unassigned, waiting to be put away) or were just taken off as short.
+    await closeMisses(tx, { variantId: line.variantId, locationId: c.locationId, reason: "LOCATION_COUNT", actorId: user.id, note: `Stock count ${c.countNo}` });
   }
 
   await tx.stockCount.update({ where: { id: countId }, data: { status: "POSTED", postedById: user.id, postedAt: new Date() } });

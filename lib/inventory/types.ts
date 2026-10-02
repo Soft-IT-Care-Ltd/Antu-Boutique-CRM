@@ -149,7 +149,18 @@ export type StockLookupItem = {
   isActive: boolean;
   price: string | null;
   thumbPath: string | null;
-  locations: { locationId: string; name: string; type: string; isPackingHub: boolean; hasPos: boolean; qty: number }[];
+  locations: {
+    locationId: string;
+    name: string;
+    type: string;
+    isPackingHub: boolean;
+    hasPos: boolean;
+    qty: number;
+    /** C4b — where inside the location, when it uses shelves. */
+    shelves: { code: string; qty: number }[] | null;
+    unassigned: number;
+    notOnShelf: number;
+  }[];
   inTransit: number;
   total: number;
   reserved: number;

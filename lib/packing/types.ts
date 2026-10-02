@@ -1,4 +1,5 @@
 import type { OrderStatusValue } from "@/lib/orders/constants";
+import type { ShelfSpotsValue } from "@/lib/shelves/constants";
 
 // Client-side shapes mirroring /api/packing/*'s JSON — deliberately its own
 // module rather than reusing lib/orders/types.ts's OrderDetail/OrderListItem:
@@ -44,6 +45,8 @@ export type PackingItemView = {
   qty: number;
   /** P3.3 — the outfit set this line belongs to (its components are listed one by one). */
   set: { id: string; name: string; qty: number } | null;
+  /** C4b — where it sits at the packing hub (shelves, then Unassigned); null once packed or without shelves. */
+  shelves: ShelfSpotsValue | null;
 };
 
 export type PackingQueueItem = {

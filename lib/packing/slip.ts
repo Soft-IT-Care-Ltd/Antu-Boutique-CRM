@@ -40,7 +40,7 @@ export async function renderPackingSlipHtml(order: PackingOrderDetail, fontFaceC
   // every component is its own pick line, with its chosen size and colour.
   const itemRow = (item: PackingOrderDetail["items"][number]) => `
       <tr${item.set ? ' class="component"' : ""}>
-        <td>${item.set ? SUB_ITEM_MARK : ""}${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}</div></td>
+        <td>${item.set ? SUB_ITEM_MARK : ""}${escapeHtml(item.productName)}<div class="muted">${escapeHtml(item.sku)}${shelfNote(item.shelves)}</div></td>
         <td><strong>${escapeHtml(item.sizeName)}</strong></td>
         <td><strong>${escapeHtml(item.colorName)}</strong></td>
         <td class="num">${item.qty}</td>
@@ -159,4 +159,12 @@ export async function generatePackingSlipPdf(orderId: string): Promise<Uint8Arra
   const [fontFaceCss, branding] = await Promise.all([getFontFaceCss(), getDocumentBranding(prisma)]);
   const html = await renderPackingSlipHtml(order, fontFaceCss, branding);
   return renderHtmlToPdf(html);
+}
+
+/** C4b — "Shelf A-2-3 ×2, B-1 · 1 unassigned" on the slip's pick line (CORRECTIONS.md item 20A). */
+function shelfNote(spots: PackingOrderDetail["items"][number]["shelves"]): string {
+  if (!spots || (spots.shelves.length === 0 && spots.unassigned <= 0)) return "";
+  const parts = spots.shelves.map((s) => `<strong>${escapeHtml(s.code)}</strong>${s.qty > 1 ? ` ×${s.qty}` : ""}`);
+  if (spots.unassigned > 0) parts.push(`${spots.unassigned} unassigned`);
+  return ` · Shelf ${parts.join(", ")}`;
 }

@@ -10,6 +10,7 @@ import { canManageOrderImages } from "@/lib/orders/access";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { loadShipmentDetail } from "@/lib/courier/queries";
 import { listWalletOptions } from "@/lib/wallets/service";
+import { shelfWhereabouts } from "@/lib/shelves/service";
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await guardPage("/orders");
@@ -69,6 +70,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canManageImages = canManageOrderImages(user, scopedRow);
 
   const order = await stripCostFieldsForUser(serializeOrderDetail(loaded), user);
+  // C4b — where to find each dress while it's still to be packed (CORRECTIONS.md item 20A).
+  const itemShelves = ["LEAD", "CONFIRMED", "ON_HOLD"].includes(loaded.status) ? await orderItemShelves(loaded.items.map((i) => i.variantId)) : {};
   // Anyone who can open this page already sees the order's money, so COD is shown; courier cost is stripped by role.
   const shipment = await stripCostFieldsForUser(await loadShipmentDetail(id, true), user);
 
@@ -94,7 +97,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         canOverrideCourier={canOverrideCourier}
         returnPermissions={{ canRequestReturn, canRequestExchange, canApproveReturn, canApproveExchange, canCounterExchange }}
         canDelete={canDelete}
+        itemShelves={itemShelves}
       />
     </div>
+  );
+}
+
+async function orderItemShelves(variantIds: string[]) {
+  const [where, locations] = await Promise.all([shelfWhereabouts(prisma, [...new Set(variantIds)]), prisma.location.findMany({ where: { usesShelves: true }, select: { id: true, name: true } })]);
+  const names = new Map(locations.map((l) => [l.id, l.name]));
+  return Object.fromEntries(
+    [...where].map(([variantId, list]) => [variantId, list.map((w) => ({ locationName: names.get(w.locationId) ?? "", value: { shelves: w.shelves.map((s) => ({ code: s.code, qty: s.qty })), unassigned: w.unassigned, notOnShelf: w.notOnShelf } }))]),
   );
 }

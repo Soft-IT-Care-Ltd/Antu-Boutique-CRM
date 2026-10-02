@@ -25,6 +25,8 @@ import { createPosSale } from "../lib/pos/sale";
 import { reserveVariantStock } from "../lib/orders/stock";
 import { createStockCount, postStockCount, scanCountUnit } from "../lib/stock-counts/service";
 import { createTransfer, receiveTransfer, resolveMissing, scanTransferUnit, sendTransfer } from "../lib/transfers/service";
+import { createShelves, finishShelfCount, putAway, scanShelfCount, startShelfCount } from "../lib/shelves/service";
+import { generateShelfCodes } from "../lib/shelves/constants";
 import { computeOrderTotals } from "../lib/orders/totals";
 import { generateOrderNumber } from "../lib/orders/order-number";
 import { resolveSetLines, writeSetLines } from "../lib/sets/order-lines";
@@ -2262,6 +2264,65 @@ async function seedFirstAdmin(roleIds: Record<RoleName, string>) {
   console.log(`First Admin created: ${name} (${phone}). They must change the password at first sign-in.`);
 }
 
+// C4b — CORRECTIONS.md item 20A: shelves at the Mohammadpur hub (rack A:
+// 3 shelves × 3 boxes, rack B: 2 shelves), most of its stock put away by
+// the packer, a few pieces left Unassigned, one finished shelf count that
+// didn't find a dress (now "not on its shelf"), and one count in progress.
+// Through the real services; guarded on the hub having no shelves yet.
+// ---------------------------------------------------------------------------
+
+async function seedShelvesDemo() {
+  const HUB = SEEDED_LOCATION_IDS.mohammadpur;
+  if ((await prisma.shelf.count({ where: { locationId: HUB } })) > 0) return;
+  const [manager, packer] = await Promise.all(["01711000002", "01711000005"].map(sessionFor));
+  const run = <T,>(fn: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<T>) => prisma.$transaction(fn, { timeout: 60_000 });
+  await prisma.location.update({ where: { id: HUB }, data: { usesShelves: true } });
+  await run((tx) => createShelves(tx, manager, { locationId: HUB, codes: [...generateShelfCodes("A", 3, 3), ...generateShelfCodes("B", 2, 0)] }));
+  const shelves = await prisma.shelf.findMany({ where: { locationId: HUB }, orderBy: { code: "asc" }, select: { id: true, code: true } });
+
+  const atHub = await prisma.variantStock.findMany({
+    where: { locationId: HUB, qty: { gt: 0 }, variant: { product: { deletedAt: null } } },
+    orderBy: { variant: { sku: "asc" } },
+    select: { variantId: true, qty: true, variant: { select: { product: { select: { kind: true } } } } },
+  });
+  const dresses = atHub.filter((s) => s.variant.product.kind !== "COMPONENT_ONLY");
+  const packaging = atHub.filter((s) => s.variant.product.kind === "COMPONENT_ONLY");
+  const rackA = shelves.filter((s) => s.code.startsWith("A-"));
+  const b1 = shelves.find((s) => s.code === "B-1")!;
+  // Every 5th dress waits in Unassigned (just arrived); every 4th is split over two boxes.
+  for (const [i, s] of dresses.entries()) {
+    const keep = i % 5 === 4 ? Math.min(2, s.qty) : 0;
+    let left = s.qty - keep;
+    if (left <= 0) continue;
+    const first = rackA[i % rackA.length];
+    if (i % 4 === 3 && left >= 2) {
+      const second = rackA[(i + 4) % rackA.length];
+      await run((tx) => putAway(tx, packer, { locationId: HUB, toShelfId: second.id, items: [{ variantId: s.variantId, qty: 1 }] }));
+      left -= 1;
+    }
+    await run((tx) => putAway(tx, packer, { locationId: HUB, toShelfId: first.id, items: [{ variantId: s.variantId, qty: left }] }));
+  }
+  if (packaging.length > 0) await run((tx) => putAway(tx, packer, { locationId: HUB, toShelfId: b1.id, items: packaging.map((p) => ({ variantId: p.variantId, qty: p.qty })) }));
+
+  // A finished count of one box: one dress wasn't there.
+  const counted = await prisma.shelfStock.findFirst({ where: { locationId: HUB, qty: { gte: 2 }, shelf: { code: { startsWith: "A-" } } }, orderBy: { shelf: { code: "asc" } }, select: { shelfId: true } });
+  if (counted) {
+    const lines = await prisma.shelfStock.findMany({ where: { shelfId: counted.shelfId }, select: { qty: true, stock: { select: { variant: { select: { sku: true } } } } } });
+    const sc = await run((tx) => startShelfCount(tx, packer, counted.shelfId));
+    for (const [i, l] of lines.entries()) {
+      const n = l.qty - (i === 0 ? 1 : 0);
+      for (let k = 0; k < n; k++) await run((tx) => scanShelfCount(tx, packer, sc.id, l.stock.variant.sku));
+    }
+    await run((tx) => finishShelfCount(tx, packer, sc.id));
+  }
+  // …and one still being counted.
+  const next = await prisma.shelfStock.findFirst({ where: { locationId: HUB, shelfId: { not: counted?.shelfId }, shelf: { code: { startsWith: "A-" } } }, orderBy: { shelf: { code: "desc" } }, select: { shelfId: true, stock: { select: { variant: { select: { sku: true } } } } } });
+  if (next) {
+    const open = await run((tx) => startShelfCount(tx, packer, next.shelfId));
+    await run((tx) => scanShelfCount(tx, packer, open.id, next.stock.variant.sku));
+  }
+}
+
 async function main() {
   if (process.env.SEED_MODE === "base") {
     const roleIds = await seedPermissionsAndRoles();
@@ -2295,6 +2356,7 @@ async function main() {
   await seedLeadsDemo();
   await seedTargetsAndAttendanceDemo();
   await seedTransfersAndCountsDemo();
+  await seedShelvesDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");
