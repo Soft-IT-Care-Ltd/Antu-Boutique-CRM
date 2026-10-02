@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { toNumber } from "@/lib/money";
 import { keptLine } from "@/lib/orders/totals";
 import type { DeliveryZoneValue, OrderEditRequestStatusValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
+import type { LineFulfilment } from "@/lib/fulfilment/constants";
 import type { OrderDetail } from "@/lib/orders/types";
 
 const orderDetailInclude = {
@@ -74,6 +75,18 @@ export async function loadOrderDetailByNo(orderNo: string) {
   });
 }
 
+/** C5 — the line's stored split (null once the order isn't confirmed). */
+function lineFulfilment(order: LoadedOrder, item: LoadedOrder["items"][number]): LineFulfilment | null {
+  if (order.fulfilmentStatus === null) return null;
+  const from = Array.isArray(item.transferFrom) ? (item.transferFrom as { locationId: string; locationName?: string; qty: number }[]) : [];
+  return {
+    atHub: item.atHubQty,
+    incoming: item.incomingQty,
+    fromLocations: from.map((f) => ({ locationId: f.locationId, locationName: f.locationName ?? "Another location", qty: f.qty })),
+    backorder: item.backorderQty,
+  };
+}
+
 export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
   return {
     id: order.id,
@@ -103,6 +116,9 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
     dueAmount: order.dueAmount.toString(),
     internalNote: order.internalNote,
     deliveryNote: order.deliveryNote,
+    fulfilmentStatus: order.fulfilmentStatus,
+    waitingSince: order.waitingSince?.toISOString() ?? null,
+    stockExpectedOn: order.stockExpectedOn?.toISOString() ?? null,
     exchangedFromOrderId: order.exchangedFromOrderId,
     lead: order.lead,
     items: order.items.map((item) => ({
@@ -124,6 +140,7 @@ export function serializeOrderDetail(order: LoadedOrder): OrderDetail {
       stockOverrideReason: item.stockOverrideReason,
       returnedQty: item.returnedQty,
       setLineId: item.setLineId,
+      fulfilment: lineFulfilment(order, item),
     })),
     setLines: order.setLines.map((s) => ({
       id: s.id,

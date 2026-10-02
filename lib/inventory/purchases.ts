@@ -2,6 +2,7 @@ import type { CostAllocationMethod, Prisma } from "@prisma/client";
 
 import { costPurchase, computeWeightedAverageCostPaisa, fromPaisa, toPaisa } from "./costing";
 import { lockVariant, recordStockMovement } from "./ledger";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // PRD §4.3 purchase entry. Like ledger.ts, acts only through the caller's
 // transaction client (no "server-only", no prisma singleton) so the seed
@@ -127,5 +128,7 @@ export async function createPurchase(tx: Prisma.TransactionClient, input: Create
     });
   }
 
+  // C5 — what arrived goes to waiting orders, oldest first (CORRECTIONS.md item 12).
+  await settleFulfilment(tx, { cause: purchase.invoiceNo ? `Purchase (invoice ${purchase.invoiceNo}) was received` : "A purchase was received" });
   return purchase;
 }

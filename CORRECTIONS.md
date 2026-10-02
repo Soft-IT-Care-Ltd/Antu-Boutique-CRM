@@ -297,7 +297,8 @@ Report findings, fix them, merge and push.
 - A POS sale deducts from the showroom's location, which is part of total stock.
 - If the system shows 0 at that location but the item is physically in hand, the sale goes through with a warning; that location's stock goes negative and appears on a **Negative stock** alert for its manager to fix (count or transfer).
 
-### 12. Online orders without stock (backorders) — [OPEN]
+### 12. Online orders without stock (backorders) — [DONE] (C5 part A)
+> C5 part A: online orders (form and edits) take lines beyond stock as backorders — never refused; ONE oldest-first allocation (`lib/fulfilment/allocation.ts`: hub → coming to the hub → other locations in Settings order → backorder) feeds the order status, "Needed at the packing hub", packing's check and the POS warning; DB triggers queue every stock/reservation/transfer/order change and `settleFulfilment` recomputes in the same transaction (notifying the SE, and packing when Ready); `/orders/waiting-for-stock` (totals, what to get, print, CSV, pre-fill a purchase); the four fulfilment actions (`order.fulfilment`) with reason, audit row, recomputed total/due, a new invoice version and the P3.2 store credit / approved refund when overpaid (packing can't settle money); R15 Stock-outs (lost sales). Commit: "feat(fulfilment): backorders, automatic fulfilment status, fulfilment actions (C5 part A)".
 **Rule:** sales staff may take an online order even when an item is out of stock everywhere — customers order 2–3 dresses in one inbox conversation and the team must not lose the sale.
 - Such lines are marked **backorder**; the order's fulfilment status becomes **Waiting for stock** (item 13).
 - **"Waiting for stock" page:** every such order — customer, missing items (variant, qty), order value, days waiting — and totals: number of orders, total parcel value, and quantity needed per variant (printable, CSV, and pre-fills a purchase entry).
@@ -310,7 +311,8 @@ Report findings, fix them, merge and push.
   Every action needs a reason, is audit-logged, and regenerates the invoice as a new version. If the customer already paid more than the new total, the difference follows the P3.2 rules (store credit, or refund with approval).
 - **Stock-out report:** value of items removed or orders cancelled because of stock-outs, by product — lost sales.
 
-### 13. Packing panel and scan-to-pack — [OPEN]
+### 13. Packing panel and scan-to-pack — [OPEN] — automatic fulfilment status [DONE] (C5 part A); the packing panel, bulk invoice print and scan-to-pack are C5 part B
+> C5 part A: Ready to pack / Needs transfer / Waiting for stock on every confirmed online order, recomputed on every stock movement, oldest order first (two orders never count the same last piece); Orders tabs and the packing queue show it; only a Ready-to-pack order can be packed. A POS sale of a piece an online order counts on warns ("reserved for online order AB-…"), sells, recomputes the order and tells its SE.
 - The packing team (Mohammadpur hub) sees orders the moment they are entered or confirmed: how many orders, how many items, which items.
 - **Automatic fulfilment status** for every order, from stock:
   - **Ready to pack** — every unit is at the hub.

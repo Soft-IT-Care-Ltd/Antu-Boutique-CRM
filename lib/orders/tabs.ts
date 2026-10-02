@@ -9,11 +9,9 @@ import type { OrderStatusValue } from "@/lib/orders/constants";
 // Open-work tabs show every open order whatever the date filter says, so
 // nothing pending is hidden; finished tabs follow the date filter.
 //
-// "Waiting for stock" and "Needs transfer" are fulfilment states, not
-// order statuses: they need per-location stock (C3) and backorders (C5).
-// Until then every confirmed order is "Ready to pack" (exactly the packing
-// queue) and those two tabs are empty — C5 fills them from the automatic
-// fulfilment status without changing the tab bar.
+// "Waiting for stock", "Needs transfer" and "Ready to pack" split the
+// confirmed orders by their automatic fulfilment status (C5 — every unit at
+// the hub / some on its way or at another location / some nowhere).
 
 export const ORDER_TAB_KEYS = [
   "needs_confirmation",
@@ -55,14 +53,14 @@ export const ORDER_TABS: OrderTab[] = [
     label: "Waiting for stock",
     open: true,
     statuses: ["CONFIRMED"],
-    emptyHint: "Orders with an item that isn't in stock anywhere land here once backorders are switched on.",
+    emptyHint: "Orders with an item that isn't in stock anywhere land here — and leave by themselves when it arrives.",
   },
   {
     key: "needs_transfer",
     label: "Needs transfer",
     open: true,
     statuses: ["CONFIRMED"],
-    emptyHint: "Orders whose items sit at another location land here once stock is kept per location.",
+    emptyHint: "Orders with an item at another location (or on its way to the packing hub) land here.",
   },
   { key: "ready_to_pack", label: "Ready to pack", open: true, statuses: ["CONFIRMED"] },
   // Not in the owner's list, but an order on hold is open work and must not vanish from every tab.

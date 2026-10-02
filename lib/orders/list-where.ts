@@ -70,12 +70,14 @@ export { dhakaDaysRange } from "@/lib/date-range";
 // CORRECTIONS.md item 14 — the where behind each Orders tab and sub-tab.
 
 const APPROVAL_PENDING = ["DELIVERY_APPROVAL_PENDING", "PARTIAL_DELIVERY_APPROVAL_PENDING", "RETURN_APPROVAL_PENDING"] as const;
-const NONE: Prisma.OrderWhereInput = { id: { in: [] } };
 
 export function orderTabWhere(tab: OrderTabKey, sub?: OrderSubTabKey): Prisma.OrderWhereInput {
   const def = ORDER_TAB_BY_KEY[tab];
-  // Fulfilment states arrive with per-location stock and backorders (C3/C5).
-  if (tab === "waiting_for_stock" || tab === "needs_transfer") return NONE;
+  // C5 — fulfilment states of confirmed orders, from the one allocation
+  // (lib/fulfilment/). A confirmed order with no status yet counts as ready.
+  if (tab === "waiting_for_stock") return { status: "CONFIRMED", fulfilmentStatus: "WAITING_FOR_STOCK" };
+  if (tab === "needs_transfer") return { status: "CONFIRMED", fulfilmentStatus: "NEEDS_TRANSFER" };
+  if (tab === "ready_to_pack") return { status: "CONFIRMED", OR: [{ fulfilmentStatus: null }, { fulfilmentStatus: "READY_TO_PACK" }] };
   if (tab === "with_courier" && sub) {
     if (sub === "handed_over") return { status: "HANDED_TO_COURIER" };
     if (sub === "in_transit") return { status: "IN_TRANSIT", NOT: { shipment: { is: { subStatus: { in: [...APPROVAL_PENDING] } } } } };

@@ -27,6 +27,8 @@ import { createStockCount, postStockCount, scanCountUnit } from "../lib/stock-co
 import { createTransfer, receiveTransfer, resolveMissing, scanTransferUnit, sendTransfer } from "../lib/transfers/service";
 import { createShelves, finishShelfCount, putAway, scanShelfCount, startShelfCount } from "../lib/shelves/service";
 import { generateShelfCodes } from "../lib/shelves/constants";
+import { applyFulfilmentAction } from "../lib/fulfilment/actions";
+import { settleFulfilment } from "../lib/fulfilment/settle";
 import { computeOrderTotals } from "../lib/orders/totals";
 import { generateOrderNumber } from "../lib/orders/order-number";
 import { resolveSetLines, writeSetLines } from "../lib/sets/order-lines";
@@ -2271,6 +2273,105 @@ async function seedFirstAdmin(roleIds: Record<RoleName, string>) {
 // Through the real services; guarded on the hub having no shelves yet.
 // ---------------------------------------------------------------------------
 
+/**
+ * C5 (CORRECTIONS.md items 12, 13) — fulfilment demo: an order waiting for
+ * a dress that's out of stock everywhere (with a "Wait" until a date), two
+ * orders for the hub's last piece of a dress (only the older is Ready to
+ * pack), an item removed for a stock-out and an order cancelled for one —
+ * the lost-sales report's rows. Every other confirmed order gets its status
+ * from the settle at the end. Marked by internal notes so a re-run adds nothing.
+ */
+async function seedFulfilmentDemo() {
+  const [admin, se] = await Promise.all(["01711000001", "01711000004"].map(sessionFor));
+  const HUB = SEEDED_LOCATION_IDS.mohammadpur;
+  const run = <T,>(fn: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<T>) => prisma.$transaction(fn, { timeout: 60_000 });
+  // Its own demo dress, so the scenes don't depend on how the rest of the
+  // catalog's stock happens to stand: six sizes/colours — three out of stock
+  // everywhere, one with the hub's last piece, one only at the showroom, one plentiful.
+  const DEMO_CODE = "J07";
+  if (!(await prisma.product.findUnique({ where: { code: DEMO_CODE } }))) {
+    const [sizes, colors] = await Promise.all([prisma.size.findMany({ orderBy: { sortOrder: "asc" }, take: 3 }), prisma.color.findMany({ orderBy: { sortOrder: "asc" }, take: 2 })]);
+    const product = await prisma.product.create({ data: { code: DEMO_CODE, name: "Jamdani Kurti (fulfilment demo)", basePrice: 2200, createdById: admin.id } });
+    const stockPlan = [[], [], [], [{ locationId: HUB, qty: 1 }], [{ locationId: SEEDED_LOCATION_IDS.shyamoli, qty: 2 }], [{ locationId: HUB, qty: 10 }]];
+    let i = 0;
+    for (const color of colors) {
+      for (const size of sizes) {
+        const v = await prisma.productVariant.create({ data: { productId: product.id, sizeId: size.id, colorId: color.id, sku: buildVariantSku(DEMO_CODE, size.code, color.code), weightedAvgCost: 900 } });
+        for (const st of stockPlan[i] ?? []) {
+          await run((tx) => recordStockMovement(tx, { variantId: v.id, locationId: st.locationId, type: "ADJUSTMENT", qty: st.qty, unitCost: 900, referenceType: "OPENING_BALANCE", actorId: admin.id, note: "Opening stock (fulfilment demo)" }));
+        }
+        i++;
+      }
+    }
+  }
+  const variants = await prisma.productVariant.findMany({
+    where: { product: { code: DEMO_CODE } },
+    orderBy: [{ color: { sortOrder: "asc" } }, { size: { sortOrder: "asc" } }],
+    select: { id: true, sku: true, priceOverride: true, product: { select: { basePrice: true } } },
+  });
+  if (variants.length < 6) return;
+  const price = (v: (typeof variants)[number]) => Number(v.priceOverride ?? v.product.basePrice);
+  const customers = await prisma.customer.findMany({ where: { deletedAt: null, phone: { in: ["01911223344", "01611556677"] } }, select: { id: true } });
+  if (customers.length === 0) return;
+
+  /** A confirmed online order, created a few hours apart so "oldest first" is visible. */
+  async function placeOrder(note: string, lines: { v: (typeof variants)[number]; qty: number }[], hoursAgo: number, customerIdx = 0) {
+    if ((await prisma.order.count({ where: { internalNote: note } })) > 0) return null;
+    const at = new Date(Date.now() - hoursAgo * 3_600_000);
+    const total = lines.reduce((sum, l) => sum + l.qty * price(l.v), 0);
+    return run(async (tx) => {
+      const order = await tx.order.create({
+        data: { orderNo: await nextOrderNo(tx, at), channel: "ONLINE", status: "CONFIRMED", customerId: customers[customerIdx % customers.length].id, subtotal: total, total, dueAmount: total, internalNote: note, createdById: se.id, teamId: se.teamId, createdAt: at },
+      });
+      for (const l of lines) {
+        await tx.orderItem.create({ data: { orderId: order.id, variantId: l.v.id, qty: l.qty, unitPrice: price(l.v) } });
+        await reserveVariantStock(tx, l.v.id, l.qty);
+      }
+      await tx.orderStatusHistory.create({ data: { orderId: order.id, fromStatus: null, toStatus: "CONFIRMED", changedById: se.id, note: "Order created", createdAt: at } });
+      await settleFulfilment(tx);
+      return order;
+    });
+  }
+
+  const outEverywhere = [variants[0], variants[1], variants[2]];
+  const lastPiece = variants[3];
+  const atShowroom = variants[4];
+  const plenty = variants[5];
+
+  // 1. Waiting for stock — the SE called; the customer will wait till the next delivery.
+  {
+    const order = await placeOrder("C5 demo: waiting — customer happy to wait for the next delivery.", [{ v: outEverywhere[0], qty: 1 }, { v: plenty, qty: 1 }], 50);
+    if (order) {
+      const expected = new Date(Date.now() + 5 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Dhaka" });
+      await applyFulfilmentAction(prisma, se, order.id, { action: "WAIT", reason: "Called the customer — happy to wait for the supplier's delivery", expectedOn: expected });
+    }
+  }
+  // 2. Two orders want the hub's last piece: the older is Ready to pack, the newer waits.
+  {
+    await placeOrder("C5 demo: the older order for the last piece.", [{ v: lastPiece, qty: 1 }], 30, 0);
+    await placeOrder("C5 demo: placed later for the same last piece.", [{ v: lastPiece, qty: 1 }], 6, 1);
+  }
+  // 3. A lost sale: one dress of two isn't anywhere; the customer takes the other.
+  {
+    const order = await placeOrder("C5 demo: one dress out of stock, the customer took the other.", [{ v: plenty, qty: 1 }, { v: outEverywhere[1], qty: 1 }], 28);
+    if (order) {
+      const missing = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id, variantId: outEverywhere[1].id } });
+      await applyFulfilmentAction(prisma, se, order.id, { action: "REMOVE_ITEM", orderItemId: missing.id, reason: "Out of stock with the supplier too — customer said ship the other one" });
+    }
+  }
+  // 4. … and an order cancelled for a stock-out.
+  {
+    const order = await placeOrder("C5 demo: single dress, out of stock, customer cancelled.", [{ v: outEverywhere[2], qty: 1 }], 26, 1);
+    if (order) await applyFulfilmentAction(prisma, admin, order.id, { action: "CANCEL", reason: "No restock date — customer didn't want to wait" });
+  }
+
+  // 5. Only the showroom has it: needs a transfer to the hub (on the showroom's "Needed at the packing hub" list).
+  await placeOrder("C5 demo: the dress is at the Shyamoli showroom — needs a transfer.", [{ v: atShowroom, qty: 1 }], 12);
+
+  // Everything else confirmed gets its status.
+  await run((tx) => settleFulfilment(tx));
+}
+
 async function seedShelvesDemo() {
   const HUB = SEEDED_LOCATION_IDS.mohammadpur;
   if ((await prisma.shelf.count({ where: { locationId: HUB } })) > 0) return;
@@ -2357,6 +2458,7 @@ async function main() {
   await seedTargetsAndAttendanceDemo();
   await seedTransfersAndCountsDemo();
   await seedShelvesDemo();
+  await seedFulfilmentDemo();
 
   console.log("\nSeed complete.\n");
   console.log("Seeded logins (all use the same password until first change):\n");

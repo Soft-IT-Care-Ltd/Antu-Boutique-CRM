@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { IllegalTransitionError, moveOrderStatus } from "@/lib/orders/lifecycle";
+import { computeAllocation } from "@/lib/fulfilment/allocation";
 import { lockVariantAt } from "@/lib/inventory/ledger";
 import { describeElsewhere, getPackingHub, stockByLocation } from "@/lib/locations/service";
 import { deductVariantStockAtPack } from "@/lib/orders/stock";
@@ -74,6 +75,25 @@ export async function packOrder(
       return `${v.sku}: ${Math.max(0, atHub)} of ${need.get(v.id)} at ${hub.name} (${describeElsewhere(elsewhere.get(v.id), hub.id)})`;
     });
     throw new PackStockError(`Not everything is at ${hub.name} yet — ${lines.join("; ")}. Transfer it to the packing hub first.`);
+  }
+
+  // C5 — the hub holds enough, but older orders come first (CORRECTIONS.md
+  // item 13): the same allocation that sets every order's fulfilment status
+  // decides, under the variant locks just taken, whether this order's units
+  // are its own. Packing a newer order must never take an older one's piece.
+  const allocation = await computeAllocation(tx, variantIds);
+  const notMine = allocation.lines.filter((l) => l.orderId === order.id && l.atHub < l.qty);
+  if (notMine.length > 0) {
+    const shortVariants = new Set(notMine.map((l) => l.variantId));
+    const placedAt = allocation.orders.find((o) => o.id === order.id)?.createdAt ?? new Date();
+    const olderIds = new Set(allocation.lines.filter((l) => l.orderId !== order.id && shortVariants.has(l.variantId) && l.atHub > 0).map((l) => l.orderId));
+    const older = allocation.orders.filter((o) => olderIds.has(o.id) && o.createdAt <= placedAt).map((o) => o.orderNo);
+    const skus = (await tx.productVariant.findMany({ where: { id: { in: [...shortVariants] } }, select: { sku: true } })).map((v) => v.sku).join(", ");
+    throw new PackStockError(
+      older.length > 0
+        ? `${older.join(", ")} ${older.length === 1 ? "was" : "were"} placed earlier and ${older.length === 1 ? "is" : "are"} counting on the same piece at ${hub.name} (${skus}) — older orders are packed first. This order isn't ready to pack yet.`
+        : `This order isn't ready to pack: ${skus} at ${hub.name} is already counted for other orders.`,
+    );
   }
 
   for (const item of order.items) {

@@ -43,6 +43,7 @@ const RULES: Record<ReportKey, Rule[]> = {
   customers: [{ any: ["customer.view_own", "customer.view_team", "customer.view_all"] }, { any: ORDER_VIEW }],
   exchanges: [{ any: ["exchange.view"] }],
   channels: [{ any: ORDER_VIEW }],
+  stockouts: [{ any: ORDER_VIEW }],
 };
 
 function allowed(held: Set<PermissionKey>, key: ReportKey): boolean {

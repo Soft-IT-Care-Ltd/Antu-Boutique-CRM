@@ -24,6 +24,7 @@ import { transactionIdSchema } from "@/lib/orders/payment-validation";
 import { orderListQuerySchema, orderListWhere } from "@/lib/orders/list-query";
 import { pageArgs } from "@/lib/list/pagination";
 import type { PermissionKey } from "@/lib/auth/permission-definitions";
+import { settleFulfilment, settleIfPending } from "@/lib/fulfilment/settle";
 import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
 import { SetError } from "@/lib/sets/service";
 import { setLineSchema } from "@/lib/sets/validation";
@@ -42,6 +43,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid query" }, { status: 400 });
   }
   const { page, pageSize } = parsed.data;
+  // C5 — the Waiting / Needs transfer / Ready tabs read the stored fulfilment status: current first.
+  await settleIfPending(prisma);
   const where = await orderListWhere(parsed.data, guard.user);
 
   const [total, sums, orders] = await Promise.all([
@@ -71,6 +74,8 @@ const orderItemSchema = z.object({
   qty: z.coerce.number().int().min(1).max(9999),
   unitPrice: z.coerce.number().min(0),
   lineDiscount: z.coerce.number().min(0).default(0),
+  // Before C5 a line beyond stock needed an override reason; now it simply
+  // becomes a backorder. Still accepted (and ignored) from older clients.
   stockOverrideReason: z.string().trim().max(300).optional(),
 });
 
@@ -191,7 +196,6 @@ export async function POST(request: NextRequest) {
   }
 
   const hasCostAccess = await can(guard.user, "product.cost.view");
-  const hasStockOverride = await can(guard.user, "order.stock_override");
 
   // P3.3 — outfit sets, checked against the set as it is now and exploded
   // into one ordinary line per component (lib/sets/order-lines.ts). Their
@@ -203,20 +207,18 @@ export async function POST(request: NextRequest) {
     if (error instanceof SetError) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }
-  const setChildren = resolvedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason ?? undefined, fromSet: true })));
+  const setChildren = resolvedSets.flatMap((s) => s.children.map((c) => ({ ...c, fromSet: true })));
 
-  // Section 2 — items. Validate every variant, the PRD §4.6 price floor and
-  // the stock-override rule before writing anything.
+  // Section 2 — items. Validate every variant and the PRD §4.6 price floor
+  // before writing anything. Stock is NOT checked (C5, CORRECTIONS.md item
+  // 12): a line with no stock anywhere is taken as a backorder, and the
+  // order's fulfilment status says so (lib/fulfilment/).
   const variantIds = [...new Set([...items.map((i) => i.variantId), ...setChildren.map((c) => c.variantId)])];
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: variantIds } },
     include: { product: { select: { name: true, isActive: true, deletedAt: true, kind: true } } },
   });
   const variantById = new Map(variants.map((v) => [v.id, v]));
-
-  // Multiple lines can reference the same variant — track cumulative
-  // committed qty per variant so the stock check sees the true total.
-  const committedQtyByVariant = new Map<string, number>();
 
   for (const item of [...items.map((i) => ({ ...i, fromSet: false })), ...setChildren]) {
     const variant = variantById.get(item.variantId);
@@ -231,25 +233,6 @@ export async function POST(request: NextRequest) {
         { error: `Unit price for ${variant.sku} is below the minimum allowed. Increase the price or ask a Manager/Admin.` },
         { status: 400 },
       );
-    }
-
-    const committed = (committedQtyByVariant.get(item.variantId) ?? 0) + item.qty;
-    committedQtyByVariant.set(item.variantId, committed);
-    const available = variant.stockQty - variant.reservedQty;
-
-    if (committed > available) {
-      if (!hasStockOverride) {
-        return NextResponse.json(
-          { error: `Not enough stock for ${variant.sku} (${available} available, ${committed} requested)` },
-          { status: 400 },
-        );
-      }
-      if (!item.stockOverrideReason) {
-        return NextResponse.json(
-          { error: `A reason is required to sell ${variant.sku} below available stock` },
-          { status: 400 },
-        );
-      }
     }
   }
 
@@ -304,11 +287,6 @@ export async function POST(request: NextRequest) {
 
       const itemIds: string[] = [];
       for (const item of items) {
-        const variant = variantById.get(item.variantId)!;
-        const committed = committedQtyByVariant.get(item.variantId) ?? 0;
-        const available = variant.stockQty - variant.reservedQty;
-        const isOverride = committed > available;
-
         const createdItem = await tx.orderItem.create({
           data: {
             orderId: created.id,
@@ -316,8 +294,6 @@ export async function POST(request: NextRequest) {
             qty: item.qty,
             unitPrice: item.unitPrice,
             lineDiscount: item.lineDiscount,
-            stockOverride: isOverride,
-            stockOverrideReason: isOverride ? item.stockOverrideReason : null,
           },
         });
         itemIds.push(createdItem.id);
@@ -329,14 +305,7 @@ export async function POST(request: NextRequest) {
       }
 
       // P3.3 — the sets' component lines, reserved like any line.
-      const overrideByVariant = new Map<string, string>();
-      for (const s of resolvedSets) {
-        for (const c of s.children) {
-          const variant = variantById.get(c.variantId)!;
-          if ((committedQtyByVariant.get(c.variantId) ?? 0) > variant.stockQty - variant.reservedQty && s.stockOverrideReason) overrideByVariant.set(c.variantId, s.stockOverrideReason);
-        }
-      }
-      for (const child of await writeSetLines(tx, created.id, resolvedSets, { overrideByVariant })) {
+      for (const child of await writeSetLines(tx, created.id, resolvedSets, { overrideByVariant: new Map() })) {
         itemIds.push(child.id);
         await reserveVariantStock(tx, child.variantId, child.qty);
       }
@@ -361,6 +330,9 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+
+      // C5 — where its units come from (and Waiting for stock when some are nowhere).
+      await settleFulfilment(tx);
 
       return { order: created, itemIds };
     });

@@ -163,14 +163,12 @@ export function OrderForm({
   order,
   lead,
   hasCostAccess,
-  canStockOverride,
   couriers,
   wallets = [],
 }: {
   order?: OrderDetail;
   lead?: LeadPrefill;
   hasCostAccess: boolean;
-  canStockOverride: boolean;
   couriers: CourierCompanyOption[];
   /** Active wallets, for which one the advance went into (P2.3). */
   wallets?: WalletOption[];
@@ -320,14 +318,10 @@ export function OrderForm({
   const advanceAmountNum = advanceEnabled ? Number(advanceAmount) || 0 : 0;
   const dueAfterAdvance = total - advanceAmountNum;
 
-  const overStockRows = [...items, ...setRows].filter((i) => i.available !== null && i.qty > i.available);
-  const blockedByStock = overStockRows.some((i) => !canStockOverride || !i.stockOverrideReason.trim());
-
   const creditAdvanceInvalid = advanceEnabled && advanceMethod === "STORE_CREDIT" && (advanceAmountNum > creditBalance || advanceAmountNum > total);
   const canSubmit =
     items.length + setRows.length > 0 &&
     (customer.customerId || (customer.name.trim() && isValidBdPhone(customer.phone))) &&
-    !blockedByStock &&
     !creditAdvanceInvalid;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -341,9 +335,6 @@ export function OrderForm({
       qty: i.qty,
       unitPrice: Number(i.unitPrice) || 0,
       lineDiscount: Number(i.lineDiscount) || 0,
-      ...(i.available !== null && i.qty > i.available && i.stockOverrideReason.trim()
-        ? { stockOverrideReason: i.stockOverrideReason.trim() }
-        : {}),
     }));
 
     const setsPayload = setRows.map((s) => ({
@@ -352,7 +343,6 @@ export function OrderForm({
       unitPrice: Number(s.unitPrice) || 0,
       lineDiscount: Number(s.lineDiscount) || 0,
       choices: s.choices,
-      ...(s.available !== null && s.qty > s.available && s.stockOverrideReason.trim() ? { stockOverrideReason: s.stockOverrideReason.trim() } : {}),
     }));
 
     try {
@@ -623,23 +613,7 @@ export function OrderForm({
                         {hasCostAccess && item.weightedAvgCost ? (
                           <div className="text-xs text-muted-foreground">Cost: {formatBDT(item.weightedAvgCost)}</div>
                         ) : null}
-                        {isOver ? (
-                          <div className="mt-1 flex flex-col gap-1">
-                            <Badge variant="destructive" className="w-fit">
-                              Only {item.available} available
-                            </Badge>
-                            {canStockOverride ? (
-                              <Input
-                                value={item.stockOverrideReason}
-                                onChange={(e) => updateItem(item.localId, { stockOverrideReason: e.target.value })}
-                                placeholder="Reason to override (required)"
-                                className="h-7 text-xs"
-                              />
-                            ) : (
-                              <p className="text-xs text-destructive">Only Admin/Manager can sell below available stock.</p>
-                            )}
-                          </div>
-                        ) : null}
+                        {isOver ? <BackorderNote available={item.available!} unit="" /> : null}
                       </TableCell>
                       <TableCell>
                         <Input
@@ -704,18 +678,7 @@ export function OrderForm({
                             </li>
                           ))}
                         </ul>
-                        {isOver ? (
-                          <div className="mt-1 flex flex-col gap-1">
-                            <Badge variant="destructive" className="w-fit">
-                              Only {row.available} set{row.available === 1 ? "" : "s"} available
-                            </Badge>
-                            {canStockOverride ? (
-                              <Input value={row.stockOverrideReason} onChange={(e) => updateSetRow(row.localId, { stockOverrideReason: e.target.value })} placeholder="Reason to override (required)" className="h-7 text-xs" />
-                            ) : (
-                              <p className="text-xs text-destructive">Only Admin/Manager can sell below available stock.</p>
-                            )}
-                          </div>
-                        ) : null}
+                        {isOver ? <BackorderNote available={row.available!} unit=" set" /> : null}
                       </TableCell>
                       <TableCell>
                         <Input type="number" min={1} value={row.qty} onChange={(e) => updateSetRow(row.localId, { qty: Math.max(1, Number(e.target.value) || 1) })} className="h-8 w-16" />
@@ -999,5 +962,23 @@ export function OrderForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * C5 (CORRECTIONS.md item 12) — taking an order beyond stock is allowed:
+ * what isn't in stock becomes a backorder, and the order shows as Waiting
+ * for stock until it arrives. The customer is never turned away.
+ */
+function BackorderNote({ available, unit }: { available: number; unit: string }) {
+  return (
+    <div className="mt-1 flex flex-col gap-0.5">
+      <Badge variant="outline" className="w-fit border-amber-400 text-amber-700 dark:text-amber-300">
+        Backorder · {Math.max(0, available)}
+        {unit}
+        {Math.max(0, available) === 1 || unit === "" ? "" : "s"} available
+      </Badge>
+      <p className="text-xs text-muted-foreground">The rest waits for stock — the order shows as Waiting for stock until it arrives.</p>
+    </div>
   );
 }

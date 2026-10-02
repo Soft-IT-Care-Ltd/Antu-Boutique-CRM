@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 import { releaseVariantStock, restoreVariantStockAfterPack } from "@/lib/orders/stock";
 import { openReturnInspection } from "@/lib/returns/condition-check";
 import { restoreStoreCreditForOrder } from "@/lib/store-credit/ledger";
@@ -91,6 +92,10 @@ export async function moveOrderStatus(
   await tx.orderStatusHistory.create({
     data: { orderId: order.id, fromStatus, toStatus, changedById, note: note || null },
   });
+
+  // C5 — an order entering or leaving Confirmed changes who gets which unit
+  // (a cancel frees them for the next order waiting; packing takes them).
+  if (fromStatus === "CONFIRMED" || toStatus === "CONFIRMED") await settleFulfilment(tx);
 
   // PRD §4.9 / §4.11: goods coming back are never restocked on the status
   // move itself — a Packing condition check decides Good vs Damaged. Any

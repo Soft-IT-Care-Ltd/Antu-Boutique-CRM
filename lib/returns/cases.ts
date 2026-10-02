@@ -6,6 +6,7 @@ import { writeAuditLogWith } from "@/lib/audit/log";
 import type { SessionUser } from "@/lib/auth/types";
 import { withTx, type Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 import { lockVariant, recordStockMovement } from "@/lib/inventory/ledger";
 import { notifyNegativeStock } from "@/lib/inventory/negative-stock";
 import { getPosLocation } from "@/lib/locations/service";
@@ -832,6 +833,8 @@ export async function createCounterExchange(
       },
     });
 
+    // C5 — the replacement left the showroom: an online order counting on it is told.
+    await settleFulfilment(tx, { cause: `Taken at the counter as an exchange (${replacement.orderNo})` });
     return {
       caseId: rc.id,
       replacementOrderId: replacement.id,

@@ -24,9 +24,8 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
   const loaded = await loadOrderDetail(id);
   if (!loaded) notFound();
 
-  const [hasCostAccess, canStockOverride, couriers] = await Promise.all([
+  const [hasCostAccess, couriers] = await Promise.all([
     can(user, "product.cost.view"),
-    can(user, "order.stock_override"),
     prisma.courierCompany.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, include: { zones: { orderBy: { zone: "asc" } } } }),
   ]);
 
@@ -44,7 +43,7 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
         <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">Edit {order.orderNo}</h1>
         <p className="text-sm text-muted-foreground">Items, delivery, and money — the customer and photos are managed separately.</p>
       </div>
-      <OrderForm order={order} hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} />
+      <OrderForm order={order} hasCostAccess={hasCostAccess} couriers={courierOptions} />
     </div>
   );
 }

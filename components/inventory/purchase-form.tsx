@@ -34,7 +34,16 @@ const num = (value: string) => (value.trim() === "" ? 0 : Number(value));
  * the server runs, so the landed costs shown are exactly what gets saved —
  * but the server recomputes everything; nothing costed here is trusted.
  */
-export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string; name: string }[]; locations: LocationOption[] }) {
+export function PurchaseForm({
+  suppliers,
+  locations,
+  initialLines = [],
+}: {
+  suppliers: { id: string; name: string }[];
+  locations: LocationOption[];
+  /** C5 — pre-filled from the "Waiting for stock" page: what waiting orders need. */
+  initialLines?: { variant: PickedVariant; qty: number }[];
+}) {
   const router = useRouter();
   const defaultLocationId = (locations.find((l) => l.isPackingHub) ?? locations[0])?.id ?? "";
   const [supplierId, setSupplierId] = useState<string>("");
@@ -45,7 +54,9 @@ export function PurchaseForm({ suppliers, locations }: { suppliers: { id: string
   const [otherCost, setOtherCost] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
   const [note, setNote] = useState("");
-  const [lines, setLines] = useState<Line[]>([]);
+  const [lines, setLines] = useState<Line[]>(() =>
+    initialLines.map(({ variant, qty }) => ({ ...variant, key: newLocalId(), locationId: defaultLocationId, qty: String(qty), unitCost: variant.weightedAvgCost ? String(Number(variant.weightedAvgCost)) : "" })),
+  );
   // C4 (CORRECTIONS.md item 2): receive by scanning the tags — each scan is
   // one unit at the chosen location.
   const [scanLocationId, setScanLocationId] = useState(defaultLocationId);

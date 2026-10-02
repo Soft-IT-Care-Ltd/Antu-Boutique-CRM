@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { settleIfPending } from "@/lib/fulfilment/settle";
 import { hoursSince, isOverdue } from "@/lib/packing/sla";
 import type { OrderStatusValue } from "@/lib/orders/constants";
 import type { PackingOrderDetail, PackingQueueItem, PackingView } from "@/lib/packing/types";
@@ -96,6 +97,7 @@ function serializeCommon(order: PackingOrderRow, slaHours: number): PackingQueue
     hoursOpen: Math.round(hoursSince(order.createdAt) * 10) / 10,
     isOverdue: order.status === "CONFIRMED" && isOverdue(order.createdAt, slaHours),
     packedAt: order.status === "CONFIRMED" ? null : (order.statusHistory[0]?.createdAt.toISOString() ?? null),
+    fulfilmentStatus: order.fulfilmentStatus,
   };
 }
 
@@ -156,6 +158,8 @@ export function packingViewWhere(view: PackingView, slaHours: number, now = new 
 // comment on ROLE_TEMPLATES.PACKING).
 export async function loadPackingQueuePage(params: PackingQueuePageParams, slaHours: number) {
   const { q, page, pageSize, view = "queue" } = params;
+  // C5 — each card says whether it can be packed yet: current first.
+  await settleIfPending(prisma);
 
   const where: Prisma.OrderWhereInput = packingViewWhere(view, slaHours);
   if (q) {

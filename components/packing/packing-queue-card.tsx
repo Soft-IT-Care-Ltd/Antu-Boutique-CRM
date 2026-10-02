@@ -7,6 +7,7 @@ import { ImageOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ImageLightbox } from "@/components/packing/image-lightbox";
+import { FULFILMENT_STATUS_LABELS, FULFILMENT_STATUS_TONE } from "@/lib/fulfilment/constants";
 import { formatDhakaDateTime } from "@/lib/inventory/constants";
 import { packingUploadUrl } from "@/lib/packing/types";
 import type { PackingQueueItem } from "@/lib/packing/types";
@@ -29,9 +30,14 @@ export function PackingQueueCard({ order }: { order: PackingQueueItem }) {
           {order.packedAt ? (
             <Badge variant="outline">Packed {formatDhakaDateTime(order.packedAt)}</Badge>
           ) : (
-            <Badge variant={order.isOverdue ? "destructive" : "secondary"}>
-              {order.isOverdue ? "Overdue" : `${Math.max(0, Math.round(order.hoursOpen))}h`}
-            </Badge>
+            <span className="flex flex-wrap justify-end gap-1">
+              {order.fulfilmentStatus && order.fulfilmentStatus !== "READY_TO_PACK" ? (
+                <Badge variant={FULFILMENT_STATUS_TONE[order.fulfilmentStatus]}>{FULFILMENT_STATUS_LABELS[order.fulfilmentStatus]}</Badge>
+              ) : null}
+              <Badge variant={order.isOverdue ? "destructive" : "secondary"}>
+                {order.isOverdue ? "Overdue" : `${Math.max(0, Math.round(order.hoursOpen))}h`}
+              </Badge>
+            </span>
           )}
         </CardHeader>
         <CardContent className="flex flex-col gap-3">

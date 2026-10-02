@@ -12,6 +12,7 @@ import { applyValidatedOrderEdit, existingSetInputs, OrderEditConflictError, val
 import { setLineSchema } from "@/lib/sets/validation";
 import { editTouchesGatedFields, isWithinEditWindow } from "@/lib/orders/edit-window";
 import { generateOrderInvoice } from "@/lib/orders/invoice";
+import { settleIfPending } from "@/lib/fulfilment/settle";
 import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail";
 import { getOrderEditWindowMinutes } from "@/lib/settings/get";
 import { TrashError, trashOrder } from "@/lib/trash/service";
@@ -29,6 +30,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const scopedRow = await prisma.order.findFirst({ where: scopedWhere({ id, deletedAt: null }, guard.user), select: { id: true } });
   if (!scopedRow) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
+  await settleIfPending(prisma);
   const detail = await loadOrderDetail(id);
   if (!detail) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 

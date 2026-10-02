@@ -11,6 +11,7 @@ import { loadOrderDetail, serializeOrderDetail } from "@/lib/orders/order-detail
 import { loadShipmentDetail } from "@/lib/courier/queries";
 import { listWalletOptions } from "@/lib/wallets/service";
 import { shelfWhereabouts } from "@/lib/shelves/service";
+import { settleIfPending } from "@/lib/fulfilment/settle";
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await guardPage("/orders");
@@ -22,6 +23,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   });
   if (!scopedRow) notFound();
 
+  // C5 — the fulfilment status is current before it's shown.
+  await settleIfPending(prisma);
   const loaded = await loadOrderDetail(id);
   if (!loaded) notFound();
 
@@ -44,6 +47,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     canApproveExchange,
     canCounterExchange,
     canDelete,
+    canFulfil,
+    canSeeMoney,
   ] =
     await Promise.all([
       can(user, "product.cost.view"),
@@ -64,9 +69,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       can(user, "exchange.approve"),
       can(user, ["pos.sell", "exchange.create"], "all"),
       can(user, "order.delete"),
+      can(user, "order.fulfilment"),
+      can(user, ["order.view_own", "order.view_team", "order.view_all"]),
     ]);
   // Names only (no balances) — anyone recording a payment picks the wallet it went into.
-  const wallets = canRecordPayment || canEditPayment || canRequestRefund ? await listWalletOptions(prisma) : [];
+  const wallets = canRecordPayment || canEditPayment || canRequestRefund || (canFulfil && canSeeMoney) ? await listWalletOptions(prisma) : [];
   const canManageImages = canManageOrderImages(user, scopedRow);
 
   const order = await stripCostFieldsForUser(serializeOrderDetail(loaded), user);
@@ -98,6 +105,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         returnPermissions={{ canRequestReturn, canRequestExchange, canApproveReturn, canApproveExchange, canCounterExchange }}
         canDelete={canDelete}
         itemShelves={itemShelves}
+        canFulfil={canFulfil && loaded.channel === "ONLINE"}
+        canSettle={canSeeMoney}
       />
     </div>
   );

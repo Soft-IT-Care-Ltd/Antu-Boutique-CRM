@@ -7,6 +7,7 @@ import { writeOffDamagedStock } from "@/lib/inventory/adjustments";
 import { recordStockMovement } from "@/lib/inventory/ledger";
 import { getPackingHub } from "@/lib/locations/service";
 import { toNumber } from "@/lib/money";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // ============ Packing condition check for goods coming back (PRD §4.9 / §4.11) ============
 //
@@ -227,6 +228,8 @@ export async function completeConditionCheck(
     },
   });
 
+  // C5 — a returned item put back on the shelf goes to waiting orders, oldest first.
+  if (restockedUnits > 0) await settleFulfilment(tx, { cause: "A returned item was restocked" });
   return { restockedUnits, writtenOffUnits, returnChargePosted };
 }
 

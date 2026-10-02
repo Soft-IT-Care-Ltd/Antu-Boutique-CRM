@@ -60,6 +60,8 @@ export type OrderHistoryCounts = {
   returnCases: number;
   returnInspections: number;
   storeCreditEntries: number;
+  /** C5 — substitutions, removals or a stock-out cancellation: the lost-sales record. */
+  fulfilmentActions: number;
   statementLines: number;
   packagingExpense: boolean;
   exchangeOrders: number;
@@ -76,6 +78,7 @@ export function orderTrashBlock(h: OrderHistoryCounts): string | null {
   if (h.shipment || h.statementLines > 0 || h.returnInspections > 0) return "This order has been with the courier, so it stays on record.";
   if (h.returnCases > 0 || h.exchangeOrders > 0 || h.replacementFor || h.exchangedFromOrderId) return "This order is part of a return or exchange, so it stays on record.";
   if (h.storeCreditEntries > 0) return "Store credit was issued or spent on this order, so it stays on record.";
+  if (h.fulfilmentActions > 0) return "Items on this order were removed, swapped or cancelled for a stock-out (the lost-sales record), so it stays on record.";
   if (h.leadId) return "This order was placed from a lead and stays as that lead's order. Cancel it instead.";
   return null;
 }

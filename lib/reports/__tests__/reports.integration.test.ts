@@ -65,7 +65,7 @@ describe("who can run which report", () => {
     expect(got.ADMIN).toEqual([...REPORT_KEYS]);
     expect(got.MANAGER).toEqual([...REPORT_KEYS]);
     // An executive: their own sales-side reports — no courier, money or P&L.
-    expect(got.SE).toEqual(["sales", "leads", "team", "stock", "sets", "attendance", "cancellations", "customers", "exchanges", "channels"]);
+    expect(got.SE).toEqual(["sales", "leads", "team", "stock", "sets", "attendance", "cancellations", "customers", "exchanges", "channels", "stockouts"]);
     expect(got.TL).not.toContain("pl");
     expect(got.TL).not.toContain("expense");
     expect(got.ACCOUNTS).toEqual(expect.arrayContaining(["collections", "expense", "courier", "sales"]));

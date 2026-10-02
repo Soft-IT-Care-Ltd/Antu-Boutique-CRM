@@ -18,6 +18,7 @@ export const REPORT_KEYS = [
   "customers",
   "exchanges",
   "channels",
+  "stockouts",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -53,6 +54,7 @@ export const REPORTS: ReportDef[] = [
   { key: "customers", code: "R12", title: "Customer", description: "Top customers by value, repeat rate, and customers flagged as a risk.", filters: ["person", "team", "channel"], defaultRange: "month" },
   { key: "exchanges", code: "R13", title: "Exchange", description: "Exchanges (and returns) by reason, by product and variant, by executive, and the cost the shop bore.", filters: ["channel"], defaultRange: "month" },
   { key: "channels", code: "R14", title: "Channel", description: "Online vs walk-in: orders, value, average order value and margin, month by month.", filters: ["person", "team"], defaultRange: "month" },
+  { key: "stockouts", code: "R15", title: "Stock-outs (lost sales)", description: "Items removed and orders cancelled because the stock wasn't there — value lost by product — and substitutions.", filters: ["person", "team", "category"], defaultRange: "month" },
 ];
 
 export const REPORT_BY_KEY = Object.fromEntries(REPORTS.map((r) => [r.key, r])) as Record<ReportKey, ReportDef>;

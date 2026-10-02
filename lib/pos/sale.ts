@@ -9,6 +9,7 @@ import { withTx, type Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { lockVariantAt, recordStockMovement } from "@/lib/inventory/ledger";
 import { notifyNegativeStock } from "@/lib/inventory/negative-stock";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 import { getPosLocation } from "@/lib/locations/service";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
 import { generateOrderNumber } from "@/lib/orders/order-number";
@@ -321,6 +322,14 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       data: { orderId: order.id, fromStatus: null, toStatus: "COMPLETED", changedById: ctx.user.id, note: "Showroom sale (POS) — paid in full at the counter" },
     });
 
+    // C5 — the POS may sell a unit an online order was counting on (a warning,
+    // never a refusal). Every such order's fulfilment is recomputed now and
+    // its SE is told (lib/fulfilment/settle.ts).
+    const fulfilment = await settleFulfilment(tx, { cause: `Sold at ${showroom.name} on the POS (${orderNo})` });
+    const onlineOrdersAffected = fulfilment
+      .filter((t) => t.from !== null && t.to !== null && t.from !== t.to)
+      .map((t) => ({ orderNo: t.orderNo, from: t.from!, to: t.to! }));
+
     await writeAuditLogWith(tx, {
       actorId: ctx.user.id,
       action: "pos.sale",
@@ -331,6 +340,7 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
         channel: "WALK_IN",
         location: showroom.name,
         negativeStock: shortages.length > 0 ? shortages.map((s) => ({ sku: s.sku, wanted: s.wanted, atLocation: s.atLocation })) : undefined,
+        onlineOrdersAffected: onlineOrdersAffected.length > 0 ? onlineOrdersAffected : undefined,
         customerId: customer?.id ?? null,
         subtotal: fromPaisa(priced.subtotalPaisa),
         cartDiscount: input.cartDiscount,
@@ -349,6 +359,7 @@ export async function createPosSale(db: Db, ctx: PosContext, input: PosSaleInput
       total: fromPaisa(priced.totalPaisa),
       change: fromPaisa(settled.changePaisa),
       customerName: customer?.name ?? null,
+      onlineOrdersAffected,
     };
   });
 }

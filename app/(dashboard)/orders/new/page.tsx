@@ -35,9 +35,8 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
   if (!(await can(user, "order.create"))) redirect("/orders");
   const { leadId } = await searchParams;
 
-  const [hasCostAccess, canStockOverride, couriers, wallets, lead] = await Promise.all([
+  const [hasCostAccess, couriers, wallets, lead] = await Promise.all([
     can(user, "product.cost.view"),
-    can(user, "order.stock_override"),
     prisma.courierCompany.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, include: { zones: { orderBy: { zone: "asc" } } } }),
     listWalletOptions(prisma),
     leadId ? loadLeadPrefill(user, leadId) : Promise.resolve(undefined),
@@ -55,7 +54,7 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
         <h1 className="text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">New order</h1>
         <p className="text-sm text-muted-foreground">One person, their items, an optional photo, and the delivery details.</p>
       </div>
-      <OrderForm lead={lead} hasCostAccess={hasCostAccess} canStockOverride={canStockOverride} couriers={courierOptions} wallets={wallets} />
+      <OrderForm lead={lead} hasCostAccess={hasCostAccess} couriers={courierOptions} wallets={wallets} />
     </div>
   );
 }

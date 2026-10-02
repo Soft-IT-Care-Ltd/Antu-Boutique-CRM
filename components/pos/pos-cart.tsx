@@ -17,6 +17,8 @@ export type CartLine = {
   colorName: string;
   colorHex: string;
   available: number;
+  /** C5 — online orders counting on units here (to be sent to the packing hub). */
+  heldForOnline: { orderNo: string; qty: number }[];
   listPrice: string;
   qty: number;
   unitPrice: string;
@@ -60,6 +62,10 @@ export function PosCart({
       {lines.map((line) => {
         const p = priced?.get(line.key);
         const short = line.qty > line.available;
+        // C5 — units here an online order is counting on: selling into them is
+        // allowed, with a warning naming the order(s).
+        const held = line.heldForOnline.reduce((sum, h) => sum + h.qty, 0);
+        const takesHeld = held > 0 && line.qty > Math.max(0, line.available) - held;
         const selected = line.variantId === selectedVariantId;
         return (
           <li key={line.key} className={`flex flex-col gap-2 p-3 ${selected ? "bg-muted/50" : ""}`} onClick={() => onSelect(line.variantId)}>
@@ -110,6 +116,11 @@ export function PosCart({
               </Button>
             </div>
 
+            {takesHeld ? (
+              <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                Reserved for online order {line.heldForOnline.map((h) => h.orderNo).join(", ")} — you can still sell it. That order will wait for another piece, and its sales executive will be told.
+              </p>
+            ) : null}
             {short ? (
               <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
                 {showroomName} shows {Math.max(0, line.available)} — you can still sell it if it&apos;s in hand. The stock will go negative and the manager will be told to fix it.

@@ -50,11 +50,18 @@ export const PERMISSIONS = [
     group: "Orders",
     label: "Move a courier-booked order by hand (with a reason)",
   },
+  // Retired by C5: an online line without stock is now simply a backorder
+  // (CORRECTIONS.md item 12), so nothing checks this any more. Kept so
+  // existing role grants don't point at a missing permission.
   {
     key: "order.stock_override",
     group: "Orders",
-    label: "Sell below available stock with a reason",
+    label: "Sell below available stock with a reason (no longer used — lines without stock become backorders)",
   },
+  // C5 (CORRECTIONS.md item 12): substitute, wait, remove an item, or cancel
+  // for a stock-out — on orders the person can see. Settling an overpayment
+  // the action leaves also needs the order's money (any order.view_*).
+  { key: "order.fulfilment", group: "Orders", label: "Fix an order with a missing item (substitute, wait, remove, cancel for stock-out)" },
 
   // Catalog
   { key: "product.view", group: "Catalog", label: "View products & variants" },
@@ -177,6 +184,7 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "customer.edit",
     "order.view_team",
     "order.create",
+    "order.fulfilment",
     "order.edit",
     "order.edit_after_window",
     "order.status_update",
@@ -209,6 +217,7 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
     "customer.edit",
     "order.view_own",
     "order.create",
+    "order.fulfilment",
     "order.edit",
     "product.view",
     "inventory.view",
@@ -238,6 +247,7 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
   PACKING: [
     "packing.view_queue",
     "packing.pack",
+    "order.fulfilment",
     "order.status_update",
     "inventory.view",
     // C4: the hub's incharge sends to and receives from other locations,

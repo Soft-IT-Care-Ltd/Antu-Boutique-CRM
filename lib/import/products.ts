@@ -10,6 +10,7 @@ import type { CsvTable } from "@/lib/import/csv";
 import type { ImportIssue, ImportSummaryItem } from "@/lib/import/types";
 import { nameKey, readList, readMoney, readWholeNumber } from "@/lib/import/values";
 import { formatBDT } from "@/lib/money";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // PRD §4.2 / §4.3 — products with their size × colour variants and the
 // stock on the shelf on the opening day, one sheet row per variant.
@@ -419,4 +420,5 @@ export async function applyProductPlan(tx: Prisma.TransactionClient, plan: Produ
       request,
     });
   }
+  await settleFulfilment(tx, { cause: "Opening stock was imported" });
 }

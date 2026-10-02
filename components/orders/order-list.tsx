@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FULFILMENT_STATUS_LABELS, FULFILMENT_STATUS_TONE } from "@/lib/fulfilment/constants";
 import { dateRangeQuery, dateRangeToParams, describeDateRange, type DateRangeValue } from "@/lib/date-range";
 import { formatBDT } from "@/lib/money";
 import { WALK_IN_CUSTOMER_LABEL } from "@/lib/orders/customer";
@@ -196,6 +197,15 @@ export function OrderList({ canCreate, canFilterBySe, initialFilters }: { canCre
         </div>
       ) : null}
 
+      {tab === "waiting_for_stock" ? (
+        <p className="text-sm">
+          <Link href="/orders/waiting-for-stock" className="font-medium underline underline-offset-4">
+            Open the Waiting for stock list
+          </Link>{" "}
+          <span className="text-muted-foreground">— what each order is missing, days waiting, totals, and what to buy (print, CSV, pre-fill a purchase).</span>
+        </p>
+      ) : null}
+
       <p className="text-xs text-muted-foreground">
         {tabDef.open ? "Every open order is shown here, whatever the dates say — nothing pending is hidden." : `Orders ${ORDER_DATE_BASIS_LABELS[dateBy].toLowerCase()}: ${describeDateRange(range)}.`}
       </p>
@@ -269,7 +279,12 @@ export function OrderList({ canCreate, canFilterBySe, initialFilters }: { canCre
                   {order.customer ? <div className="font-mono text-xs text-muted-foreground">{order.customer.phone}</div> : null}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
+                    {order.fulfilmentStatus && order.fulfilmentStatus !== "READY_TO_PACK" ? (
+                      <Badge variant={FULFILMENT_STATUS_TONE[order.fulfilmentStatus]}>{FULFILMENT_STATUS_LABELS[order.fulfilmentStatus]}</Badge>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right font-semibold">{formatBDT(order.total)}</TableCell>
                 <TableCell className={cn("text-right", Number(order.dueAmount) > 0 ? "text-amber-600" : "text-muted-foreground")}>{formatBDT(order.dueAmount)}</TableCell>

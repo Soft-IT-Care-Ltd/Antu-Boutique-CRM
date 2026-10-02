@@ -12,6 +12,7 @@ const clean: OrderHistoryCounts = {
   returnCases: 0,
   returnInspections: 0,
   storeCreditEntries: 0,
+  fulfilmentActions: 0,
   statementLines: 0,
   packagingExpense: false,
   exchangeOrders: 0,
@@ -40,6 +41,7 @@ describe("which orders can go to the trash (PRD §4.18)", () => {
     expect(orderTrashBlock({ ...cancelled, returnCases: 1 })).toMatch(/exchange/);
     expect(orderTrashBlock({ ...cancelled, exchangedFromOrderId: "x" })).toMatch(/exchange/);
     expect(orderTrashBlock({ ...cancelled, storeCreditEntries: 1 })).toMatch(/Store credit/);
+    expect(orderTrashBlock({ ...cancelled, fulfilmentActions: 1 })).toMatch(/lost-sales record/);
   });
 
   it("keeps a converted lead's order (a converted lead is final)", () => {

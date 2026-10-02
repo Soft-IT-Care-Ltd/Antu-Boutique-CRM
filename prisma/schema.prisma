@@ -245,6 +245,8 @@ model User {
   stockCountsPosted         StockCount[]             @relation("StockCountPostedBy")
   // C4b — shelves inside a location.
   shelfMovements            ShelfMovement[]          @relation("ShelfMovementActor")
+  // C5 — fulfilment actions (substitute / wait / remove / cancel) taken.
+  fulfilmentActions         FulfilmentAction[]       @relation("FulfilmentActionActor")
   shelfCountsCreated        ShelfCount[]             @relation("ShelfCountCreatedBy")
   shelfCountsFinished       ShelfCount[]             @relation("ShelfCountFinishedBy")
   shelfMissesClosed         ShelfMiss[]              @relation("ShelfMissClosedBy")
@@ -412,20 +414,23 @@ model ProductVariant {
   weightGrams       Int?
   isActive          Boolean  @default(true)
 
-  orderItems      OrderItem[]
-  stockMovements  StockMovement[]
+  orderItems           OrderItem[]
+  stockMovements       StockMovement[]
   // C3 — stock per location; stockQty is their sum (kept so by the ledger).
-  locationStocks  VariantStock[]
+  locationStocks       VariantStock[]
   // C4 — transfers and stock counts this variant is on.
-  transferLines   StockTransferLine[]
-  countLines      StockCountLine[]
+  transferLines        StockTransferLine[]
+  countLines           StockCountLine[]
   // C4b — shelf counts this variant is on.
-  shelfCountLines ShelfCountLine[]
+  shelfCountLines      ShelfCountLine[]
   // P3.3 — where this variant (of a COMPONENT_ONLY product) is used as packaging.
-  packagingUses   PackagingComponent[] @relation("PackagingMaterial")
-  purchaseItems   PurchaseItem[]
+  packagingUses        PackagingComponent[] @relation("PackagingMaterial")
+  purchaseItems        PurchaseItem[]
   // P3.2 — exchange lines that swap an item for this variant.
-  exchangeLines   ReturnCaseLine[]
+  exchangeLines        ReturnCaseLine[]
+  // C5 — fulfilment actions naming this variant (missing / substitute).
+  fulfilmentMissing    FulfilmentAction[]   @relation("FulfilmentActionVariant")
+  fulfilmentSubstitute FulfilmentAction[]   @relation("FulfilmentActionSubstitute")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -626,6 +631,20 @@ model Order {
   // C4 — transfers raised from "Needed at the packing hub" for this order.
   stockTransfers StockTransferOrder[]
 
+  // C5 (CORRECTIONS.md items 12, 13) — where a confirmed online order's
+  // units come from, recomputed from stock on every stock movement
+  // (lib/fulfilment/). Null for every other order. READY_TO_PACK: every unit
+  // is at the packing hub (after older orders took theirs); NEEDS_TRANSFER:
+  // some unit is on its way to the hub or at another location;
+  // WAITING_FOR_STOCK: some unit is nowhere (a backorder).
+  fulfilmentStatus    FulfilmentStatus?
+  fulfilmentChangedAt DateTime?
+  // When it last became WAITING_FOR_STOCK (days waiting); null otherwise.
+  waitingSince        DateTime?
+  // The "Wait" fulfilment action's optional expected date (a Dhaka day).
+  stockExpectedOn     DateTime?
+  fulfilmentActions   FulfilmentAction[]
+
   // CLAUDE.md rule 8: soft delete only.
   deletedAt DateTime?
 
@@ -638,6 +657,7 @@ model Order {
   @@index([status])
   @@index([deletedAt])
   @@index([exchangedFromOrderId])
+  @@index([fulfilmentStatus])
   @@map("orders")
 }
 
@@ -665,6 +685,16 @@ model OrderItem {
   // back with the rider. The order total is recomputed on the kept quantity
   // (lib/courier/partial-delivery.ts); qty itself never changes.
   returnedQty Int @default(0)
+
+  // C5 — this line's units, oldest order first (lib/fulfilment/allocation.ts):
+  // at the hub + coming to the hub (transfer drafted or in transit) + at
+  // other locations (transferFrom: [{ locationId, qty }]) + backorder
+  // (nowhere) = qty while the order is confirmed and online; all 0 otherwise.
+  atHubQty     Int   @default(0)
+  incomingQty  Int   @default(0)
+  transferQty  Int   @default(0)
+  backorderQty Int   @default(0)
+  transferFrom Json?
 
   // P3.3 — set when this line is one component of an outfit set on the
   // order: the chosen size/colour of that component, with its share of the
@@ -2798,6 +2828,10 @@ enum NotificationKind {
   LOW_STOCK
   // C3 (CORRECTIONS.md item 11) — a location's stock went below zero.
   NEGATIVE_STOCK
+  // C5 — an order's fulfilment got better (stock arrived: Ready to pack, or
+  // Needs transfer from Waiting) or worse (its unit was sold or moved).
+  ORDER_STOCK_ARRIVED
+  ORDER_STOCK_LOST
 }
 
 // PRD §5 SETTINGS group — an in-app alert for one person (the bell in the
@@ -2818,4 +2852,68 @@ model Notification {
   @@unique([userId, dedupeKey])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// C5 — Fulfilment: backorders, automatic fulfilment status (CORRECTIONS.md 12, 13)
+// ---------------------------------------------------------------------------
+
+enum FulfilmentStatus {
+  READY_TO_PACK
+  NEEDS_TRANSFER
+  WAITING_FOR_STOCK
+}
+
+// Variants whose fulfilment must be recomputed. Filled ONLY by database
+// triggers (stock, reservations, transfers, order lines, confirmed orders,
+// the packing hub) so no stock movement can be missed; emptied by
+// lib/fulfilment/settle.ts. A plain append-only queue — no unique key, so
+// two transactions queueing the same variant never wait on each other.
+// variantId "*" = recompute everything (the packing hub changed).
+model FulfilmentQueue {
+  id        BigInt   @id @default(autoincrement())
+  variantId String
+  queuedAt  DateTime @default(now())
+
+  @@map("fulfilment_queue")
+}
+
+enum FulfilmentActionKind {
+  SUBSTITUTE
+  WAIT
+  REMOVE_ITEM
+  CANCEL
+}
+
+// One fulfilment action on an order with a missing item (CORRECTIONS.md
+// item 12). REMOVE_ITEM and CANCEL rows are the lost sales (the stock-out
+// report): one row per line removed or cancelled, valued at what the line
+// was worth to the customer. Never edited or deleted.
+model FulfilmentAction {
+  id                  String               @id @default(cuid())
+  orderId             String
+  order               Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  kind                FulfilmentActionKind
+  // The line acted on (gone after a substitute/remove — kept as a plain id).
+  orderItemId         String?
+  variantId           String?
+  variant             ProductVariant?      @relation("FulfilmentActionVariant", fields: [variantId], references: [id], onDelete: Restrict)
+  qty                 Int                  @default(0)
+  // What the line was worth to the customer (qty × price − discount).
+  value               Decimal              @default(0) @db.Decimal(12, 2)
+  substituteVariantId String?
+  substituteVariant   ProductVariant?      @relation("FulfilmentActionSubstitute", fields: [substituteVariantId], references: [id], onDelete: Restrict)
+  substituteQty       Int?
+  reason              String
+  expectedOn          DateTime?
+  // P3.2 settlement when the customer had paid more than the new total.
+  settlement          String?
+  settlementAmount    Decimal?             @db.Decimal(12, 2)
+  actorId             String
+  actor               User                 @relation("FulfilmentActionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt           DateTime             @default(now())
+
+  @@index([orderId])
+  @@index([kind, createdAt])
+  @@map("fulfilment_actions")
 }

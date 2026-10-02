@@ -6,6 +6,7 @@ import { writeAuditLogWith } from "@/lib/audit/log";
 import type { Db } from "@/lib/db/tx";
 import { fromPaisa, toPaisa } from "@/lib/inventory/costing";
 import { lockVariant, recordStockMovement } from "@/lib/inventory/ledger";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // CORRECTIONS.md item 4 — stock entered per location when a product is
 // added. The product page shows a stock-in grid: one row per size/colour
@@ -79,5 +80,6 @@ export async function postOpeningStock(tx: Prisma.TransactionClient, input: { pr
     after: { code: product.code, name: product.name, units, valueAtCost: fromPaisa(valuePaisa), lines: audit },
     request,
   });
+  await settleFulfilment(tx, { cause: `Opening stock was entered for ${product.name}` });
   return { units, variants: lines.length };
 }

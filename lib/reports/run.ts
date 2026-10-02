@@ -9,6 +9,7 @@ import { buildAttendanceReport, buildLeadsReport, buildTeamReport } from "@/lib/
 import { buildPlReport } from "@/lib/reports/builders/pl";
 import { buildCancellationsReport, buildChannelReport, buildSalesReport } from "@/lib/reports/builders/sales";
 import { buildSetsReport, buildStockReport } from "@/lib/reports/builders/stock";
+import { buildStockOutsReport } from "@/lib/reports/builders/stock-outs";
 import { canRunReport, reach, reportLevel } from "@/lib/reports/access";
 import { REPORT_BY_KEY, type ReportKey } from "@/lib/reports/catalog";
 import { finalizeReport } from "@/lib/reports/finalize";
@@ -35,6 +36,7 @@ const BUILDERS: Record<ReportKey, (ctx: BuildContext) => Promise<BuiltReport>> =
   customers: buildCustomersReport,
   exchanges: buildExchangesReport,
   channels: buildChannelReport,
+  stockouts: buildStockOutsReport,
 };
 
 export class ReportAccessError extends Error {

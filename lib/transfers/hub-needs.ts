@@ -5,19 +5,21 @@ import type { Prisma } from "@prisma/client";
 import type { SessionUser } from "@/lib/auth/types";
 import type { Db } from "@/lib/db/tx";
 import { canActAt, getLocationAccess, getPackingHub } from "@/lib/locations/service";
+import { computeAllocation, type LineAllocation } from "@/lib/fulfilment/allocation";
 import { createTransfer, TransferError } from "@/lib/transfers/service";
 
 // C4 — CORRECTIONS.md item 3, "Needed at the packing hub" (feeds item 13).
 //
 // Online orders are packed at the hub, so every unit must be there first.
-// For each variant, the hub's supply — what it holds plus what is already
-// coming to it (transfers In transit, and Drafts raised for it) — is given
-// to the confirmed, unpacked online orders OLDEST FIRST, so two orders
-// never count the same last piece. What an order doesn't get is its
-// shortfall. Each other location's stock of that variant is then offered,
-// again oldest first, against those shortfalls: that is the location's
-// "Needed at the packing hub" list. Once a transfer for it is drafted or
-// received, the supply grows and the order drops off every list by itself.
+// C5: the rows come from THE allocation (lib/fulfilment/allocation.ts) —
+// the same one that gives every order its fulfilment status — so this list
+// and an order's "Needs transfer" can never disagree. Oldest order first,
+// each line takes the hub's stock, then what is already coming to the hub
+// (transfers In transit, and Drafts raised for it), then the other
+// locations' stock in their Settings order. A location's list is exactly
+// the units the allocation gave to orders from that location — a shortfall
+// is offered by one location only, never twice. Once a transfer for it is
+// drafted or received, the supply moves and the order drops off by itself.
 
 export type HubNeedRow = {
   orderId: string;
@@ -47,93 +49,44 @@ export type HubNeeds = {
   rows: HubNeedRow[];
 };
 
-/** Orders the hub has to pack: confirmed, online, not deleted — the only status that holds a reservation and hasn't left the hub. */
-const WAITING_ORDERS = { status: "CONFIRMED", channel: "ONLINE", deletedAt: null } satisfies Prisma.OrderWhereInput;
-
-type Shortfall = { orderId: string; variantId: string; short: number; orderIdx: number };
-type StockAt = { variantId: string; locationId: string; qty: number };
-
-async function computeShortfalls(db: Db, hubId: string) {
-  const orders = await db.order.findMany({
-    where: WAITING_ORDERS,
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true, orderNo: true, createdAt: true, customer: { select: { name: true } }, items: { select: { variantId: true, qty: true } } },
-  });
-  const variantIds = [...new Set(orders.flatMap((o) => o.items.map((i) => i.variantId)))];
-  if (variantIds.length === 0) return { orders, shortfalls: [] as Shortfall[], stock: [] as StockAt[] };
-
-  const [onHand, open] = await Promise.all([
-    db.variantStock.findMany({ where: { variantId: { in: variantIds } }, select: { variantId: true, locationId: true, qty: true } }),
-    db.stockTransferLine.findMany({
-      where: { variantId: { in: variantIds }, transfer: { status: { in: ["DRAFT", "IN_TRANSIT"] } } },
-      select: { variantId: true, qtyRequested: true, qtySent: true, transfer: { select: { status: true, fromLocationId: true, toLocationId: true } } },
-    }),
-  ]);
-
-  // A Draft is counted at whichever is larger — what was asked for or what
-  // is already scanned. It is still on the sender's shelf, but promised:
-  // the sender can't offer it again. (In transit has already left.)
-  const stock: StockAt[] = onHand.map((s) => ({ ...s }));
-  const planned = (l: (typeof open)[number]) => (l.transfer.status === "DRAFT" ? Math.max(l.qtyRequested, l.qtySent) : l.qtySent);
-  for (const l of open) {
-    if (l.transfer.status !== "DRAFT") continue;
-    const at = stock.find((s) => s.variantId === l.variantId && s.locationId === l.transfer.fromLocationId);
-    if (at) at.qty -= planned(l);
+/** One location's share of the allocation: per (order, variant), how many units it sends. */
+function fromLocation(lines: LineAllocation[], locationId: string) {
+  const out = new Map<string, { orderId: string; variantId: string; short: number; here: number }>();
+  for (const l of lines) {
+    const here = l.fromLocations.find((f) => f.locationId === locationId)?.qty ?? 0;
+    if (here <= 0) continue;
+    const k = `${l.orderId}:${l.variantId}`;
+    const row = out.get(k) ?? { orderId: l.orderId, variantId: l.variantId, short: 0, here: 0 };
+    row.short += l.qty - l.atHub - l.incoming;
+    row.here += here;
+    out.set(k, row);
   }
-  const supply = new Map<string, number>();
-  for (const s of stock) if (s.locationId === hubId) supply.set(s.variantId, Math.max(0, s.qty));
-  for (const l of open) if (l.transfer.toLocationId === hubId) supply.set(l.variantId, (supply.get(l.variantId) ?? 0) + planned(l));
-
-  const shortfalls: Shortfall[] = [];
-  orders.forEach((order, orderIdx) => {
-    const need = new Map<string, number>();
-    for (const i of order.items) need.set(i.variantId, (need.get(i.variantId) ?? 0) + i.qty);
-    for (const [variantId, qty] of need) {
-      const have = supply.get(variantId) ?? 0;
-      const take = Math.min(have, qty);
-      supply.set(variantId, have - take);
-      if (qty > take) shortfalls.push({ orderId: order.id, variantId, short: qty - take, orderIdx });
-    }
-  });
-  return { orders, shortfalls, stock };
-}
-
-/** Gives one location's stock to the shortfalls, oldest order first. */
-function allocateAt(locationId: string, shortfalls: Shortfall[], stock: StockAt[]) {
-  const left = new Map(stock.filter((s) => s.locationId === locationId && s.qty > 0).map((s) => [s.variantId, s.qty]));
-  const out: (Shortfall & { here: number })[] = [];
-  for (const s of shortfalls) {
-    const have = left.get(s.variantId) ?? 0;
-    if (have <= 0) continue;
-    const here = Math.min(have, s.short);
-    left.set(s.variantId, have - here);
-    out.push({ ...s, here });
-  }
-  return out;
+  return [...out.values()];
 }
 
 export async function getHubNeeds(db: Db, locationId: string | null): Promise<HubNeeds> {
   const hub = await getPackingHub(db);
-  const [{ orders, shortfalls, stock }, locations] = await Promise.all([
-    computeShortfalls(db, hub.id),
-    db.location.findMany({ where: { isActive: true, isPackingHub: false }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true } }),
-  ]);
+  const allocation = await computeAllocation(db as Prisma.TransactionClient);
 
-  const summary = locations.map((l) => {
-    const a = allocateAt(l.id, shortfalls, stock);
+  const summary = allocation.locations.map((l) => {
+    const a = fromLocation(allocation.lines, l.id);
     return { id: l.id, name: l.name, rows: a.length, units: a.reduce((sum, r) => sum + r.here, 0) };
   });
 
   let rows: HubNeedRow[] = [];
   if (locationId && locationId !== hub.id) {
-    const allocated = allocateAt(locationId, shortfalls, stock);
-    const variants = await db.productVariant.findMany({
-      where: { id: { in: [...new Set(allocated.map((a) => a.variantId))] } },
-      select: { id: true, sku: true, size: { select: { name: true } }, color: { select: { name: true, hexCode: true } }, product: { select: { name: true, images: { orderBy: { sortOrder: "asc" }, take: 1, select: { thumbPath: true } } } } },
-    });
+    const allocated = fromLocation(allocation.lines, locationId);
+    const [variants, orders] = await Promise.all([
+      db.productVariant.findMany({
+        where: { id: { in: [...new Set(allocated.map((a) => a.variantId))] } },
+        select: { id: true, sku: true, size: { select: { name: true } }, color: { select: { name: true, hexCode: true } }, product: { select: { name: true, images: { orderBy: { sortOrder: "asc" }, take: 1, select: { thumbPath: true } } } } },
+      }),
+      db.order.findMany({ where: { id: { in: [...new Set(allocated.map((a) => a.orderId))] } }, select: { id: true, orderNo: true, createdAt: true, customer: { select: { name: true } } } }),
+    ]);
     const byId = new Map(variants.map((v) => [v.id, v]));
+    const orderById = new Map(orders.map((o) => [o.id, o]));
     rows = allocated.map((a) => {
-      const o = orders[a.orderIdx];
+      const o = orderById.get(a.orderId)!;
       const v = byId.get(a.variantId)!;
       return {
         orderId: o.id,
@@ -173,8 +126,7 @@ export async function createHubTransfer(
   const hub = await getPackingHub(tx);
   await tx.$queryRaw`SELECT "id" FROM "locations" WHERE "id" = ${hub.id} FOR UPDATE`;
 
-  const { shortfalls, stock } = await computeShortfalls(tx, hub.id);
-  const allowed = new Map(allocateAt(input.fromLocationId, shortfalls, stock).map((a) => [`${a.orderId}:${a.variantId}`, a.here]));
+  const allowed = new Map(fromLocation((await computeAllocation(tx)).lines, input.fromLocationId).map((a) => [`${a.orderId}:${a.variantId}`, a.here]));
   const lines = new Map<string, number>();
   const seen = new Set<string>();
   for (const p of input.picks) {

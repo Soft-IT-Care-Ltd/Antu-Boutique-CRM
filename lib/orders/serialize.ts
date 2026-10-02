@@ -25,5 +25,6 @@ export function serializeOrderListItem(order: OrderListRow): OrderListItem {
     createdBy: order.createdBy,
     expectedDeliveryDate: order.expectedDeliveryDate?.toISOString() ?? null,
     createdAt: order.createdAt.toISOString(),
+    fulfilmentStatus: order.fulfilmentStatus,
   };
 }

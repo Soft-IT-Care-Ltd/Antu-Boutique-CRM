@@ -1,3 +1,4 @@
+import type { FulfilmentStatusValue, LineFulfilment } from "@/lib/fulfilment/constants";
 import type { DeliveryZoneValue, OrderEditRequestStatusValue, OrderStatusValue, PaymentMethodValue } from "@/lib/orders/constants";
 import type { LeadSourceValue } from "@/lib/leads/constants";
 import type { OrderSetLineView } from "@/lib/sets/types";
@@ -19,6 +20,8 @@ export type OrderListItem = {
   createdBy: { id: string; name: string } | null;
   expectedDeliveryDate: string | null;
   createdAt: string;
+  /** C5 — confirmed online orders only. */
+  fulfilmentStatus: FulfilmentStatusValue | null;
 };
 
 export type OrderImageView = {
@@ -49,6 +52,8 @@ export type OrderItemView = {
   returnedQty: number;
   /** P3.3 — the outfit set this line is a component of, if any. */
   setLineId: string | null;
+  /** C5 — where its units come from, while the order is confirmed (null otherwise). */
+  fulfilment: LineFulfilment | null;
 };
 
 export type PaymentView = {
@@ -135,6 +140,10 @@ export type OrderDetail = {
   dueAmount: string;
   internalNote: string | null;
   deliveryNote: string | null;
+  /** C5 — automatic fulfilment status (confirmed online orders), days waiting and the "Wait" date. */
+  fulfilmentStatus: FulfilmentStatusValue | null;
+  waitingSince: string | null;
+  stockExpectedOn: string | null;
   items: OrderItemView[];
   /** P3.3 — outfit sets on the order; their components are in `items`. */
   setLines: OrderSetLineView[];

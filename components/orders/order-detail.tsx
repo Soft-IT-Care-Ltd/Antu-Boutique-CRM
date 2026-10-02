@@ -14,6 +14,8 @@ import { OrderEditRequestBanner } from "@/components/orders/order-edit-request-b
 import { OrderImagesField } from "@/components/orders/order-images-field";
 import { OrderPaymentsPanel } from "@/components/orders/order-payments-panel";
 import { OrderShipmentCard } from "@/components/orders/order-shipment-card";
+import { OrderFulfilmentCard } from "@/components/orders/order-fulfilment-card";
+import { FULFILMENT_STATUS_LABELS, FULFILMENT_STATUS_TONE } from "@/lib/fulfilment/constants";
 import { OrderStatusControl } from "@/components/orders/order-status-control";
 import { OrderTrashButton } from "@/components/orders/order-trash-button";
 import { SendToSteadfastDialog } from "@/components/courier/send-to-steadfast-dialog";
@@ -54,6 +56,8 @@ export function OrderDetail({
   returnPermissions,
   canDelete = false,
   itemShelves = {},
+  canFulfil = false,
+  canSettle = false,
 }: {
   order: OrderDetailType;
   hasCostAccess: boolean;
@@ -77,6 +81,10 @@ export function OrderDetail({
   canDelete?: boolean;
   /** C4b — per variant, where it sits at each shelf-using location (to-be-packed orders only). */
   itemShelves?: Record<string, { locationName: string; value: ShelfSpotsValue }[]>;
+  /** C5 — order.fulfilment: substitute / wait / remove / cancel for a stock-out. */
+  canFulfil?: boolean;
+  /** C5 — sees the order's money: may choose how an overpayment goes back. */
+  canSettle?: boolean;
 }) {
   const router = useRouter();
   const [order, setOrder] = useState(initialOrder);
@@ -101,6 +109,7 @@ export function OrderDetail({
             <h1 className="font-mono text-2xl leading-tight font-semibold tracking-tight md:text-[28px]">{order.orderNo}</h1>
             <Badge variant={ORDER_STATUS_TONE[order.status]}>{ORDER_STATUS_LABELS[order.status]}</Badge>
             <Badge variant="outline">{order.channel === "ONLINE" ? "Online" : "Walk-in"}</Badge>
+            {order.fulfilmentStatus ? <Badge variant={FULFILMENT_STATUS_TONE[order.fulfilmentStatus]}>{FULFILMENT_STATUS_LABELS[order.fulfilmentStatus]}</Badge> : null}
           </div>
           <p className="text-sm text-muted-foreground">
             Placed {formatDateTime(order.createdAt)} by {order.createdBy?.name ?? "—"}
@@ -221,6 +230,19 @@ export function OrderDetail({
             .catch(() => {});
           router.refresh();
         }} />
+
+      <OrderFulfilmentCard
+        order={order}
+        canAct={canFulfil}
+        canSettle={canSettle}
+        wallets={wallets}
+        onChanged={() => {
+          fetchJson<{ order: OrderDetailType }>(`/api/orders/${order.id}`)
+            .then((data) => setOrder(data.order))
+            .catch(() => {});
+          router.refresh();
+        }}
+      />
 
       <Card>
         <CardHeader>

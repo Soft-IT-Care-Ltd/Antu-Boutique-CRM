@@ -11,6 +11,7 @@ import { ORDER_CHANNEL_VALUES, ORDER_STATUS_VALUES } from "@/lib/orders/constant
 import { ORDER_DATE_BASES, ORDER_LIST_PRESETS } from "@/lib/orders/list-presets";
 import { dateBasisWhere, dhakaDaysRange, orderTabWhere, presetWhere } from "@/lib/orders/list-where";
 import { ORDER_SUB_TAB_KEYS, ORDER_TAB_BY_KEY, ORDER_TAB_KEYS, ORDER_TABS, type OrderTabCounts, type OrderTabKey } from "@/lib/orders/tabs";
+import { settleIfPending } from "@/lib/fulfilment/settle";
 import { prisma } from "@/lib/prisma";
 import { getPackingSlaHours } from "@/lib/settings/get";
 
@@ -73,21 +74,29 @@ export async function orderListWhere(f: OrderFilters & { tab: OrderTabKey; sub?:
 
 /** Every tab's and sub-tab's count under the same filters, in two grouped queries. */
 export async function orderTabCounts(f: OrderFilters, user: SessionUser): Promise<OrderTabCounts> {
+  // C5 — fulfilment statuses are current before they're counted.
+  await settleIfPending(prisma);
   const [openBase, datedBase] = await Promise.all([baseConditions(f, false), baseConditions(f, true)]);
   const where = (and: Prisma.OrderWhereInput[], extra: Prisma.OrderWhereInput = {}) => scopedWhere({ AND: [...and, extra] }, user) as Prisma.OrderWhereInput;
 
-  const [openRows, datedRows, approvalPending] = await Promise.all([
+  const [openRows, datedRows, approvalPending, waiting, needsTransfer] = await Promise.all([
     prisma.order.groupBy({ by: ["status"], where: where(openBase), _count: { _all: true } }),
     prisma.order.groupBy({ by: ["status"], where: where(datedBase), _count: { _all: true } }),
     prisma.order.count({ where: where(openBase, orderTabWhere("with_courier", "approval_pending")) }),
+    prisma.order.count({ where: where(openBase, orderTabWhere("waiting_for_stock")) }),
+    prisma.order.count({ where: where(openBase, orderTabWhere("needs_transfer")) }),
   ]);
   const sum = (rows: typeof openRows, statuses: readonly string[] | "all") =>
     rows.filter((r) => statuses === "all" || statuses.includes(r.status)).reduce((a, r) => a + r._count._all, 0);
 
   const tabs = {} as Record<OrderTabKey, number>;
   for (const t of ORDER_TABS) {
-    tabs[t.key] = t.key === "waiting_for_stock" || t.key === "needs_transfer" ? 0 : sum(t.open ? openRows : datedRows, t.statuses);
+    tabs[t.key] = sum(t.open ? openRows : datedRows, t.statuses);
   }
+  // C5 — the confirmed orders split three ways by fulfilment status.
+  tabs.waiting_for_stock = waiting;
+  tabs.needs_transfer = needsTransfer;
+  tabs.ready_to_pack -= waiting + needsTransfer;
   const inTransit = sum(openRows, ["IN_TRANSIT"]);
   return {
     tabs,

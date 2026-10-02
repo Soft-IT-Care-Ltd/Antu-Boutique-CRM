@@ -4,6 +4,7 @@ import { fromPaisa, toPaisa } from "./costing";
 import { SHORTAGE_EXPENSE_CATEGORY, SHORTAGE_EXPENSE_CATEGORY_ID, WRITE_OFF_EXPENSE_CATEGORY, WRITE_OFF_EXPENSE_CATEGORY_ID } from "./constants";
 import { lockVariantAt, recordStockMovement, StockMovementError } from "./ledger";
 import type { ShelfPick } from "../shelves/engine";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // PRD §4.3: manual adjustment (reason required, Admin/Manager only — the
 // route gates on inventory.adjust) and damage write-off (DAMAGE_OUT). Both
@@ -88,6 +89,7 @@ export async function adjustStock(
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
   const what = input.qty < 0 ? `Stock shortage: ${-input.qty}` : `Stock found: ${input.qty}`;
   const expense = await postStockExpense(tx, movement, "SHORTAGE", `${what} × ${variant.sku} — ${reason}`, actorId);
+  await settleFulfilment(tx, { cause: `${variant.sku} was ${input.qty < 0 ? "adjusted down" : "found"} at a stock adjustment` });
   return { movement, expense };
 }
 
@@ -132,6 +134,7 @@ export async function writeOffDamagedStock(tx: Prisma.TransactionClient, input: 
 
   const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: input.variantId }, select: { sku: true } });
   const expense = await postStockExpense(tx, movement, "DAMAGE", `Write-off: ${input.qty} × ${variant.sku} — ${reason}`, actorId);
+  await settleFulfilment(tx, { cause: `${variant.sku} was written off as damaged` });
 
   return { movement, expense };
 }

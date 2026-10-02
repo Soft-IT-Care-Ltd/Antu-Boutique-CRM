@@ -13,6 +13,7 @@ import { findVariantByScan, scannedItem, ScanError } from "@/lib/inventory/scan-
 import { canActAt, getLocationAccess } from "@/lib/locations/service";
 import { closeMisses } from "@/lib/shelves/engine";
 import type { StockCountListItem, StockCountScopeValue, StockCountStatusValue, StockCountView } from "@/lib/stock-counts/constants";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 
 // C4 — CORRECTIONS.md item 2, stock count by scan. A location's incharge
 // (stock.count) opens a count and scans everything on the shelves; each
@@ -215,6 +216,7 @@ export async function postStockCount(tx: Prisma.TransactionClient, user: Session
     after: { status: "POSTED", countNo: c.countNo, scope: c.scope, itemsCompared: compared, differences, movedDuringCount },
     request: meta.request,
   });
+  await settleFulfilment(tx, { cause: `Stock count ${c.countNo} was posted` });
   return { compared, differences: differences.length, movedDuringCount: movedDuringCount.length };
 }
 

@@ -143,7 +143,7 @@ export function PosScreen({
     const key = newLocalId();
     setLines((prev) => {
       const existing = prev.find((l) => l.variantId === hit.variantId);
-      if (existing) return prev.map((l) => (l.key === existing.key ? { ...l, qty: Math.min(999, l.qty + 1), available: hit.available } : l));
+      if (existing) return prev.map((l) => (l.key === existing.key ? { ...l, qty: Math.min(999, l.qty + 1), available: hit.available, heldForOnline: hit.heldForOnline } : l));
       return [
         ...prev,
         {
@@ -155,6 +155,7 @@ export function PosScreen({
           colorName: hit.colorName,
           colorHex: hit.colorHex,
           available: hit.available,
+          heldForOnline: hit.heldForOnline,
           listPrice: hit.price,
           qty: 1,
           unitPrice: String(Number(hit.price)),
@@ -482,6 +483,11 @@ export function PosScreen({
             <Badge variant="outline" className="w-fit">
               Stock updated · status Completed
             </Badge>
+            {done && done.onlineOrdersAffected.length > 0 ? (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                Online order {done.onlineOrdersAffected.map((o) => o.orderNo).join(", ")} lost a piece to this sale — its sales executive has been told.
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="ghost" className="h-12" disabled={printing || !done} onClick={() => done && void print(done.orderId)}>

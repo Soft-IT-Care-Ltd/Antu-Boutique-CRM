@@ -10,6 +10,7 @@ import { DIRECTLY_EDITABLE_STATUSES, type OrderStatusValue } from "@/lib/orders/
 import { isPriceBelowFloor } from "@/lib/orders/price-floor";
 import { releaseVariantStock, reserveVariantStock } from "@/lib/orders/stock";
 import { computeDueAmount, computeOrderTotals, COUNTED_PAYMENTS_WHERE, recomputeOrderDueAmount } from "@/lib/orders/totals";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 import { resolveSetLines, writeSetLines, type ResolvedSetLine } from "@/lib/sets/order-lines";
 import { SetError } from "@/lib/sets/service";
 import type { SetLineInput } from "@/lib/sets/types";
@@ -121,11 +122,6 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
     }
   }
 
-  const oldQtyByVariant = new Map<string, number>();
-  for (const item of existing.items) {
-    oldQtyByVariant.set(item.variantId, (oldQtyByVariant.get(item.variantId) ?? 0) + item.qty);
-  }
-
   let validatedItems: ValidatedItem[] | null = null;
   let validatedSets: ResolvedSetLine[] | null = null;
 
@@ -135,19 +131,18 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
       input.items ??
       existing.items
         .filter((i) => i.setLineId === null)
-        .map((i) => ({ variantId: i.variantId, qty: i.qty, unitPrice: toNumber(i.unitPrice), lineDiscount: toNumber(i.lineDiscount), stockOverrideReason: i.stockOverrideReason ?? undefined }));
+        .map((i) => ({ variantId: i.variantId, qty: i.qty, unitPrice: toNumber(i.unitPrice), lineDiscount: toNumber(i.lineDiscount) }));
     const newSetInputs: SetLineInput[] = input.sets ?? existingSetInputs(existing.setLines);
     if (newItems.length + newSetInputs.length === 0) return { ok: false, error: "An order needs at least one item.", status: 400 };
 
     const hasCostAccess = await can(actor, "product.cost.view");
-    const hasStockOverride = await can(actor, "order.stock_override");
     try {
       validatedSets = await resolveSetLines(prisma, newSetInputs, { hasCostAccess });
     } catch (error) {
       if (error instanceof SetError) return { ok: false, error: error.message, status: error.status };
       throw error;
     }
-    const setChildren = validatedSets.flatMap((s) => s.children.map((c) => ({ ...c, stockOverrideReason: s.stockOverrideReason ?? undefined, fromSet: true })));
+    const setChildren = validatedSets.flatMap((s) => s.children.map((c) => ({ ...c, fromSet: true })));
     const allLines = [...newItems.map((i) => ({ ...i, fromSet: false })), ...setChildren];
 
     const variantIds = [...new Set(allLines.map((i) => i.variantId))];
@@ -156,7 +151,6 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
       include: { product: { select: { isActive: true, deletedAt: true, kind: true } } },
     });
     const variantById = new Map(variants.map((v) => [v.id, v]));
-    const newQtyByVariant = new Map<string, number>();
 
     for (const item of allLines) {
       const variant = variantById.get(item.variantId);
@@ -170,31 +164,10 @@ export async function validateOrderEdit(orderId: string, input: OrderEditInput, 
           status: 400,
         };
       }
-      newQtyByVariant.set(item.variantId, (newQtyByVariant.get(item.variantId) ?? 0) + item.qty);
     }
 
-    for (const [variantId, newQty] of newQtyByVariant) {
-      const variant = variantById.get(variantId)!;
-      const alreadyReservedHere = oldQtyByVariant.get(variantId) ?? 0;
-      const available = variant.stockQty - variant.reservedQty + alreadyReservedHere;
-      if (newQty > available) {
-        if (!hasStockOverride) {
-          return { ok: false, error: `Not enough stock for ${variant.sku} (${available} available, ${newQty} requested)`, status: 400 };
-        }
-        const line = allLines.find((i) => i.variantId === variantId && i.stockOverrideReason);
-        if (!line?.stockOverrideReason) {
-          return { ok: false, error: `A reason is required to sell ${variant.sku} below available stock`, status: 400 };
-        }
-      }
-    }
-
-    validatedItems = newItems.map((item) => {
-      const variant = variantById.get(item.variantId)!;
-      const alreadyReservedHere = oldQtyByVariant.get(item.variantId) ?? 0;
-      const newQty = newQtyByVariant.get(item.variantId)!;
-      const available = variant.stockQty - variant.reservedQty + alreadyReservedHere;
-      return { ...item, stockOverrideReason: newQty > available ? item.stockOverrideReason : undefined };
-    });
+    // C5 — no stock check: a line with no stock becomes a backorder (CORRECTIONS.md item 12).
+    validatedItems = newItems.map(({ variantId, qty, unitPrice, lineDiscount }) => ({ variantId, qty, unitPrice, lineDiscount }));
   }
 
   const effectiveDeliveryCharge = input.deliveryCharge ?? toNumber(existing.deliveryCharge);
@@ -236,26 +209,13 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
       await tx.orderItem.deleteMany({ where: { orderId } });
       await tx.orderSetLine.deleteMany({ where: { orderId } });
       for (const item of validation.validatedItems) {
-        const variant = await tx.productVariant.findUniqueOrThrow({ where: { id: item.variantId } });
-        const available = variant.stockQty - variant.reservedQty;
-        const isOverride = item.qty > available;
         await tx.orderItem.create({
-          data: {
-            orderId,
-            variantId: item.variantId,
-            qty: item.qty,
-            unitPrice: item.unitPrice,
-            lineDiscount: item.lineDiscount,
-            stockOverride: isOverride,
-            stockOverrideReason: isOverride ? (item.stockOverrideReason ?? null) : null,
-          },
+          data: { orderId, variantId: item.variantId, qty: item.qty, unitPrice: item.unitPrice, lineDiscount: item.lineDiscount },
         });
         await reserveVariantStock(tx, item.variantId, item.qty);
       }
       // P3.3 — the sets' component lines, reserved like any line.
-      const overrideByVariant = new Map<string, string>();
-      for (const s of validation.validatedSets ?? []) for (const c of s.children) if (s.stockOverrideReason) overrideByVariant.set(c.variantId, s.stockOverrideReason);
-      for (const child of await writeSetLines(tx, orderId, validation.validatedSets ?? [], { overrideByVariant })) {
+      for (const child of await writeSetLines(tx, orderId, validation.validatedSets ?? [])) {
         await reserveVariantStock(tx, child.variantId, child.qty);
       }
     }
@@ -276,6 +236,8 @@ export async function applyValidatedOrderEdit(orderId: string, input: OrderEditI
     });
     // CLAUDE.md rule 1 — from the payments as they stand inside this transaction.
     await recomputeOrderDueAmount(tx, orderId);
+    // C5 — the new lines' fulfilment (and anyone the old lines' units now go to).
+    await settleFulfilment(tx);
     return tx.order.findUniqueOrThrow({ where: { id: orderId } });
   });
 }

@@ -8,6 +8,7 @@ import type { PermissionKey } from "@/lib/auth/permission-definitions";
 import type { SessionUser } from "@/lib/auth/types";
 import type { Db } from "@/lib/db/tx";
 import { postStockExpense } from "@/lib/inventory/adjustments";
+import { settleFulfilment } from "@/lib/fulfilment/settle";
 import { nextDocumentNumber } from "@/lib/inventory/document-number";
 import { lockVariantAt, recordStockMovement } from "@/lib/inventory/ledger";
 import { findVariantByScan, scannedItem, ScanError } from "@/lib/inventory/scan-lookup";
@@ -110,6 +111,8 @@ export async function createTransfer(tx: Prisma.TransactionClient, user: Session
     },
     select: { id: true, transferNo: true },
   });
+  // C5 — a Draft to the hub is promised supply: its orders move to Needs transfer.
+  await settleFulfilment(tx);
   return transfer;
 }
 
@@ -298,6 +301,7 @@ export async function sendTransfer(tx: Prisma.TransactionClient, user: SessionUs
     after: { status: "IN_TRANSIT", transferNo: t.transferNo, from: await locationName(tx, t.fromLocationId), to: to.name, lines: lines.map((l) => ({ sku: l.variant.sku, qty: l.qtySent })) },
     request: meta.request,
   });
+  await settleFulfilment(tx, { cause: `${t.transferNo} was sent from ${await locationName(tx, t.fromLocationId)}` });
 }
 
 // ── Receive ─────────────────────────────────────────────────────────────
@@ -345,6 +349,8 @@ export async function receiveTransfer(tx: Prisma.TransactionClient, user: Sessio
     },
     request: meta.request,
   });
+  // C5 — what arrived goes to waiting orders, oldest first (CORRECTIONS.md item 12).
+  await settleFulfilment(tx, { cause: `${t.transferNo} was received at ${await locationName(tx, t.toLocationId)}` });
   return { status, missing };
 }
 
@@ -414,6 +420,7 @@ export async function resolveMissing(tx: Prisma.TransactionClient, user: Session
     after: { sku: line.variant.sku, missing: missing - input.qty, qty: input.qty, reason, transferNo: t.transferNo },
     request: meta.request,
   });
+  await settleFulfilment(tx, { cause: input.action === "FOUND" ? `Missing units on ${t.transferNo} were found` : null });
 }
 
 // ── Cancel ──────────────────────────────────────────────────────────────
@@ -435,6 +442,7 @@ export async function cancelTransfer(tx: Prisma.TransactionClient, user: Session
     after: { status: "CANCELLED", reason: why, transferNo: t.transferNo },
     request: meta.request,
   });
+  await settleFulfilment(tx, { cause: `Transfer ${t.transferNo} was cancelled` });
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────

@@ -151,6 +151,9 @@ export async function saveLocation(
       throw error;
     }
 
+    // C5 — orders name the location their units are at: a rename re-settles them all.
+    if (before && before.name !== input.name) await tx.$executeRaw`INSERT INTO "fulfilment_queue" ("variantId") VALUES ('*')`;
+
     await tx.userLocation.deleteMany({ where: { locationId, userId: { notIn: input.userIds } } });
     if (input.userIds.length) await tx.userLocation.createMany({ data: input.userIds.map((userId) => ({ userId, locationId: locationId! })), skipDuplicates: true });
 

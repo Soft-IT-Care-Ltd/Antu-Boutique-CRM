@@ -90,6 +90,12 @@ export type PosVariantHit = {
   price: string;
   /** C3 — on hand at the POS's own showroom (may be negative). */
   available: number;
+  /**
+   * C5 — units here that online orders are counting on (to be transferred to
+   * the packing hub), oldest order first. Selling into them is allowed with
+   * a warning; those orders then wait for another unit and their SE is told.
+   */
+  heldForOnline: { orderNo: string; qty: number }[];
   thumbPath: string | null;
 };
 
@@ -99,6 +105,8 @@ export type PosSaleResult = {
   total: string;
   change: string;
   customerName: string | null;
+  /** C5 — online orders that lost a unit to this sale, and their new fulfilment status. */
+  onlineOrdersAffected: { orderNo: string; from: string; to: string }[];
 };
 
 export type PosRecentSale = {

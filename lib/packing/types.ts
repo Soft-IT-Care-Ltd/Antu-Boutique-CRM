@@ -61,6 +61,8 @@ export type PackingQueueItem = {
   isOverdue: boolean;
   /** Once packed: when (the latest PACKED move) — the ready / packed-today views show it instead of the SLA. */
   packedAt: string | null;
+  /** C5 — while confirmed: Ready to pack / Needs transfer / Waiting for stock (only Ready can be packed). */
+  fulfilmentStatus: "READY_TO_PACK" | "NEEDS_TRANSFER" | "WAITING_FOR_STOCK" | null;
 };
 
 export type PackingOrderDetail = PackingQueueItem & {
