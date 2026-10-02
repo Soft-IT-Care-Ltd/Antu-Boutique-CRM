@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react";
 import { Loader2, MapPin, Plus } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +26,7 @@ import { LOCATION_TYPE_LABELS, LOCATION_TYPES, type LocationTypeValue } from "@/
 import { ApiError, fetchJson } from "@/lib/orders/client";
 
 type Person = { id: string; name: string; roleLabel: string };
+type ShelfPlacements = { placements: number; shelvedUnits: number; shelves: number; notOnShelfUnits: number };
 type Row = {
   id: string;
   name: string;
@@ -25,6 +36,7 @@ type Row = {
   hasPos: boolean;
   usesShelves: boolean;
   isActive: boolean;
+  shelfPlacements: ShelfPlacements;
   units: number;
   managers: Person[];
 };
@@ -58,13 +70,14 @@ export function LocationsSettings() {
   const [data, setData] = useState<{
     locations: Row[];
     staff: Person[];
+    canSwitchShelvesOff: boolean;
   } | null>(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
-      setData(await fetchJson<{ locations: Row[]; staff: Person[] }>("/api/settings/locations"));
+      setData(await fetchJson<{ locations: Row[]; staff: Person[]; canSwitchShelvesOff: boolean }>("/api/settings/locations"));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load locations.");
     }
@@ -81,12 +94,13 @@ export function LocationsSettings() {
   return (
     <div className="flex flex-col gap-4">
       {data.locations.map((l) => (
-        <LocationCard key={l.id} row={l} staff={data.staff} onSaved={load} />
+        <LocationCard key={l.id} row={l} staff={data.staff} canSwitchShelvesOff={data.canSwitchShelvesOff} onSaved={load} />
       ))}
       {adding ? (
         <LocationCard
           row={null}
           staff={data.staff}
+          canSwitchShelvesOff={data.canSwitchShelvesOff}
           onSaved={() => {
             setAdding(false);
             void load();
@@ -103,13 +117,39 @@ export function LocationsSettings() {
   );
 }
 
-function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staff: Person[]; onSaved: () => void; onCancel?: () => void }) {
+/** "12 shelf placements (30 units on 8 shelves) and 2 units marked not on their shelf" */
+function describePlacements(c: ShelfPlacements): string {
+  const placed = `${c.placements} shelf placement${c.placements === 1 ? "" : "s"} (${c.shelvedUnits} unit${c.shelvedUnits === 1 ? "" : "s"} on ${c.shelves} shel${c.shelves === 1 ? "f" : "ves"})`;
+  return c.notOnShelfUnits > 0 ? `${placed} and ${c.notOnShelfUnits} unit${c.notOnShelfUnits === 1 ? "" : "s"} marked not on their shelf` : placed;
+}
+
+function LocationCard({
+  row,
+  staff,
+  canSwitchShelvesOff,
+  onSaved,
+  onCancel,
+}: {
+  row: Row | null;
+  staff: Person[];
+  canSwitchShelvesOff: boolean;
+  onSaved: () => void;
+  onCancel?: () => void;
+}) {
   const [editing, setEditing] = useState(row === null);
   const [draft, setDraft] = useState<Draft>(toDraft(row));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Shelves on → off erases every placement at the location: the Admin
+  // confirms the exact count first, and the server re-checks it.
+  const [confirmOff, setConfirmOff] = useState<ShelfPlacements | null>(null);
+  const switchingShelvesOff = Boolean(row?.usesShelves && !draft.usesShelves);
 
-  async function save() {
+  async function save(confirmed?: ShelfPlacements) {
+    if (switchingShelvesOff && !confirmed) {
+      setConfirmOff(row!.shelfPlacements);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -118,12 +158,20 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
         body: JSON.stringify({
           ...draft,
           address: draft.address.trim() || null,
+          confirmShelvesOff: confirmed ?? null,
         }),
       });
+      setConfirmOff(null);
       setEditing(false);
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save.");
+      // Someone put stock away since the count was shown: confirm the new one.
+      const fresh = err instanceof ApiError ? (err.body.confirmShelvesOff as ShelfPlacements | undefined) : undefined;
+      if (fresh) setConfirmOff(fresh);
+      else {
+        setConfirmOff(null);
+        setError(err instanceof ApiError ? err.message : "Could not save.");
+      }
     } finally {
       setSaving(false);
     }
@@ -218,7 +266,7 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
               Uses shelves
               <span className="block text-xs text-muted-foreground">Racks and boxes with labels; stock not on one shows as Unassigned</span>
             </span>
-            <Switch checked={draft.usesShelves} onCheckedChange={(v) => set({ usesShelves: v })} />
+            <Switch checked={draft.usesShelves} onCheckedChange={(v) => set({ usesShelves: v })} disabled={Boolean(row?.usesShelves) && !canSwitchShelvesOff} />
           </label>
           <label className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
             <span>Active</span>
@@ -226,6 +274,12 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
           </label>
         </div>
         {row?.isPackingHub ? <p className="text-xs text-muted-foreground">To move the packing hub, switch it on for another location.</p> : null}
+        {row?.usesShelves && !canSwitchShelvesOff ? <p className="text-xs text-muted-foreground">Only an Admin can switch shelves off — it erases every shelf placement here.</p> : null}
+        {switchingShelvesOff ? (
+          <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            Switching shelves off erases {describePlacements(row!.shelfPlacements)} at {row!.name}. Stock itself doesn&apos;t change.
+          </p>
+        ) : null}
         <div className="flex flex-col gap-1.5">
           <Label>Managers / incharges</Label>
           <div className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2">
@@ -256,6 +310,23 @@ function LocationCard({ row, staff, onSaved, onCancel }: { row: Row | null; staf
             Save
           </Button>
         </div>
+        <AlertDialog open={confirmOff !== null} onOpenChange={(open) => (!open ? setConfirmOff(null) : undefined)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Switch shelves off at {row?.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {confirmOff ? `This erases ${describePlacements(confirmOff)}. ` : ""}
+                Nobody will know which shelf a dress is on until shelves are switched on again and everything is put away by scan. Stock itself doesn&apos;t change. This can&apos;t be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep shelves</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" disabled={saving} onClick={() => confirmOff && void save(confirmOff)}>
+                {confirmOff ? `Erase ${confirmOff.placements} placement${confirmOff.placements === 1 ? "" : "s"}` : "Erase"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   );

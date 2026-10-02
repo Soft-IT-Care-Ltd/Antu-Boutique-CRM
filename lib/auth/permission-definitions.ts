@@ -83,6 +83,8 @@ export const PERMISSIONS = [
   // shelf is stock.count; writing off a unit not on its shelf is inventory.adjust.
   { key: "shelf.manage", group: "Inventory", label: "Create shelves and print shelf labels" },
   { key: "shelf.putaway", group: "Inventory", label: "Put stock away on shelves and move it between shelves at own locations" },
+  // Switching a location's shelves off erases every placement there — Admin only.
+  { key: "shelf.switch_off", group: "Inventory", label: "Switch shelves off at a location (erases every shelf placement there)" },
 
   // Packing
   { key: "packing.view_queue", group: "Packing", label: "View packing queue" },
@@ -163,7 +165,7 @@ export const ROLE_TEMPLATES: Record<RoleName, PermissionKey[]> = {
   // courier reports (API down, parcel lost) and must stay rare.
   // customer.credit.adjust is Admin-only too (PRD §4.11): a store credit
   // balance changes by hand only with a reason, and only by the owner.
-  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view", "order.courier_status_override", "customer.credit.adjust"]),
+  MANAGER: withoutKeys(["settings.manage", "user.delete", "permission.manage", "audit.view", "order.courier_status_override", "customer.credit.adjust", "shelf.switch_off"]),
 
   TEAM_LEADER: [
     "lead.view_team",

@@ -8,7 +8,7 @@ import type { Db } from "@/lib/db/tx";
 import { withTx } from "@/lib/db/tx";
 import { LOCATION_TYPES, type LocationTypeValue } from "@/lib/locations/constants";
 import { LocationError } from "@/lib/locations/service";
-import { clearLocationShelves } from "@/lib/shelves/engine";
+import { clearLocationShelves, countLocationShelfPlacements, sameShelfPlacementCount, type ShelfPlacementCount } from "@/lib/shelves/engine";
 
 // CORRECTIONS.md item 2 — Settings → Locations (Admin, settings.manage):
 // name, type, address, packing hub (exactly one), has POS, active, and the
@@ -26,6 +26,12 @@ export const locationInputSchema = z.object({
   // C4b — the location is divided into shelves (CORRECTIONS.md item 20A).
   usesShelves: z.boolean().default(false),
   isActive: z.boolean().default(true),
+  // Switching shelves off erases every placement there: the client sends
+  // back the count it showed in its confirmation, and the save is refused
+  // unless that is still exactly what would be erased.
+  confirmShelvesOff: z
+    .object({ placements: z.number().int().min(0), shelvedUnits: z.number().int().min(0), shelves: z.number().int().min(0), notOnShelfUnits: z.number().int().min(0) })
+    .nullish(),
   userIds: z.array(z.string().trim().min(1).max(50)).max(200).default([]),
 });
 export type LocationInput = z.infer<typeof locationInputSchema>;
@@ -39,12 +45,15 @@ export type LocationSettingsRow = {
   hasPos: boolean;
   usesShelves: boolean;
   isActive: boolean;
+  /** What switching shelves off here would erase (zeros when it has none). */
+  shelfPlacements: ShelfPlacementCount;
   /** Units held there now (may be negative). */
   units: number;
   managers: { id: string; name: string; roleLabel: string }[];
 };
 
 export async function listLocationSettings(db: Db): Promise<{ locations: LocationSettingsRow[]; staff: { id: string; name: string; roleLabel: string }[] }> {
+  const placements = new Map<string, ShelfPlacementCount>();
   const [locations, units, staff] = await Promise.all([
     db.location.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -54,6 +63,7 @@ export async function listLocationSettings(db: Db): Promise<{ locations: Locatio
     db.user.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, role: { select: { label: true } } } }),
   ]);
   const unitsAt = new Map(units.map((u) => [u.locationId, u._sum.qty ?? 0]));
+  for (const l of locations) if (l.usesShelves) placements.set(l.id, await countLocationShelfPlacements(db, l.id));
   return {
     locations: locations.map((l) => ({
       id: l.id,
@@ -64,6 +74,7 @@ export async function listLocationSettings(db: Db): Promise<{ locations: Locatio
       hasPos: l.hasPos,
       usesShelves: l.usesShelves,
       isActive: l.isActive,
+      shelfPlacements: placements.get(l.id) ?? { placements: 0, shelvedUnits: 0, shelves: 0, notOnShelfUnits: 0 },
       units: unitsAt.get(l.id) ?? 0,
       managers: l.users.filter((u) => u.user.isActive).map((u) => ({ id: u.user.id, name: u.user.name, roleLabel: u.user.role.label })),
     })),
@@ -76,8 +87,33 @@ async function snapshot(tx: Prisma.TransactionClient, id: string) {
   return { name: l.name, type: l.type, address: l.address, isPackingHub: l.isPackingHub, hasPos: l.hasPos, usesShelves: l.usesShelves, isActive: l.isActive, userIds: l.users.map((u) => u.userId).sort() };
 }
 
-/** Creates (id null) or updates a location, its hub/POS flags and its managers, in one audited transaction. */
-export async function saveLocation(db: Db, id: string | null, input: LocationInput, actorId: string, request?: Request): Promise<{ id: string }> {
+/** Thrown when shelves would be switched off without a confirmation of what that erases (or with a stale one). */
+export class ShelvesOffConfirmError extends LocationError {
+  constructor(readonly count: ShelfPlacementCount) {
+    super(`Switching shelves off erases ${describeShelfPlacements(count)}. Confirm to go ahead.`, 409);
+  }
+}
+
+export function describeShelfPlacements(c: ShelfPlacementCount): string {
+  const parts = [`${c.placements} shelf placement(s) — ${c.shelvedUnits} unit(s) on ${c.shelves} shelf/shelves`];
+  if (c.notOnShelfUnits > 0) parts.push(`${c.notOnShelfUnits} unit(s) marked not on their shelf`);
+  return parts.join(", and ");
+}
+
+/**
+ * Creates (id null) or updates a location, its hub/POS flags and its
+ * managers, in one audited transaction. Switching shelves off is Admin
+ * only (shelf.switch_off) and needs `confirmShelvesOff` equal to what it
+ * erases right now.
+ */
+export async function saveLocation(
+  db: Db,
+  id: string | null,
+  input: LocationInput,
+  actorId: string,
+  request?: Request,
+  opts: { canSwitchShelvesOff?: boolean } = {},
+): Promise<{ id: string }> {
   return withTx(db, async (tx) => {
     const before = id ? await snapshot(tx, id).catch(() => null) : null;
     if (id && !before) throw new LocationError("Location not found.", 404);
@@ -90,7 +126,15 @@ export async function saveLocation(db: Db, id: string | null, input: LocationInp
     }
     // C4b — switching shelves off drops every shelf figure there (stock
     // itself doesn't move); what was dropped goes in the audit row below.
-    const shelvesCleared = id && before?.usesShelves && !input.usesShelves ? await clearLocationShelves(tx, id, actorId) : null;
+    let shelvesCleared: (Awaited<ReturnType<typeof clearLocationShelves>> & { confirmed: ShelfPlacementCount }) | null = null;
+    if (id && before?.usesShelves && !input.usesShelves) {
+      if (!opts.canSwitchShelvesOff) throw new LocationError("Only an Admin can switch shelves off — it erases every shelf placement at the location.", 403);
+      // Locks the location so a put-away can't land between the count and the erase.
+      await tx.$queryRaw`SELECT "id" FROM "locations" WHERE "id" = ${id} FOR UPDATE`;
+      const count = await countLocationShelfPlacements(tx, id);
+      if (!input.confirmShelvesOff || !sameShelfPlacementCount(input.confirmShelvesOff, count)) throw new ShelvesOffConfirmError(count);
+      shelvesCleared = { ...(await clearLocationShelves(tx, id, actorId)), confirmed: count };
+    }
     const users = input.userIds.length ? await tx.user.count({ where: { id: { in: input.userIds }, isActive: true } }) : 0;
     if (users !== new Set(input.userIds).size) throw new LocationError("One of the people picked is not an active user.");
 

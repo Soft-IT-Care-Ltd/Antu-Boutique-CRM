@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import type { SessionUser } from "@/lib/auth/types";
 import { findStockLedgerDivergences, recordStockMovement } from "@/lib/inventory/ledger";
+import { loadEffectivePermissions } from "@/lib/auth/permissions";
+import { saveLocation, ShelvesOffConfirmError } from "@/lib/locations/admin";
 import { SEEDED_LOCATION_IDS } from "@/lib/locations/constants";
 import { packOrder } from "@/lib/orders/pack";
 import { reserveVariantStock } from "@/lib/orders/stock";
@@ -349,6 +351,46 @@ describe("shelves inside a location (CORRECTIONS.md item 20A)", () => {
         await expect(createShelves(tx, manager, { locationId: SHOWROOM, codes: ["A-1"] })).rejects.toThrow(/doesn't use shelves/);
         // A shelf code always has a hyphen — it can never read as a SKU.
         await expect(createShelves(tx, manager, { locationId: HUB, codes: ["A1"] })).rejects.toThrow(/hyphens/);
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "switching shelves off is Admin only and must confirm exactly how many placements it erases",
+    async () => {
+      await inRolledBackTransaction(async (tx) => {
+        const [admin, manager] = await Promise.all([userFor(tx, PHONES.ADMIN), userFor(tx, PHONES.MANAGER)]);
+        expect((await loadEffectivePermissions(tx, admin.id)).has("shelf.switch_off")).toBe(true);
+        expect((await loadEffectivePermissions(tx, manager.id)).has("shelf.switch_off")).toBe(false);
+
+        const base = { name: `Shelf-off test ${rack()}`, type: "WAREHOUSE" as const, address: null, isPackingHub: false, hasPos: false, isActive: true, userIds: [] };
+        const { id } = await saveLocation(tx, null, { ...base, usesShelves: true }, admin.id);
+        const r = rack();
+        const s = await shelves(tx, admin, id, [`${r}-1`, `${r}-2`]);
+        const v = await scratchVariant(tx, [{ locationId: id, qty: 5 }]);
+        const w = await scratchVariant(tx, [{ locationId: id, qty: 2 }]);
+        await putAway(tx, admin, { locationId: id, toShelfId: s[`${r}-1`], items: [{ variantId: v.id, qty: 3 }, { variantId: w.id, qty: 2 }] });
+        await putAway(tx, admin, { locationId: id, toShelfId: s[`${r}-2`], items: [{ variantId: v.id, qty: 1 }] });
+        const count = { placements: 3, shelvedUnits: 6, shelves: 2, notOnShelfUnits: 0 };
+        const off = { ...base, usesShelves: false };
+
+        // Not an Admin (the route passes can(user, "shelf.switch_off")).
+        await expect(saveLocation(tx, id, { ...off, confirmShelvesOff: count }, manager.id)).rejects.toThrow(/Only an Admin/);
+        // An Admin without a confirmation is told exactly what it erases.
+        const unconfirmed = await saveLocation(tx, id, off, admin.id, undefined, { canSwitchShelvesOff: true }).catch((e) => e);
+        expect(unconfirmed).toBeInstanceOf(ShelvesOffConfirmError);
+        expect(unconfirmed.count).toEqual(count);
+        expect(unconfirmed.message).toMatch(/erases 3 shelf placement\(s\) — 6 unit\(s\) on 2 shelf/);
+        // A stale confirmation (someone put a dress away since) is refused too.
+        await expect(saveLocation(tx, id, { ...off, confirmShelvesOff: { ...count, placements: 2, shelvedUnits: 5 } }, admin.id, undefined, { canSwitchShelvesOff: true })).rejects.toThrow(ShelvesOffConfirmError);
+        expect(await tx.shelfStock.count({ where: { locationId: id } })).toBe(3);
+
+        await saveLocation(tx, id, { ...off, confirmShelvesOff: count }, admin.id, undefined, { canSwitchShelvesOff: true });
+        expect(await tx.shelfStock.count({ where: { locationId: id } })).toBe(0);
+        expect((await tx.variantStock.findUniqueOrThrow({ where: { variantId_locationId: { variantId: v.id, locationId: id } } })).qty).toBe(5);
+        const audit = await tx.auditLog.findFirstOrThrow({ where: { entityType: "location", entityId: id, action: "location.update" }, orderBy: { createdAt: "desc" } });
+        expect(audit.after).toMatchObject({ usesShelves: false, shelvesCleared: { shelvedUnits: 6, confirmed: count } });
       });
     },
     TIMEOUT,

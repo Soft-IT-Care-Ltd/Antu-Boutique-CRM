@@ -243,6 +243,21 @@ export async function closeMisses(tx: Tx, input: Context & { reason: MissCloseRe
  * there is dropped — the units simply become the location's stock, with no
  * "where" — and units not on their shelf are closed. Stock doesn't move.
  */
+/** What switching shelves off at a location would erase: every shelf placement there, and its open "not on its shelf" units. */
+export type ShelfPlacementCount = { placements: number; shelvedUnits: number; shelves: number; notOnShelfUnits: number };
+
+export async function countLocationShelfPlacements(client: Tx, locationId: string): Promise<ShelfPlacementCount> {
+  const [placed, shelves, missing] = await Promise.all([
+    client.shelfStock.aggregate({ where: { locationId, qty: { gt: 0 } }, _count: { _all: true }, _sum: { qty: true } }),
+    client.shelfStock.groupBy({ by: ["shelfId"], where: { locationId, qty: { gt: 0 } } }),
+    client.shelfMiss.aggregate({ where: { locationId, closedAt: null }, _sum: { qty: true } }),
+  ]);
+  return { placements: placed._count._all, shelvedUnits: placed._sum.qty ?? 0, shelves: shelves.length, notOnShelfUnits: missing._sum.qty ?? 0 };
+}
+
+export const sameShelfPlacementCount = (a: ShelfPlacementCount, b: ShelfPlacementCount) =>
+  a.placements === b.placements && a.shelvedUnits === b.shelvedUnits && a.shelves === b.shelves && a.notOnShelfUnits === b.notOnShelfUnits;
+
 export async function clearLocationShelves(tx: Tx, locationId: string, actorId: string | null): Promise<{ shelvedUnits: number; notOnShelfUnits: number }> {
   const shelved = await tx.shelfStock.aggregate({ where: { locationId }, _sum: { qty: true } });
   await tx.shelfStock.deleteMany({ where: { locationId } });

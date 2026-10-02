@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { can } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { listLocationSettings, locationInputSchema, saveLocation } from "@/lib/locations/admin";
 import { LocationError } from "@/lib/locations/service";
@@ -10,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 export async function GET() {
   const guard = await requirePermission("settings.manage");
   if (!guard.ok) return guard.response;
-  return NextResponse.json(await listLocationSettings(prisma));
+  return NextResponse.json({ ...(await listLocationSettings(prisma)), canSwitchShelvesOff: await can(guard.user, "shelf.switch_off") });
 }
 
 export async function POST(request: NextRequest) {
